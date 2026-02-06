@@ -114,12 +114,22 @@ app.use(errorHandler);
 // SERVER STARTUP
 // ===========================================
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
     console.log(`\n🚀 Manufacturing ERP Server`);
     console.log(`   Environment: ${SERVER_CONFIG.server.env}`);
     console.log(`   Port: ${PORT}`);
     console.log(`   API: http://localhost:${PORT}/api`);
     console.log(`   Health: http://localhost:${PORT}/health\n`);
+
+    // Proactive DB Connection Check
+    try {
+        const { db } = await import('./db/index');
+        const { sql } = await import('drizzle-orm');
+        await db.execute(sql`SELECT 1`);
+        console.log('✅ Database connected successfully');
+    } catch (err) {
+        console.error('❌ Database connection failed:', err);
+    }
 });
 
 export default app;
