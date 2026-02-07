@@ -935,13 +935,7 @@ export function Sales() {
                                     </option>
                                   ))}
                                 </optgroup>
-                                <optgroup label="Generic Products">
-                                  {products.map(p => (
-                                    <option key={p.id} value={`product:${p.id}`}>
-                                      {p.name}
-                                    </option>
-                                  ))}
-                                </optgroup>
+
                               </select>
                             </td>
                             <td className="px-3 py-1"><input type="number" value={currentItem.quantity} onChange={e => setCurrentItem({ ...currentItem, quantity: e.target.value })} className={`w-full text-right text-sm bg-transparent border-0 border-b border-blue-300 focus:ring-0 p-1 ${currentItem.bellItemId ? 'text-gray-500 font-bold bg-gray-50' : ''}`} placeholder="0" readOnly={!!currentItem.bellItemId} /></td>
