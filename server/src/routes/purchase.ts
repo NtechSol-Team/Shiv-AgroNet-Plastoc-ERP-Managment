@@ -18,7 +18,7 @@ import { db } from '../db/index';
 import { createStockMovement } from '../services/inventory.service';
 
 // ... (imports remain)
-import { purchaseBills, purchaseBillItems, suppliers, rawMaterials, paymentTransactions, billPaymentAllocations, bankCashAccounts, generalLedger, rawMaterialBatches, finishedProducts, expenseHeads } from '../db/schema';
+import { purchaseBills, purchaseBillItems, suppliers, rawMaterials, paymentTransactions, billPaymentAllocations, bankCashAccounts, generalLedger, rawMaterialBatches, finishedProducts, expenseHeads, productionBatchInputs } from '../db/schema';
 // Removed stockMovements from imports as we use the service now
 
 // ... (inside the route)
@@ -506,7 +506,246 @@ router.post('/bills/:id/payment', async (req: Request, res: Response, next: Next
     }
 });
 
-export default router;
+// ============================================================
+// UPDATE PURCHASE BILL
+// ============================================================
+
+/**
+ * PUT /purchase/bills/:id
+ * Update a purchase bill
+ */
+router.put('/bills/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+        const { date, invoiceNumber, supplierId, status, items, type = 'RAW_MATERIAL', discountAmount } = req.body;
+
+        // Get the existing bill
+        const [existingBill] = await db.select().from(purchaseBills).where(eq(purchaseBills.id, id));
+        if (!existingBill) throw createError('Bill not found', 404);
+
+        // Get supplier for GST calculation
+        const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, supplierId));
+        if (!supplier) throw createError('Supplier not found', 404);
+
+        const isInterState = (supplier.stateCode || '27') !== COMPANY_STATE_CODE;
+
+        // Calculate totals from items
+        let subtotal = 0;
+        let totalCgst = 0;
+        let totalSgst = 0;
+        let totalIgst = 0;
+        const discount = parseFloat(discountAmount || '0');
+
+        const processedItems = items.map((item: any) => {
+            const quantity = parseFloat(item.quantity) || 0;
+            const rate = parseFloat(item.rate) || 0;
+            const gstPercent = parseFloat(item.gstPercent) || 0;
+            const amount = quantity * rate;
+            const gstAmount = (amount * gstPercent) / 100;
+
+            subtotal += amount;
+
+            if (isInterState) {
+                totalIgst += gstAmount;
+            } else {
+                totalCgst += gstAmount / 2;
+                totalSgst += gstAmount / 2;
+            }
+
+            return {
+                ...item,
+                quantity,
+                rate,
+                amount,
+                gstPercent,
+                cgst: isInterState ? 0 : gstAmount / 2,
+                sgst: isInterState ? 0 : gstAmount / 2,
+                igst: isInterState ? gstAmount : 0,
+                total: amount + gstAmount,
+            };
+        });
+
+        const totalTax = totalCgst + totalSgst + totalIgst;
+        const grandTotal = Math.round(subtotal + totalTax - discount);
+
+        // Update bill
+        await db.update(purchaseBills)
+            .set({
+                invoiceNumber,
+                type,
+                date: new Date(date),
+                supplierId,
+                supplierGST: supplier.gstNo,
+                billingAddress: supplier.address,
+                subtotal: String(subtotal),
+                discountAmount: String(discount),
+                cgst: String(totalCgst),
+                sgst: String(totalSgst),
+                igst: String(totalIgst),
+                totalTax: String(totalTax),
+                total: String(subtotal + totalTax - discount),
+                grandTotal: String(grandTotal),
+                balanceAmount: String(grandTotal - parseFloat(existingBill.paidAmount || '0')),
+                status,
+                updatedAt: new Date(),
+            })
+            .where(eq(purchaseBills.id, id));
+
+        // Delete existing items and recreate
+        await db.delete(purchaseBillItems).where(eq(purchaseBillItems.billId, id));
+
+        // Insert updated items
+        for (const item of processedItems) {
+            let materialName = '';
+            let hsnCode = '';
+            let rawMaterialId = null;
+            let finishedProductId = null;
+            let expenseHeadId = null;
+
+            if (type === 'RAW_MATERIAL' && item.rawMaterialId) {
+                const [material] = await db.select().from(rawMaterials).where(eq(rawMaterials.id, item.rawMaterialId));
+                if (material) {
+                    materialName = material.name;
+                    hsnCode = material.hsnCode || '3901';
+                    rawMaterialId = item.rawMaterialId;
+                }
+            } else if (type === 'FINISHED_GOODS' && item.finishedProductId) {
+                const [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+                if (product) {
+                    materialName = product.name;
+                    hsnCode = product.hsnCode || '5608';
+                    finishedProductId = item.finishedProductId;
+                }
+            } else if (type === 'GENERAL') {
+                if (item.expenseHeadId) {
+                    const [head] = await db.select().from(expenseHeads).where(eq(expenseHeads.id, item.expenseHeadId));
+                    if (head) {
+                        materialName = head.name;
+                        expenseHeadId = item.expenseHeadId;
+                    }
+                }
+            }
+
+            await db.insert(purchaseBillItems).values({
+                billId: id,
+                rawMaterialId,
+                finishedProductId,
+                expenseHeadId,
+                materialName,
+                hsnCode,
+                quantity: String(item.quantity),
+                rate: String(item.rate),
+                amount: String(item.amount),
+                gstPercent: String(item.gstPercent),
+                cgst: String(item.cgst),
+                sgst: String(item.sgst),
+                igst: String(item.igst),
+                totalAmount: String(item.total),
+            });
+        }
+
+        // Fetch updated bill with items
+        const [updatedBill] = await db.select().from(purchaseBills).where(eq(purchaseBills.id, id));
+        const updatedItems = await db.select().from(purchaseBillItems).where(eq(purchaseBillItems.billId, id));
+
+        res.json(successResponse({
+            ...updatedBill,
+            supplier,
+            items: updatedItems,
+        }));
+    } catch (error) {
+        next(error);
+    }
+});
+
+// ============================================================
+// DELETE PURCHASE BILL
+// ============================================================
+
+/**
+ * DELETE /purchase/bills/:id
+ * Delete a purchase bill
+ */
+router.delete('/bills/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+
+        // Get the bill with items
+        const [bill] = await db.select().from(purchaseBills).where(eq(purchaseBills.id, id));
+        if (!bill) throw createError('Bill not found', 404);
+
+        // Check if any payments have been made
+        if (parseFloat(bill.paidAmount || '0') > 0) {
+            throw createError('Cannot delete bill with payments. Reverse payments first.', 400);
+        }
+
+        // Get bill items for stock reversal
+        const billItems = await db.select().from(purchaseBillItems).where(eq(purchaseBillItems.billId, id));
+
+        // Get raw material batches linked to this bill
+        const batchesToDelete = await db.select().from(rawMaterialBatches).where(eq(rawMaterialBatches.purchaseBillId, id));
+        const batchIds = batchesToDelete.map(b => b.id);
+
+        // Delete production batch inputs that reference these raw material batches
+        if (batchIds.length > 0) {
+            await db.delete(productionBatchInputs).where(inArray(productionBatchInputs.materialBatchId, batchIds));
+        }
+
+        // Delete raw material batches linked to this bill
+        await db.delete(rawMaterialBatches).where(eq(rawMaterialBatches.purchaseBillId, id));
+
+        // Delete items
+        await db.delete(purchaseBillItems).where(eq(purchaseBillItems.billId, id));
+
+        // Delete the bill
+        await db.delete(purchaseBills).where(eq(purchaseBills.id, id));
+
+        // If bill was confirmed, reverse stock movements and supplier outstanding
+        if (bill.status === 'Confirmed') {
+            // Reverse stock for each item
+            for (const item of billItems) {
+                if (bill.type === 'RAW_MATERIAL' && item.rawMaterialId) {
+                    await createStockMovement({
+                        date: new Date(),
+                        movementType: 'RAW_OUT',
+                        itemType: 'raw_material',
+                        rawMaterialId: item.rawMaterialId,
+                        quantityOut: parseFloat(item.quantity || '0'),
+                        referenceType: 'purchase_delete',
+                        referenceCode: bill.code,
+                        referenceId: id,
+                        reason: `Reversed: Bill ${bill.code} deleted`
+                    });
+                } else if (bill.type === 'FINISHED_GOODS' && item.finishedProductId) {
+                    await createStockMovement({
+                        date: new Date(),
+                        movementType: 'FG_OUT',
+                        itemType: 'finished_product',
+                        finishedProductId: item.finishedProductId,
+                        quantityOut: parseFloat(item.quantity || '0'),
+                        referenceType: 'purchase_delete',
+                        referenceCode: bill.code,
+                        referenceId: id,
+                        reason: `Reversed: Bill ${bill.code} deleted`
+                    });
+                }
+            }
+
+            // Update supplier outstanding
+            const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, bill.supplierId));
+            if (supplier) {
+                const newOutstanding = parseFloat(supplier.outstanding || '0') - parseFloat(bill.grandTotal || '0');
+                await db.update(suppliers)
+                    .set({ outstanding: String(Math.max(0, newOutstanding)) })
+                    .where(eq(suppliers.id, bill.supplierId));
+            }
+        }
+
+        res.json(successResponse({ message: 'Bill deleted successfully' }));
+    } catch (error) {
+        next(error);
+    }
+});
 
 // ============================================================
 // PURCHASE PAYMENT HANDLING (MIRRORING SALES RECEIPTS)
@@ -831,3 +1070,5 @@ router.post('/payments/:id/reverse', async (req, res, next) => {
         next(error);
     }
 });
+
+export default router;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Printer, Search, X, Trash2, Loader2, Building2, MapPin, FileText, Download, Receipt, ArrowRight, RotateCcw, History, Info, MessageCircle, Link } from 'lucide-react';
+import { Plus, Printer, Search, X, Trash2, Loader2, Building2, MapPin, FileText, Download, Receipt, ArrowRight, RotateCcw, History, Info, MessageCircle, Link, Edit2 } from 'lucide-react';
 import { salesApi, mastersApi, accountsApi } from '../lib/api';
 import { printInvoice } from '../utils/printInvoice';
 
@@ -38,6 +38,7 @@ export function Sales() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null); // NEW: Success message state
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
 
   const [salesInvoices, setSalesInvoices] = useState<any[]>([]);
   const [salesReceipts, setSalesReceipts] = useState<any[]>([]);
@@ -345,14 +346,21 @@ export function Sales() {
         })
       };
 
-      const result = await salesApi.createInvoice(payload);
+      // Call updateInvoice if editing, otherwise createInvoice
+      const result = editingInvoiceId
+        ? await salesApi.updateInvoice(editingInvoiceId, payload)
+        : await salesApi.createInvoice(payload);
 
       if (result.error) {
         setError(result.error);
       } else {
+        const action = editingInvoiceId ? 'updated' : 'created';
+        setSuccess(`Invoice ${action} successfully!`);
         setShowInvoiceForm(false);
+        setEditingInvoiceId(null); // Reset edit mode
         fetchData();
         resetForm();
+        setTimeout(() => setSuccess(null), 3000);
       }
     } catch (err) {
       setError('Failed to save invoice');
@@ -511,7 +519,62 @@ export function Sales() {
   // ADJUSTMENT HANDLERS
   // ============================================================
 
+  const handleDeleteInvoice = async (invoiceId: string) => {
+    if (!confirm("Are you sure you want to delete this invoice? This action cannot be undone.")) return;
 
+    setLoading(true);
+    try {
+      const result = await salesApi.deleteInvoice(invoiceId);
+      if (result.error) throw new Error(result.error);
+      fetchData();
+      setSuccess('Invoice deleted successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setError(err.message || "Failed to delete invoice");
+    }
+    setLoading(false);
+  };
+
+  const handleEditInvoice = (invoice: any) => {
+    // Set the editing invoice ID to track we're in edit mode
+    setEditingInvoiceId(invoice.id);
+
+    // Populate form with existing invoice data
+    setInvoiceForm({
+      date: invoice.invoiceDate?.split('T')[0] || new Date().toISOString().split('T')[0],
+      dueDate: invoice.dueDate?.split('T')[0] || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      customerId: invoice.customerId || '',
+      invoiceType: invoice.invoiceType || 'B2B',
+      placeOfSupply: invoice.placeOfSupply || 'Maharashtra',
+      billingAddress: invoice.billingAddress || '',
+      shippingAddress: invoice.shippingAddress || '',
+      sameAsBilling: true,
+      status: invoice.status || 'Pending'
+    });
+
+    // Find and set customer
+    const customer = customers.find((c: any) => c.id === invoice.customerId);
+    if (customer) setSelectedCustomer(customer);
+
+    // Set items
+    const items = invoice.items?.map((item: any, idx: number) => ({
+      id: `edit-${idx}`,
+      finishedProductId: item.finishedProductId || '',
+      product: item.productName || item.finishedProduct?.name || '',
+      hsnCode: item.hsnCode || '5608',
+      quantity: parseFloat(item.quantity) || 0,
+      rate: parseFloat(item.rate) || 0,
+      discountPercent: parseFloat(item.discountPercent) || 0,
+      taxPercent: parseFloat(item.gstPercent) || 18,
+      taxableAmount: parseFloat(item.taxableAmount) || 0,
+      amount: parseFloat(item.amount) || 0,
+      bellItemId: item.bellItemId || undefined,
+      childItems: item.childItems || []
+    })) || [];
+
+    setInvoiceItems(items);
+    setShowInvoiceForm(true);
+  };
 
   const handlePrintInvoice = (invoice: any) => {
     printInvoice(invoice);
@@ -558,7 +621,14 @@ export function Sales() {
         {/* Action Buttons */}
         {!showInvoiceForm && !showReceiptForm && (
           <button
-            onClick={() => activeTab === 'invoices' ? setShowInvoiceForm(true) : setShowReceiptForm(true)}
+            onClick={() => {
+              if (activeTab === 'invoices') {
+                setEditingInvoiceId(null); // Reset edit mode for new invoice
+                setShowInvoiceForm(true);
+              } else {
+                setShowReceiptForm(true);
+              }
+            }}
             className="px-4 py-1.5 bg-blue-700 text-white text-sm font-bold uppercase rounded-sm hover:bg-blue-800 transition-colors flex items-center shadow-sm"
           >
             <Plus className="w-3 h-3 mr-2" />
@@ -661,6 +731,26 @@ export function Sales() {
                                 </span>
                               </td>
                               <td className="px-4 py-1.5 text-center flex items-center justify-center space-x-2">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleEditInvoice(invoice);
+                                  }}
+                                  className="text-gray-500 hover:text-blue-600 p-1"
+                                  title="Edit Invoice"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteInvoice(invoice.id);
+                                  }}
+                                  className="text-gray-500 hover:text-red-600 p-1"
+                                  title="Delete Invoice"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();

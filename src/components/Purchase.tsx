@@ -10,7 +10,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Minus, Search, Loader2, Building2, Package, Trash2, CheckCircle, XCircle, RotateCcw, Link } from 'lucide-react';
+import { Plus, Minus, Search, Loader2, Building2, Package, Trash2, CheckCircle, XCircle, RotateCcw, Link, Edit2 } from 'lucide-react';
 import { purchaseApi, mastersApi, accountsApi } from '../lib/api';
 
 // ============================================================
@@ -99,6 +99,7 @@ export function Purchase() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [editingBillId, setEditingBillId] = useState<string | null>(null);
 
   // Data State
   const [purchaseBills, setPurchaseBills] = useState<PurchaseBill[]>([]);
@@ -461,7 +462,10 @@ export function Purchase() {
       console.log('\n--- Sending Payload to API ---');
       console.log(JSON.stringify(payload, null, 2));
 
-      const result = await purchaseApi.createBill(payload);
+      // Call updateBill if editing, otherwise createBill
+      const result = editingBillId
+        ? await purchaseApi.updateBill(editingBillId, payload)
+        : await purchaseApi.createBill(payload);
 
       console.log('\n--- API Response ---');
       console.log('Error:', result.error);
@@ -471,11 +475,13 @@ export function Purchase() {
         console.log('❌ API returned error:', result.error);
         setError(result.error);
       } else {
-        console.log('✓ Bill created successfully:', result.data?.code);
+        const action = editingBillId ? 'updated' : 'created';
+        console.log(`✓ Bill ${action} successfully:`, result.data?.code);
         console.log('  Items in response:', result.data?.items?.length || 0);
 
-        setSuccess(`Purchase bill ${result.data?.code} created successfully!`);
+        setSuccess(`Purchase bill ${result.data?.code} ${action} successfully!`);
         setShowForm(false);
+        setEditingBillId(null); // Reset edit mode
         resetForm();
 
         console.log('\n--- Refreshing data ---');
@@ -636,6 +642,57 @@ export function Purchase() {
     }
   };
 
+  const handleDeleteBill = async (billId: string) => {
+    if (!confirm("Are you sure you want to delete this purchase bill? This action cannot be undone.")) return;
+
+    setLoading(true);
+    try {
+      const result = await purchaseApi.deleteBill(billId);
+      if (result.error) throw new Error(result.error);
+      fetchData();
+      setSuccess('Purchase bill deleted successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setError(err.message || "Failed to delete purchase bill");
+    }
+    setLoading(false);
+  };
+
+  const handleEditBill = (bill: PurchaseBill) => {
+    // Set the editing bill ID to track we're in edit mode
+    setEditingBillId(bill.id);
+
+    // Populate form with existing bill data
+    setBillDate(bill.date.split('T')[0]);
+    setInvoiceNumber(bill.code);
+    setBillStatus(bill.status as 'Draft' | 'Confirmed');
+    setDiscountAmount(bill.discountAmount || '0');
+
+    // Find and set supplier
+    const supplier = suppliers.find(s => s.id === bill.supplier?.id);
+    if (supplier) setSelectedSupplier(supplier);
+
+    // Set items
+    const billItems = bill.items?.map((item: any, idx: number) => ({
+      id: `edit-${idx}`,
+      rawMaterialId: item.rawMaterialId || '',
+      finishedProductId: item.finishedProductId || '',
+      expenseHeadId: item.expenseHeadId || '',
+      materialName: item.materialName || '',
+      hsnCode: item.hsnCode || '',
+      quantity: item.quantity?.toString() || '',
+      rate: item.rate?.toString() || '',
+      gstPercent: item.gstPercent?.toString() || '18',
+      amount: parseFloat(item.amount) || 0,
+      cgst: parseFloat(item.cgst) || 0,
+      sgst: parseFloat(item.sgst) || 0,
+      igst: parseFloat(item.igst) || 0,
+      total: parseFloat(item.total) || 0
+    })) || [];
+
+    setItems(billItems);
+    setShowForm(true);
+  };
 
 
   // ============================================================
@@ -690,7 +747,14 @@ export function Purchase() {
         {/* Action Buttons */}
         {!showForm && !showPaymentForm && (
           <button
-            onClick={() => activeTab === 'bills' ? setShowForm(true) : setShowPaymentForm(true)}
+            onClick={() => {
+              if (activeTab === 'bills') {
+                setEditingBillId(null); // Reset edit mode for new bill
+                setShowForm(true);
+              } else {
+                setShowPaymentForm(true);
+              }
+            }}
             className="px-4 py-1.5 bg-blue-700 text-white text-sm font-bold uppercase rounded-sm hover:bg-blue-800 transition-colors flex items-center shadow-sm"
           >
             <Plus className="w-3 h-3 mr-2" />
@@ -742,11 +806,12 @@ export function Purchase() {
                       <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Discount</th>
                       <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Total</th>
                       <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-center">Status</th>
+                      <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-center">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {purchaseBills.length === 0 ? (
-                      <tr><td colSpan={10} className="px-6 py-12 text-center text-sm text-gray-500 italic">No purchase bills recorded.</td></tr>
+                      <tr><td colSpan={11} className="px-6 py-12 text-center text-sm text-gray-500 italic">No purchase bills recorded.</td></tr>
                     ) : (
                       purchaseBills.map((bill) => (
                         <tr key={bill.id} className="hover:bg-blue-50 transition-colors">
@@ -767,6 +832,24 @@ export function Purchase() {
                             <span className={`text-[10px] font-bold px-1 rounded uppercase ${bill.paymentStatus === 'Paid' ? 'text-green-700 bg-green-100' : bill.paymentStatus === 'Partial' ? 'text-orange-700 bg-orange-100' : 'text-red-700 bg-red-100'}`}>
                               {bill.paymentStatus}
                             </span>
+                          </td>
+                          <td className="px-4 py-1.5 text-center">
+                            <div className="flex items-center justify-center space-x-2">
+                              <button
+                                onClick={() => handleEditBill(bill)}
+                                className="text-gray-400 hover:text-blue-600 transition-colors p-1"
+                                title="Edit Bill"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteBill(bill.id)}
+                                className="text-gray-400 hover:text-red-600 transition-colors p-1"
+                                title="Delete Bill"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -831,9 +914,9 @@ export function Purchase() {
             <div className="bg-white border border-gray-300 rounded-sm shadow-sm">
               {/* Form Header */}
               <div className="bg-gray-100 px-4 py-2 border-b border-gray-300 flex justify-between items-center sticky top-0 z-10">
-                <h2 className="text-sm font-bold text-gray-800 uppercase">New Inward Purchase</h2>
+                <h2 className="text-sm font-bold text-gray-800 uppercase">{editingBillId ? 'Edit Purchase Bill' : 'New Inward Purchase'}</h2>
                 <div className="flex space-x-2">
-                  <button onClick={() => { setShowForm(false); resetForm(); }} className="px-3 py-1 text-xs font-bold text-gray-600 hover:text-red-600 border border-transparent hover:border-red-200 rounded-sm uppercase">Cancel</button>
+                  <button onClick={() => { setShowForm(false); setEditingBillId(null); resetForm(); }} className="px-3 py-1 text-xs font-bold text-gray-600 hover:text-red-600 border border-transparent hover:border-red-200 rounded-sm uppercase">Cancel</button>
                   <button onClick={handleSave} disabled={saving} className="px-3 py-1 bg-blue-700 text-white text-xs font-bold uppercase rounded-sm hover:bg-blue-800 shadow-sm flex items-center">
                     {saving && <Loader2 className="w-3 h-3 animate-spin mr-1" />} Save Record
                   </button>

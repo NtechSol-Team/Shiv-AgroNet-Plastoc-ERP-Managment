@@ -225,6 +225,8 @@ export const purchaseApi = {
             method: 'POST',
             body: JSON.stringify({ reason }),
         }),
+    deleteBill: (id: string) =>
+        fetchApi<any>(`/purchase/bills/${id}`, { method: 'DELETE' }),
 };
 
 // ==================== PRODUCTION API ====================
@@ -272,6 +274,8 @@ export const salesApi = {
             body: JSON.stringify({ reason }),
         }),
     getAvailableBells: () => fetchApi<any[]>('/sales/available-bells'),
+    deleteInvoice: (id: string) =>
+        fetchApi<any>(`/sales/invoices/${id}`, { method: 'DELETE' }),
 };
 
 // ==================== ACCOUNTS API ====================

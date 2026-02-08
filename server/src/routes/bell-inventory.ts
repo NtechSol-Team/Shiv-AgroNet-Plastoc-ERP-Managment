@@ -125,6 +125,103 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
 });
 
 /**
+ * PUT /bell-inventory/:id
+ * Update a Bell Item (pieceCount, netWeight) with stock adjustment
+ */
+router.put('/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+        const { pieceCount, netWeight } = req.body;
+
+        // Find the bell item
+        const item = await db.query.bellItems.findFirst({
+            where: eq(bellItems.id, id)
+        });
+
+        if (!item) throw createError('Bell item not found', 404);
+        if (item.status !== 'Available') throw createError('Cannot edit: Item has already been issued or deleted', 400);
+
+        const oldWeight = parseFloat(item.netWeight || '0');
+        const newWeight = netWeight !== undefined ? parseFloat(netWeight) : oldWeight;
+        const weightDifference = newWeight - oldWeight;
+
+        // Get the batch for reference code
+        const batch = await db.query.bellBatches.findFirst({
+            where: eq(bellBatches.id, item.batchId)
+        });
+
+        // If weight changed, create stock adjustment
+        if (Math.abs(weightDifference) > 0.001) {
+            if (weightDifference > 0) {
+                // Weight increased - need to deduct more from finished goods
+                const stockCheck = await validateFinishedProductStock(item.finishedProductId, weightDifference);
+                if (!stockCheck.isValid) {
+                    throw createError(`Insufficient stock for weight increase (Required: ${weightDifference.toFixed(2)}, Available: ${stockCheck.currentStock.toFixed(2)})`, 400);
+                }
+
+                // Deduct additional stock
+                await createStockMovement({
+                    date: new Date(),
+                    movementType: 'FG_OUT',
+                    itemType: 'finished_product',
+                    finishedProductId: item.finishedProductId,
+                    quantityOut: weightDifference,
+                    referenceType: 'Bell Item Edit',
+                    referenceCode: batch?.code || 'EDIT',
+                    referenceId: item.id,
+                    reason: `Bell item weight increased from ${oldWeight} to ${newWeight}`
+                });
+            } else {
+                // Weight decreased - refund stock to finished goods
+                await createStockMovement({
+                    date: new Date(),
+                    movementType: 'FG_IN',
+                    itemType: 'finished_product',
+                    finishedProductId: item.finishedProductId,
+                    quantityIn: Math.abs(weightDifference),
+                    referenceType: 'Bell Item Edit',
+                    referenceCode: batch?.code || 'EDIT',
+                    referenceId: item.id,
+                    reason: `Bell item weight decreased from ${oldWeight} to ${newWeight}`
+                });
+            }
+        }
+
+        // Update the item
+        const [updatedItem] = await db.update(bellItems)
+            .set({
+                pieceCount: pieceCount !== undefined ? String(pieceCount) : item.pieceCount,
+                netWeight: netWeight !== undefined ? String(netWeight) : item.netWeight,
+                updatedAt: new Date()
+            })
+            .where(eq(bellItems.id, id))
+            .returning();
+
+        // Recalculate and update batch total weight
+        const allBatchItems = await db.query.bellItems.findMany({
+            where: and(
+                eq(bellItems.batchId, item.batchId),
+                ne(bellItems.status, 'Deleted')
+            )
+        });
+
+        const newTotalWeight = allBatchItems.reduce((sum, i) => sum + parseFloat(i.netWeight || '0'), 0);
+
+        await db.update(bellBatches)
+            .set({
+                totalWeight: String(newTotalWeight),
+                updatedAt: new Date()
+            })
+            .where(eq(bellBatches.id, item.batchId));
+
+        res.json(successResponse(updatedItem));
+
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
  * DELETE /bell-inventory/:id
  * Delete a Bell Batch (Soft Delete) and Refund Stock
  */

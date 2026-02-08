@@ -197,6 +197,38 @@ export function BellInventory() {
         }
     };
 
+    // Edit Bell Item State
+    const [editingBellItem, setEditingBellItem] = useState<BellItem | null>(null);
+    const [editForm, setEditForm] = useState({ pieceCount: '', netWeight: '' });
+
+    const handleEditBellItem = (item: BellItem) => {
+        setEditingBellItem(item);
+        setEditForm({ pieceCount: item.pieceCount, netWeight: item.netWeight });
+    };
+
+    const handleSaveEditBellItem = async () => {
+        if (!editingBellItem) return;
+
+        setIsSubmitting(true);
+        try {
+            const result = await bellInventoryApi.updateBell(editingBellItem.id, {
+                pieceCount: editForm.pieceCount,
+                netWeight: editForm.netWeight
+            });
+            if (result.error) throw new Error(result.error);
+            fetchData();
+            setEditingBellItem(null);
+        } catch (err: any) {
+            setError(err.message || 'Failed to update bell item');
+        }
+        setIsSubmitting(false);
+    };
+
+    const handleCancelEdit = () => {
+        setEditingBellItem(null);
+        setEditForm({ pieceCount: '', netWeight: '' });
+    };
+
     // Calculate Unique Filter Options
     const allItems = batches.flatMap(b => b.items || []);
     const uniqueProducts = Array.from(new Set(allItems.map(i => i.finishedProduct?.name))).filter(Boolean).sort();
@@ -389,6 +421,7 @@ export function BellInventory() {
                                                                     <th className="px-4 py-2 text-right font-semibold text-gray-600">Pieces</th>
                                                                     <th className="px-4 py-2 text-right font-semibold text-gray-600">Weight</th>
                                                                     <th className="px-4 py-2 text-center font-semibold text-gray-600">Status</th>
+                                                                    <th className="px-4 py-2 text-center font-semibold text-gray-600">Actions</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody className="divide-y divide-gray-100">
@@ -397,14 +430,64 @@ export function BellInventory() {
                                                                         <td className="px-4 py-2 font-mono text-xs text-blue-600">{item.code}</td>
                                                                         <td className="px-4 py-2 font-medium text-gray-900">{item.finishedProduct?.name || 'Unknown Product'}</td>
                                                                         <td className="px-4 py-2 text-gray-600">{item.size} | {item.gsm} GSM</td>
-                                                                        <td className="px-4 py-2 text-right text-gray-600">{item.pieceCount}</td>
-                                                                        <td className="px-4 py-2 text-right font-medium text-gray-900">{item.netWeight}</td>
+                                                                        <td className="px-4 py-2 text-right text-gray-600">
+                                                                            {editingBellItem?.id === item.id ? (
+                                                                                <input
+                                                                                    type="number"
+                                                                                    value={editForm.pieceCount}
+                                                                                    onChange={(e) => setEditForm({ ...editForm, pieceCount: e.target.value })}
+                                                                                    className="w-20 px-2 py-1 border border-blue-300 rounded text-right text-sm focus:ring-1 focus:ring-blue-500"
+                                                                                />
+                                                                            ) : item.pieceCount}
+                                                                        </td>
+                                                                        <td className="px-4 py-2 text-right font-medium text-gray-900">
+                                                                            {editingBellItem?.id === item.id ? (
+                                                                                <input
+                                                                                    type="number"
+                                                                                    step="0.01"
+                                                                                    value={editForm.netWeight}
+                                                                                    onChange={(e) => setEditForm({ ...editForm, netWeight: e.target.value })}
+                                                                                    className="w-24 px-2 py-1 border border-blue-300 rounded text-right text-sm focus:ring-1 focus:ring-blue-500"
+                                                                                />
+                                                                            ) : item.netWeight}
+                                                                        </td>
                                                                         <td className="px-4 py-2 text-center">
                                                                             <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] uppercase font-bold tracking-wide ${item.status === 'Available' ? 'bg-green-100 text-green-700' :
                                                                                 item.status === 'Issued' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
                                                                                 }`}>
                                                                                 {item.status}
                                                                             </span>
+                                                                        </td>
+                                                                        <td className="px-4 py-2 text-center">
+                                                                            {item.status === 'Available' && (
+                                                                                editingBellItem?.id === item.id ? (
+                                                                                    <div className="flex items-center justify-center space-x-2">
+                                                                                        <button
+                                                                                            onClick={handleSaveEditBellItem}
+                                                                                            disabled={isSubmitting}
+                                                                                            className="text-green-600 hover:text-green-800 p-1"
+                                                                                            title="Save"
+                                                                                        >
+                                                                                            <Check className="w-4 h-4" />
+                                                                                        </button>
+                                                                                        <button
+                                                                                            onClick={handleCancelEdit}
+                                                                                            className="text-red-600 hover:text-red-800 p-1"
+                                                                                            title="Cancel"
+                                                                                        >
+                                                                                            <X className="w-4 h-4" />
+                                                                                        </button>
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <button
+                                                                                        onClick={() => handleEditBellItem(item)}
+                                                                                        className="text-gray-400 hover:text-blue-600 transition-colors p-1"
+                                                                                        title="Edit Item"
+                                                                                    >
+                                                                                        <Edit2 className="w-4 h-4" />
+                                                                                    </button>
+                                                                                )
+                                                                            )}
                                                                         </td>
                                                                     </tr>
                                                                 ))}
