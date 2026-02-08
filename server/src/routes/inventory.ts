@@ -76,6 +76,35 @@ router.get('/raw-materials/:id/batches', async (req: Request, res: Response, nex
 });
 
 /**
+ * GET /inventory/raw-materials/:id/rolls
+ * Get all rolls for a raw material with FIFO ordering (oldest first)
+ * Shows all rolls across all purchase bills for this material
+ */
+router.get('/raw-materials/:id/rolls', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+        const { db } = await import('../db/index');
+        const { rawMaterialRolls, purchaseBills } = await import('../db/schema');
+        const { eq, asc } = await import('drizzle-orm');
+
+        // Get all rolls for this material, ordered by creation date (FIFO)
+        const rolls = await db.query.rawMaterialRolls.findMany({
+            where: eq(rawMaterialRolls.rawMaterialId, id),
+            with: {
+                purchaseBill: {
+                    columns: { code: true, date: true }
+                }
+            },
+            orderBy: (rolls, { asc }) => [asc(rolls.createdAt)]
+        });
+
+        res.json(successResponse(rolls));
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
  * GET /inventory/finished-goods
  * Get all finished products with current stock levels
  */

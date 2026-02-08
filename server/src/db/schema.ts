@@ -130,6 +130,9 @@ export const purchaseBills = pgTable('purchase_bills', {
     balanceAmount: decimal('balance_amount', { precision: 12, scale: 2 }).default('0'),
     paymentStatus: text('payment_status').default('Unpaid'), // Unpaid, Partial, Paid
     status: text('status').default('Draft'), // Draft, Confirmed, Cancelled
+    // Roll Entry Tracking
+    rollEntryStatus: text('roll_entry_status').default('Pending'), // Pending, Partial, Completed
+    totalRollWeight: decimal('total_roll_weight', { precision: 12, scale: 2 }).default('0'),
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => ({
@@ -447,6 +450,7 @@ export const customersRelations = relations(customers, ({ many }) => ({
 export const purchaseBillsRelations = relations(purchaseBills, ({ one, many }) => ({
     supplier: one(suppliers, { fields: [purchaseBills.supplierId], references: [suppliers.id] }),
     items: many(purchaseBillItems),
+    rolls: many(rawMaterialRolls),
     allocations: many(billPaymentAllocations),
 }));
 
@@ -655,3 +659,27 @@ export const paymentAdjustmentsRelations = relations(paymentAdjustments, ({ one 
 // ==================== ALIAS EXPORTS ====================
 // For backward compatibility with route imports
 export const invoices = salesInvoices;
+
+// ==================== RAW MATERIAL ROLLS ====================
+
+export const rawMaterialRolls = pgTable('raw_material_rolls', {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    purchaseBillId: text('purchase_bill_id').notNull().references(() => purchaseBills.id, { onDelete: 'cascade' }),
+    rawMaterialId: text('raw_material_id').notNull().references(() => rawMaterials.id),
+    rollCode: text('roll_code').notNull().unique(), // e.g. ROLL-PB101-001
+    netWeight: decimal('net_weight', { precision: 10, scale: 2 }).notNull(),
+    gsm: decimal('gsm', { precision: 10, scale: 2 }),
+    length: decimal('length', { precision: 10, scale: 2 }), // Displayed as "Width" in UI
+    status: text('status').default('In Stock'), // In Stock, Consumed, Returned
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => ({
+    billIdx: index('rm_rolls_bill_idx').on(table.purchaseBillId),
+    materialIdx: index('rm_rolls_material_idx').on(table.rawMaterialId),
+    statusIdx: index('rm_rolls_status_idx').on(table.status),
+}));
+
+export const rawMaterialRollsRelations = relations(rawMaterialRolls, ({ one }) => ({
+    purchaseBill: one(purchaseBills, { fields: [rawMaterialRolls.purchaseBillId], references: [purchaseBills.id] }),
+    rawMaterial: one(rawMaterials, { fields: [rawMaterialRolls.rawMaterialId], references: [rawMaterials.id] }),
+}));

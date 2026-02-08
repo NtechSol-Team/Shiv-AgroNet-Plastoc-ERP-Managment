@@ -227,6 +227,16 @@ export const purchaseApi = {
         }),
     deleteBill: (id: string) =>
         fetchApi<any>(`/purchase/bills/${id}`, { method: 'DELETE' }),
+
+    // Roll Management
+    getRolls: (billId: string) => fetchApi<any>(`/purchase/bills/${billId}/rolls`),
+    addRolls: (billId: string, rolls: any[]) =>
+        fetchApi<any>(`/purchase/bills/${billId}/rolls`, {
+            method: 'POST',
+            body: JSON.stringify({ rolls }),
+        }),
+    deleteRoll: (billId: string, rollId: string) =>
+        fetchApi<any>(`/purchase/bills/${billId}/rolls/${rollId}`, { method: 'DELETE' }),
 };
 
 // ==================== PRODUCTION API ====================
@@ -325,6 +335,7 @@ export const inventoryApi = {
     },
     getSummary: () => fetchApi<any>('/inventory/summary'),
     getAvailableBatches: (rawMaterialId: string) => fetchApi<any[]>(`/inventory/raw-materials/${rawMaterialId}/batches`),
+    getRollsByMaterial: (rawMaterialId: string) => fetchApi<any[]>(`/inventory/raw-materials/${rawMaterialId}/rolls`),
 };
 
 // ==================== BELL INVENTORY API ====================

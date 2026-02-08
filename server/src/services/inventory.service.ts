@@ -20,7 +20,7 @@
  */
 
 import { db } from '../db/index';
-import { stockMovements, rawMaterials, finishedProducts, purchaseBills, purchaseBillItems, productionBatches, rawMaterialBatches } from '../db/schema';
+import { stockMovements, rawMaterials, finishedProducts, purchaseBills, purchaseBillItems, productionBatches, rawMaterialBatches, rawMaterialRolls } from '../db/schema';
 import { eq, and, sql, desc } from 'drizzle-orm';
 import { invalidateInventorySummary, invalidateDashboardKPIs } from './precomputed.service';
 
@@ -146,26 +146,32 @@ export async function getRawMaterialAveragePrice(rawMaterialId: string): Promise
 
 /**
  * Get all raw materials with aggregated stock and price
- * Uses batch processing to avoid N+1 queries
+ * UPDATED: Stock is now calculated from rawMaterialRolls (sum of netWeight where status='In Stock')
+ * Rolls are the single source of truth for raw material inventory
  */
 export async function getAllRawMaterialsWithStock() {
     // 1. Get all raw materials
     const materials = await db.select().from(rawMaterials);
 
-    // 2. Aggregate Stock Movements (Batch)
+    // 2. Aggregate Stock from Rolls (NOT movements anymore)
+    // Stock = SUM(netWeight) WHERE status = 'In Stock'
     const stockResults = await db
         .select({
-            id: stockMovements.rawMaterialId,
-            totalIn: sql<string>`COALESCE(SUM(${stockMovements.quantityIn}), 0)`,
-            totalOut: sql<string>`COALESCE(SUM(${stockMovements.quantityOut}), 0)`,
+            id: rawMaterialRolls.rawMaterialId,
+            totalWeight: sql<string>`COALESCE(SUM(${rawMaterialRolls.netWeight}), 0)`,
+            rollCount: sql<string>`COUNT(*)`,
         })
-        .from(stockMovements)
-        .where(eq(stockMovements.itemType, 'raw_material'))
-        .groupBy(stockMovements.rawMaterialId);
+        .from(rawMaterialRolls)
+        .where(eq(rawMaterialRolls.status, 'In Stock'))
+        .groupBy(rawMaterialRolls.rawMaterialId);
 
     const stockMap = new Map();
+    const rollCountMap = new Map();
     stockResults.forEach(r => {
-        if (r.id) stockMap.set(r.id, parseFloat(r.totalIn) - parseFloat(r.totalOut));
+        if (r.id) {
+            stockMap.set(r.id, parseFloat(r.totalWeight));
+            rollCountMap.set(r.id, parseInt(r.rollCount));
+        }
     });
 
     // 3. Aggregate Purchase Prices (Batch)
@@ -192,6 +198,7 @@ export async function getAllRawMaterialsWithStock() {
     return materials.map(material => ({
         ...material,
         stock: (stockMap.get(material.id) || 0).toFixed(2),
+        rollCount: rollCountMap.get(material.id) || 0,
         averagePrice: (priceMap.get(material.id) || 0).toFixed(2),
     }));
 }

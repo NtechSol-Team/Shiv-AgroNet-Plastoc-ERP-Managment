@@ -219,27 +219,28 @@ export function Inventory() {
 }
 
 // Extracted Component for Raw Material Table to handle state easier
+// UPDATED: Now shows Rolls (single source of truth) instead of batches
 function RawMaterialTable({ rawMaterials }: { rawMaterials: any[] }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [batches, setBatches] = useState<any[]>([]);
-  const [loadingBatches, setLoadingBatches] = useState(false);
+  const [rolls, setRolls] = useState<any[]>([]);
+  const [loadingRolls, setLoadingRolls] = useState(false);
 
   const handleExpand = async (id: string) => {
     if (expandedId === id) {
       setExpandedId(null);
-      setBatches([]);
+      setRolls([]);
       return;
     }
 
     setExpandedId(id);
-    setLoadingBatches(true);
+    setLoadingRolls(true);
     try {
-      const res = await inventoryApi.getAvailableBatches(id);
-      if (res.data) setBatches(res.data);
+      const res = await inventoryApi.getRollsByMaterial(id);
+      if (res.data) setRolls(res.data);
     } catch (err) {
       console.error(err);
     }
-    setLoadingBatches(false);
+    setLoadingRolls(false);
   };
 
   return (
@@ -253,6 +254,7 @@ function RawMaterialTable({ rawMaterials }: { rawMaterials: any[] }) {
             <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider">Color</th>
             <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-right">Avg Rate/Kg</th>
             <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-right">Stock (Kg)</th>
+            <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-center">Rolls</th>
             <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-right">Value (₹)</th>
             <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-center">Status</th>
           </tr>
@@ -278,6 +280,11 @@ function RawMaterialTable({ rawMaterials }: { rawMaterials: any[] }) {
                   <td className="px-4 py-1.5 text-xs text-gray-600">{item.color}</td>
                   <td className="px-4 py-1.5 text-xs text-right text-gray-600">₹{avgPrice.toFixed(2)}</td>
                   <td className="px-4 py-1.5 text-sm font-mono font-bold text-right text-gray-900">{item.stock}</td>
+                  <td className="px-4 py-1.5 text-center">
+                    <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                      {item.rollCount || 0}
+                    </span>
+                  </td>
                   <td className="px-4 py-1.5 text-xs font-mono text-right text-gray-600">₹{value}</td>
                   <td className="px-4 py-1.5 text-center">
                     {stock < parseFloat(item.reorderLevel || '200') ?
@@ -288,43 +295,50 @@ function RawMaterialTable({ rawMaterials }: { rawMaterials: any[] }) {
                 </tr>
                 {isExpanded && (
                   <tr className="bg-gray-50">
-                    <td colSpan={8} className="p-4 pl-12">
+                    <td colSpan={9} className="p-4 pl-12">
                       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-                        <div className="bg-gray-100 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
-                          <h4 className="text-xs font-bold uppercase text-gray-700">Active Batches</h4>
-                          <span className="text-xs text-gray-500">{batches.length} batches found</span>
+                        <div className="bg-blue-50 px-4 py-2 border-b border-blue-100 flex justify-between items-center">
+                          <h4 className="text-xs font-bold uppercase text-blue-800">📦 All Rolls (FIFO Order)</h4>
+                          <span className="text-xs text-blue-600 font-medium">{rolls.length} rolls • {stock.toFixed(2)} kg total</span>
                         </div>
-                        {loadingBatches ? (
-                          <div className="p-4 text-center text-gray-500 text-xs">Loading batches...</div>
-                        ) : batches.length === 0 ? (
-                          <div className="p-4 text-center text-gray-500 text-xs italic">No active batches found for this material.</div>
+                        {loadingRolls ? (
+                          <div className="p-4 text-center text-gray-500 text-xs">Loading rolls...</div>
+                        ) : rolls.length === 0 ? (
+                          <div className="p-4 text-center text-gray-500 text-xs italic">No rolls found. Add rolls via Purchase → Manage Rolls.</div>
                         ) : (
                           <table className="w-full text-xs text-left">
                             <thead className="bg-gray-50 text-gray-500 border-b border-gray-100">
                               <tr>
-                                <th className="px-4 py-2 font-medium">Batch Code</th>
-                                <th className="px-4 py-2 font-medium">Invoice #</th>
+                                <th className="px-4 py-2 font-medium">Roll Code</th>
+                                <th className="px-4 py-2 font-medium">Bill #</th>
                                 <th className="px-4 py-2 font-medium">Inward Date</th>
-                                <th className="px-4 py-2 text-right font-medium">Initial Qty</th>
-                                <th className="px-4 py-2 text-right font-medium">Used Qty</th>
-                                <th className="px-4 py-2 text-right font-medium">Available</th>
-                                <th className="px-4 py-2 text-right font-medium">Age (Days)</th>
+                                <th className="px-4 py-2 text-right font-medium">Weight (Kg)</th>
+                                <th className="px-4 py-2 text-center font-medium">GSM</th>
+                                <th className="px-4 py-2 text-center font-medium">Width</th>
+                                <th className="px-4 py-2 text-center font-medium">Status</th>
+                                <th className="px-4 py-2 text-right font-medium">Age</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                              {batches.map((batch) => {
-                                const age = Math.floor((new Date().getTime() - new Date(batch.createdAt).getTime()) / (1000 * 3600 * 24));
+                              {rolls.map((roll) => {
+                                const age = Math.floor((new Date().getTime() - new Date(roll.createdAt).getTime()) / (1000 * 3600 * 24));
                                 return (
-                                  <tr key={batch.id}>
-                                    <td className="px-4 py-2 font-mono text-blue-600 font-bold">{batch.batchCode}</td>
-                                    <td className="px-4 py-2 font-mono text-gray-600">{batch.invoiceNumber || '-'}</td>
-                                    <td className="px-4 py-2 text-gray-600">{new Date(batch.createdAt).toLocaleDateString()}</td>
-                                    <td className="px-4 py-2 text-right text-gray-500">{parseFloat(batch.quantity).toFixed(2)}</td>
-                                    <td className="px-4 py-2 text-right text-gray-500">{parseFloat(batch.quantityUsed).toFixed(2)}</td>
-                                    <td className="px-4 py-2 text-right font-bold text-green-700">
-                                      {(parseFloat(batch.quantity) - parseFloat(batch.quantityUsed)).toFixed(2)}
+                                  <tr key={roll.id} className={roll.status !== 'In Stock' ? 'opacity-50' : ''}>
+                                    <td className="px-4 py-2 font-mono text-blue-600 font-bold">{roll.rollCode}</td>
+                                    <td className="px-4 py-2 font-mono text-gray-600">{roll.purchaseBill?.code || '-'}</td>
+                                    <td className="px-4 py-2 text-gray-600">{new Date(roll.createdAt).toLocaleDateString()}</td>
+                                    <td className="px-4 py-2 text-right font-bold text-gray-900">{parseFloat(roll.netWeight).toFixed(2)}</td>
+                                    <td className="px-4 py-2 text-center text-gray-500">{roll.gsm || '-'}</td>
+                                    <td className="px-4 py-2 text-center text-gray-500">{roll.length || '-'}</td>
+                                    <td className="px-4 py-2 text-center">
+                                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${roll.status === 'In Stock' ? 'bg-green-100 text-green-700' :
+                                          roll.status === 'Consumed' ? 'bg-gray-100 text-gray-600' :
+                                            'bg-orange-100 text-orange-700'
+                                        }`}>
+                                        {roll.status}
+                                      </span>
                                     </td>
-                                    <td className="px-4 py-2 text-right text-gray-500">
+                                    <td className="px-4 py-2 text-right">
                                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${age > 60 ? 'bg-red-100 text-red-700' : age > 30 ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
                                         {age}d
                                       </span>
@@ -342,7 +356,7 @@ function RawMaterialTable({ rawMaterials }: { rawMaterials: any[] }) {
               </React.Fragment>
             );
           })}
-          {rawMaterials.length === 0 && <tr><td colSpan={8} className="text-center py-6 text-gray-500 italic">No materials purchased yet</td></tr>}
+          {rawMaterials.length === 0 && <tr><td colSpan={9} className="text-center py-6 text-gray-500 italic">No materials purchased yet</td></tr>}
         </tbody>
       </table>
     </div>

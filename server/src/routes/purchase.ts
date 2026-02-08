@@ -18,7 +18,7 @@ import { db } from '../db/index';
 import { createStockMovement } from '../services/inventory.service';
 
 // ... (imports remain)
-import { purchaseBills, purchaseBillItems, suppliers, rawMaterials, paymentTransactions, billPaymentAllocations, bankCashAccounts, generalLedger, rawMaterialBatches, finishedProducts, expenseHeads, productionBatchInputs } from '../db/schema';
+import { purchaseBills, purchaseBillItems, suppliers, rawMaterials, paymentTransactions, billPaymentAllocations, bankCashAccounts, generalLedger, rawMaterialBatches, finishedProducts, expenseHeads, productionBatchInputs, rawMaterialRolls } from '../db/schema';
 // Removed stockMovements from imports as we use the service now
 
 // ... (inside the route)
@@ -242,6 +242,7 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
                 console.log(`\nInserting item ${index + 1}...`);
 
                 let materialName = '';
+                let color = '';
                 let hsnCode = '';
                 let rawMaterialId = null;
                 let finishedProductId = null;
@@ -252,6 +253,7 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
                     const [material] = await db.select().from(rawMaterials).where(eq(rawMaterials.id, item.rawMaterialId));
                     if (!material) throw createError(`Material not found: ${item.rawMaterialId}`, 404);
                     materialName = material.name;
+                    color = material.color || '';
                     hsnCode = material.hsnCode || '3901';
                     rawMaterialId = item.rawMaterialId;
                 } else if (type === 'FINISHED_GOODS') {
@@ -310,34 +312,13 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
                 // Create stock movement if confirmed
                 if (status === 'Confirmed') {
                     if (type === 'RAW_MATERIAL') {
-                        await createStockMovement({
-                            date: new Date(),
-                            movementType: 'RAW_IN',
-                            itemType: 'raw_material',
-                            rawMaterialId: rawMaterialId!,
-                            quantityIn: parseFloat(String(item.quantity)),
-                            quantityOut: 0,
-                            referenceType: 'purchase',
-                            referenceCode: billCode,
-                            referenceId: bill.id,
-                            reason: `Purchase from ${supplier.name} (Inv: ${invoiceNumber})`
-                        });
-
-                        // Traceability Batch
-                        const batchCode = `RMB-${billCode}-${index + 1}`;
-                        await db.insert(rawMaterialBatches).values({
-                            batchCode,
-                            rawMaterialId: rawMaterialId!,
-                            purchaseBillId: bill.id,
-                            invoiceNumber: invoiceNumber,
-                            quantity: String(item.quantity),
-                            quantityUsed: '0',
-                            rate: String(item.rate),
-                            status: 'Active'
-                        });
+                        // NEW LOGIC: DO NOT create stock movement here.
+                        // Stock will be added via "Add Rolls" later.
+                        // We strictly only track financial data here.
+                        console.log('ℹ️ RAW_MATERIAL Purchase: Skipping automatic stock movement. Awaiting Roll Entry.');
 
                     } else if (type === 'FINISHED_GOODS') {
-                        // Finished Goods Trading Stock
+                        // Finished Goods Trading Stock (Still automatic for now as requested context focused on Raw Material Rolls)
                         await createStockMovement({
                             date: new Date(),
                             movementType: 'FG_IN', // Represents Stock In (Purchased)
@@ -1065,6 +1046,160 @@ router.post('/payments/:id/reverse', async (req, res, next) => {
         });
 
         res.json(successResponse({ message: 'Payment reversed successfully' }));
+
+    } catch (error) {
+        next(error);
+    }
+});
+
+// ============================================================
+// ROLL MANAGEMENT ENDPOINTS
+// ============================================================
+
+/**
+ * GET /purchase/bills/:id/rolls
+ * Get rolls for a purchase bill
+ */
+router.get('/bills/:id/rolls', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+        const rolls = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.purchaseBillId, id));
+        res.json(successResponse(rolls));
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * POST /purchase/bills/:id/rolls
+ * Add rolls to a purchase bill and update stock
+ */
+router.post('/bills/:id/rolls', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        console.log('POST /bills/:id/rolls hit');
+        const { id } = req.params;
+        const { rolls } = req.body; // Array of { rollCode, netWeight, rawMaterialId, gsm, length }
+        console.log('Body:', JSON.stringify(req.body, null, 2));
+
+        if (!rolls || !Array.isArray(rolls) || rolls.length === 0) {
+            console.log('Validation failed: No rolls provided');
+            throw createError('No rolls provided', 400);
+        }
+
+        const [bill] = await db.select().from(purchaseBills).where(eq(purchaseBills.id, id));
+        if (!bill) throw createError('Bill not found', 404);
+
+        // Get supplier for stock movement reference
+        const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, bill.supplierId));
+
+        const insertedRolls = [];
+
+        for (const roll of rolls) {
+            // 1. Create Roll Record
+            const [newRoll] = await db.insert(rawMaterialRolls).values({
+                purchaseBillId: id,
+                rawMaterialId: roll.rawMaterialId,
+                rollCode: roll.rollCode,
+                netWeight: String(roll.netWeight),
+                gsm: roll.gsm ? String(roll.gsm) : null,
+                length: roll.width ? String(roll.width) : (roll.length ? String(roll.length) : null), // Accept width or length from frontend
+                status: 'In Stock'
+            }).returning();
+
+            insertedRolls.push(newRoll);
+
+            // 2. Add Stock Movement (RAW_IN)
+            await createStockMovement({
+                date: new Date(),
+                movementType: 'RAW_IN',
+                itemType: 'raw_material',
+                rawMaterialId: roll.rawMaterialId,
+                quantityIn: parseFloat(String(roll.netWeight)),
+                quantityOut: 0,
+                referenceType: 'purchase_roll',
+                referenceCode: roll.rollCode,
+                referenceId: newRoll.id,
+                reason: `Roll Entry for Bill ${bill.code} from ${supplier?.name || 'Supplier'}`
+            });
+
+            // 3. Create Traceability Batch (Optional, keeping consistent with old logic if needed, but rolls act as batches now)
+            // We can skip creating 'rawMaterialBatches' if 'rawMaterialRolls' serves the purpose. 
+            // Ideally we should unify, but for now let's stick to rolls as the source of truth for tracking.
+        }
+
+        // 4. Update Bill Totals and Status
+        const allRolls = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.purchaseBillId, id));
+        const totalWeight = allRolls.reduce((sum, r) => sum + parseFloat(r.netWeight || '0'), 0);
+
+        // Determine Status based on invoice qty vs roll weight? 
+        // Logic: If user says it's done, it's done. But we can just set to 'Partial' if some weight exists.
+        // For now, let's just update the weight. Status management can be explicit or inferred.
+
+        await db.update(purchaseBills)
+            .set({
+                totalRollWeight: String(totalWeight),
+                rollEntryStatus: totalWeight > 0 ? 'Partial' : 'Pending', // Simple logic
+                updatedAt: new Date()
+            })
+            .where(eq(purchaseBills.id, id));
+
+        res.json(successResponse({
+            message: `${insertedRolls.length} rolls added`,
+            rolls: insertedRolls,
+            totalRollWeight: totalWeight
+        }));
+
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * DELETE /purchase/bills/:id/rolls/:rollId
+ * Delete a roll and reverse stock
+ */
+router.delete('/bills/:id/rolls/:rollId', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id, rollId } = req.params;
+
+        // Get the roll
+        const [roll] = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.id, rollId));
+        if (!roll) throw createError('Roll not found', 404);
+
+        if (roll.status !== 'In Stock') {
+            throw createError('Cannot delete roll. It has already been consumed or returned.', 400);
+        }
+
+        // 1. Reverse Stock Movement (RAW_OUT)
+        await createStockMovement({
+            date: new Date(),
+            movementType: 'RAW_OUT', // Removing the stock we added
+            itemType: 'raw_material',
+            rawMaterialId: roll.rawMaterialId,
+            quantityOut: parseFloat(roll.netWeight || '0'),
+            quantityIn: 0,
+            referenceType: 'roll_delete',
+            referenceCode: roll.rollCode,
+            referenceId: rollId,
+            reason: `Roll Deleted: ${roll.rollCode}`
+        });
+
+        // 2. Delete Roll
+        await db.delete(rawMaterialRolls).where(eq(rawMaterialRolls.id, rollId));
+
+        // 3. Update Bill Totals
+        const allRolls = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.purchaseBillId, id));
+        const totalWeight = allRolls.reduce((sum, r) => sum + parseFloat(r.netWeight || '0'), 0);
+
+        await db.update(purchaseBills)
+            .set({
+                totalRollWeight: String(totalWeight),
+                rollEntryStatus: totalWeight > 0 ? 'Partial' : 'Pending',
+                updatedAt: new Date()
+            })
+            .where(eq(purchaseBills.id, id));
+
+        res.json(successResponse({ message: 'Roll deleted and stock reversed', totalRollWeight: totalWeight }));
 
     } catch (error) {
         next(error);

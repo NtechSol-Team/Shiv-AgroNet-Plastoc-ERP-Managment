@@ -12,6 +12,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Minus, Search, Loader2, Building2, Package, Trash2, CheckCircle, XCircle, RotateCcw, Link, Edit2 } from 'lucide-react';
 import { purchaseApi, mastersApi, accountsApi } from '../lib/api';
+import RollEntryModal from './RollEntryModal';
 
 // ============================================================
 // TYPE DEFINITIONS
@@ -83,6 +84,9 @@ interface PurchaseBill {
   paymentStatus: string;
   status: string;
   discountAmount: string; // Added discountAmount to PurchaseBill interface
+  type: 'RAW_MATERIAL' | 'GENERAL' | 'FINISHED_GOODS';
+  rollEntryStatus?: 'Pending' | 'Partial' | 'Completed';
+  totalRollWeight?: string;
 }
 
 // Company state code (Maharashtra)
@@ -131,6 +135,9 @@ export function Purchase() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [outstandingBills, setOutstandingBills] = useState<any[]>([]);
   const [allocations, setAllocations] = useState<{ [key: string]: number }>({});
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{ isOpen: boolean; id: string | null; error?: string }>({ isOpen: false, id: null });
+  const [showRollModal, setShowRollModal] = useState(false);
+  const [selectedBillForRolls, setSelectedBillForRolls] = useState<any>(null);
   const [availableAdvances, setAvailableAdvances] = useState<any[]>([]); // For integrated adjustment
 
   const [paymentForm, setPaymentForm] = useState({
@@ -643,19 +650,26 @@ export function Purchase() {
   };
 
   const handleDeleteBill = async (billId: string) => {
-    if (!confirm("Are you sure you want to delete this purchase bill? This action cannot be undone.")) return;
+    setDeleteConfirmation({ isOpen: true, id: billId });
+  };
+
+  const confirmDeleteBill = async () => {
+    if (!deleteConfirmation.id) return;
 
     setLoading(true);
     try {
-      const result = await purchaseApi.deleteBill(billId);
+      const result = await purchaseApi.deleteBill(deleteConfirmation.id);
       if (result.error) throw new Error(result.error);
       fetchData();
       setSuccess('Purchase bill deleted successfully');
       setTimeout(() => setSuccess(null), 3000);
+      setDeleteConfirmation({ isOpen: false, id: null });
     } catch (err: any) {
       setError(err.message || "Failed to delete purchase bill");
+      setDeleteConfirmation({ isOpen: true, id: deleteConfirmation.id, error: err.message || "Failed to delete purchase bill" });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleEditBill = (bill: PurchaseBill) => {
@@ -667,6 +681,7 @@ export function Purchase() {
     setInvoiceNumber(bill.code);
     setBillStatus(bill.status as 'Draft' | 'Confirmed');
     setDiscountAmount(bill.discountAmount || '0');
+    setPurchaseType(bill.type); // Set purchase type for editing
 
     // Find and set supplier
     const supplier = suppliers.find(s => s.id === bill.supplier?.id);
@@ -819,7 +834,7 @@ export function Purchase() {
                           <td className="px-4 py-1.5 text-xs font-mono font-bold text-blue-700">{bill.code}</td>
                           <td className="px-4 py-1.5 text-sm font-bold text-gray-900">{bill.supplier?.name}</td>
                           <td className="px-4 py-1.5 text-sm font-bold text-gray-900">
-                            {bill.items?.map((i: any, idx) => <div key={idx}>{i.materialName}</div>)}
+                            {bill.items?.map((i: any, idx) => <div key={idx}>{i.materialName}{i.color ? <span className="text-gray-500 font-normal"> ({i.color})</span> : ''}</div>)}
                           </td>
                           <td className="px-4 py-1.5 text-sm font-mono text-gray-900 text-right">
                             {bill.items?.map((i: any, idx) => <div key={idx}>{i.quantity} kg</div>)}
@@ -832,6 +847,16 @@ export function Purchase() {
                             <span className={`text-[10px] font-bold px-1 rounded uppercase ${bill.paymentStatus === 'Paid' ? 'text-green-700 bg-green-100' : bill.paymentStatus === 'Partial' ? 'text-orange-700 bg-orange-100' : 'text-red-700 bg-red-100'}`}>
                               {bill.paymentStatus}
                             </span>
+                            {/* Roll Status Badge */}
+                            {bill.type === 'RAW_MATERIAL' && (
+                              <div className={`mt-1 text-[9px] font-bold px-1 rounded border text-center uppercase ${bill.rollEntryStatus === 'Completed' ? 'border-green-200 text-green-600 bg-green-50' :
+                                bill.rollEntryStatus === 'Partial' ? 'border-orange-200 text-orange-600 bg-orange-50' :
+                                  'border-gray-200 text-gray-500 bg-gray-50'
+                                }`}>
+                                {bill.rollEntryStatus === 'Pending' ? 'No Rolls' : bill.rollEntryStatus}
+                                {parseFloat(bill.totalRollWeight || '0') > 0 && ` (${bill.totalRollWeight}kg)`}
+                              </div>
+                            )}
                           </td>
                           <td className="px-4 py-1.5 text-center">
                             <div className="flex items-center justify-center space-x-2">
@@ -849,6 +874,19 @@ export function Purchase() {
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
+                              {/* Add Rolls Button - Only for RAW_MATERIAL & Confirmed Bills */}
+                              {(bill.type === 'RAW_MATERIAL' && bill.status === 'Confirmed') && (
+                                <button
+                                  onClick={() => {
+                                    setSelectedBillForRolls(bill);
+                                    setShowRollModal(true);
+                                  }}
+                                  className={`transition-colors p-1 ${bill.rollEntryStatus === 'Completed' ? 'text-green-500 hover:text-green-700' : 'text-blue-500 hover:text-blue-700'}`}
+                                  title="Manage Rolls"
+                                >
+                                  <Package className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1563,6 +1601,20 @@ export function Purchase() {
         </div>
       )}
 
+
+      {/* Roll Entry Modal */}
+      {showRollModal && selectedBillForRolls && (
+        <RollEntryModal
+          bill={selectedBillForRolls}
+          onClose={() => {
+            setShowRollModal(false);
+            setSelectedBillForRolls(null);
+          }}
+          onSave={() => {
+            fetchData();
+          }}
+        />
+      )}
 
       {/* Adjust Advance Modal Removed */}
     </div>
