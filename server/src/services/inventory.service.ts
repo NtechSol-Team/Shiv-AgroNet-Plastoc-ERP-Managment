@@ -22,6 +22,7 @@
 import { db } from '../db/index';
 import { stockMovements, rawMaterials, finishedProducts, purchaseBills, purchaseBillItems, productionBatches, rawMaterialBatches } from '../db/schema';
 import { eq, and, sql, desc } from 'drizzle-orm';
+import { invalidateInventorySummary, invalidateDashboardKPIs } from './precomputed.service';
 
 // ============================================================
 // TYPE DEFINITIONS
@@ -346,6 +347,10 @@ export async function createStockMovement(input: StockMovementInput) {
         referenceId: input.referenceId,
         reason: input.reason,
     }).returning();
+
+    // Invalidate precomputed caches after stock change
+    invalidateInventorySummary();
+    invalidateDashboardKPIs();
 
     return movement;
 }

@@ -110,6 +110,7 @@ export const purchaseBills = pgTable('purchase_bills', {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
     code: text('code').notNull().unique(),
     invoiceNumber: text('invoice_number').notNull().default('PENDING'), // Added: Mandatory Invoice Number
+    type: text('type').default('RAW_MATERIAL'), // RAW_MATERIAL, GENERAL, FINISHED_GOODS
     date: timestamp('date').notNull(),
     supplierId: text('supplier_id').notNull().references(() => suppliers.id),
     supplierGST: text('supplier_gst'),
@@ -140,7 +141,9 @@ export const purchaseBills = pgTable('purchase_bills', {
 export const purchaseBillItems = pgTable('purchase_bill_items', {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
     billId: text('bill_id').notNull().references(() => purchaseBills.id, { onDelete: 'cascade' }),
-    rawMaterialId: text('raw_material_id').notNull().references(() => rawMaterials.id),
+    rawMaterialId: text('raw_material_id').references(() => rawMaterials.id), // Nullable for General/FG Purchase
+    finishedProductId: text('finished_product_id').references(() => finishedProducts.id), // For FG Purchase
+    expenseHeadId: text('expense_head_id').references(() => expenseHeads.id), // For General Purchase
     materialName: text('material_name').notNull(),
     hsnCode: text('hsn_code').default('3901'),
     quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
@@ -299,6 +302,7 @@ export const paymentTransactions = pgTable('payment_transactions', {
     typeIdx: index('payment_transactions_type_idx').on(table.type),
     dateIdx: index('payment_transactions_date_idx').on(table.date),
     partyIdx: index('payment_transactions_party_idx').on(table.partyId),
+    accountIdx: index('payment_transactions_account_idx').on(table.accountId),
 }));
 
 // ==================== STOCK MOVEMENTS (CORE LEDGER) ====================
@@ -340,7 +344,11 @@ export const generalLedger = pgTable('general_ledger', {
     referenceId: text('reference_id'), // ID of source doc (invoice id, payment id)
     isReversal: boolean('is_reversal').default(false),
     createdAt: timestamp('created_at').defaultNow(),
-});
+}, (table) => ({
+    ledgerIdx: index('general_ledger_idx').on(table.ledgerId),
+    dateIdx: index('general_ledger_date_idx').on(table.transactionDate),
+    voucherTypeIdx: index('general_ledger_voucher_type_idx').on(table.voucherType),
+}));
 
 export const accountTransactions = pgTable('account_transactions', {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -353,7 +361,10 @@ export const accountTransactions = pgTable('account_transactions', {
     credit: decimal('credit', { precision: 12, scale: 2 }).default('0'),
     balance: decimal('balance', { precision: 12, scale: 2 }).notNull(),
     createdAt: timestamp('created_at').defaultNow(),
-});
+}, (table) => ({
+    accountIdx: index('account_transactions_account_idx').on(table.accountId),
+    dateIdx: index('account_transactions_date_idx').on(table.date),
+}));
 
 export const invoicePaymentAllocations = pgTable('invoice_payment_allocations', {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -361,7 +372,10 @@ export const invoicePaymentAllocations = pgTable('invoice_payment_allocations', 
     invoiceId: text('invoice_id').notNull().references(() => salesInvoices.id, { onDelete: 'cascade' }),
     amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
     createdAt: timestamp('created_at').defaultNow(),
-});
+}, (table) => ({
+    paymentIdx: index('inv_alloc_payment_idx').on(table.paymentId),
+    invoiceIdx: index('inv_alloc_invoice_idx').on(table.invoiceId),
+}));
 
 export const billPaymentAllocations = pgTable('bill_payment_allocations', {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -369,7 +383,10 @@ export const billPaymentAllocations = pgTable('bill_payment_allocations', {
     billId: text('bill_id').notNull().references(() => purchaseBills.id, { onDelete: 'cascade' }),
     amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
     createdAt: timestamp('created_at').defaultNow(),
-});
+}, (table) => ({
+    paymentIdx: index('bill_alloc_payment_idx').on(table.paymentId),
+    billIdx: index('bill_alloc_bill_idx').on(table.billId),
+}));
 
 // NEW: Payment Adjustments (Linking Advances to Bills/Invoices)
 export const paymentAdjustments = pgTable('payment_adjustments', {
@@ -379,7 +396,10 @@ export const paymentAdjustments = pgTable('payment_adjustments', {
     referenceId: text('reference_id').notNull(), // Invoice ID or Bill ID
     amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
     adjustmentDate: timestamp('adjustment_date').defaultNow(),
-});
+}, (table) => ({
+    paymentIdx: index('payment_adjustments_payment_idx').on(table.paymentId),
+    refIdx: index('payment_adjustments_ref_idx').on(table.referenceId),
+}));
 
 export const expenses = pgTable('expenses', {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -392,7 +412,11 @@ export const expenses = pgTable('expenses', {
     accountId: text('account_id').references(() => bankCashAccounts.id),
     status: text('status').default('Paid'),
     createdAt: timestamp('created_at').defaultNow(),
-});
+}, (table) => ({
+    dateIdx: index('expenses_date_idx').on(table.date),
+    headIdx: index('expenses_head_idx').on(table.expenseHeadId),
+    accountIdx: index('expenses_account_idx').on(table.accountId),
+}));
 
 // ==================== RELATIONS ====================
 
@@ -429,6 +453,8 @@ export const purchaseBillsRelations = relations(purchaseBills, ({ one, many }) =
 export const purchaseBillItemsRelations = relations(purchaseBillItems, ({ one }) => ({
     bill: one(purchaseBills, { fields: [purchaseBillItems.billId], references: [purchaseBills.id] }),
     rawMaterial: one(rawMaterials, { fields: [purchaseBillItems.rawMaterialId], references: [rawMaterials.id] }),
+    finishedProduct: one(finishedProducts, { fields: [purchaseBillItems.finishedProductId], references: [finishedProducts.id] }),
+    expenseHead: one(expenseHeads, { fields: [purchaseBillItems.expenseHeadId], references: [expenseHeads.id] }),
 }));
 
 export const productionBatchesRelations = relations(productionBatches, ({ one, many }) => ({
@@ -571,6 +597,8 @@ export const financialTransactions = pgTable('financial_transactions', {
 }, (table) => ({
     dateIdx: index('financial_transactions_date_idx').on(table.transactionDate),
     typeIdx: index('financial_transactions_type_idx').on(table.transactionType),
+    partyIdx: index('financial_transactions_party_idx').on(table.partyId),
+    accountIdx: index('financial_transactions_account_idx').on(table.accountId),
 }));
 
 export const financialTransactionLedger = pgTable('financial_transaction_ledger', {
@@ -582,7 +610,10 @@ export const financialTransactionLedger = pgTable('financial_transaction_ledger'
     credit: decimal('credit', { precision: 12, scale: 2 }).default('0'),
     transactionDate: timestamp('transaction_date').notNull(),
     createdAt: timestamp('created_at').defaultNow(),
-});
+}, (table) => ({
+    ledgerAccountIdx: index('financial_ledger_account_idx').on(table.ledgerAccountId),
+    dateIdx: index('financial_ledger_date_idx').on(table.transactionDate),
+}));
 
 // ==================== RELATIONS ====================
 

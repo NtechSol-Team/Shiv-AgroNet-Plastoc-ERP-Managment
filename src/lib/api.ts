@@ -1,6 +1,10 @@
 // API Configuration
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
+// Request deduplication cache - prevents duplicate in-flight requests
+const pendingRequests = new Map<string, Promise<any>>();
+const DEDUP_TTL_MS = 100; // Dedupe same requests within 100ms
+
 // Generic API response types
 interface ApiResponse<T> {
     success: true;
@@ -16,52 +20,61 @@ interface ApiError {
     };
 }
 
-// Helper function for API calls
+// Helper function for API calls with deduplication
 async function fetchApi<T>(
     endpoint: string,
     options?: RequestInit
 ): Promise<{ data: T | null; error: string | null; warning?: string }> {
     const method = options?.method || 'GET';
-    console.log(`\n🌐 API Request: ${method} ${endpoint}`);
-    if (options?.body) {
-        console.log('Request body:', options.body);
+
+    // Only deduplicate GET requests
+    const requestKey = method === 'GET' ? `${method}:${endpoint}` : null;
+
+    // Check for pending identical request
+    if (requestKey && pendingRequests.has(requestKey)) {
+        console.log(`🔄 Dedup: Reusing pending request for ${endpoint}`);
+        return pendingRequests.get(requestKey);
     }
 
-    try {
-        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-            headers: {
-                'Content-Type': 'application/json',
-                ...options?.headers,
-            },
-            ...options,
-        });
+    const executeRequest = async () => {
+        console.log(`🌐 API: ${method} ${endpoint}`);
 
-        const result = await response.json();
+        try {
+            const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...options?.headers,
+                },
+                ...options,
+            });
 
-        console.log(`📨 API Response: ${method} ${endpoint}`);
-        console.log('  Status:', response.status);
-        console.log('  Success:', result.success);
-        if (result.error) {
-            console.log('  Error:', result.error);
-        }
-        if (result.data) {
-            console.log('  Data keys:', Object.keys(result.data));
-            if (Array.isArray(result.data)) {
-                console.log('  Array length:', result.data.length);
+            const result = await response.json();
+
+            if (!response.ok || !result.success) {
+                console.log(`❌ API Error: ${endpoint}`, result.error?.message);
+                return { data: null, error: result.error?.message || 'An error occurred' };
             }
-        }
 
-        if (!response.ok || !result.success) {
-            console.log('❌ API Error:', result.error?.message || 'An error occurred');
-            return { data: null, error: result.error?.message || 'An error occurred' };
+            console.log(`✓ API: ${endpoint} (${Array.isArray(result.data) ? result.data.length + ' items' : 'ok'})`);
+            return { data: result.data, error: null, warning: result.warning };
+        } catch (error) {
+            console.log('❌ Network Error:', error);
+            return { data: null, error: 'Network error. Please check your connection.' };
         }
+    };
 
-        console.log('✓ API Success\n');
-        return { data: result.data, error: null, warning: result.warning };
-    } catch (error) {
-        console.log('❌ Network Error:', error);
-        return { data: null, error: 'Network error. Please check your connection.' };
+    // Create promise and store it for deduplication
+    const promise = executeRequest();
+
+    if (requestKey) {
+        pendingRequests.set(requestKey, promise);
+        // Clean up after TTL
+        promise.finally(() => {
+            setTimeout(() => pendingRequests.delete(requestKey), DEDUP_TTL_MS);
+        });
     }
+
+    return promise;
 }
 
 // ==================== MASTERS API ====================
@@ -352,10 +365,11 @@ export const financeApi = {
             body: JSON.stringify(data),
         }),
     getPartyStats: (id: string) => fetchApi<any>(`/finance/entities/${id}/stats`),
-    getTransactions: () => fetchApi<any[]>('/finance/transactions'),
+    getTransactions: (page = 1, limit = 20) => fetchApi<any>(`/finance/transactions?page=${page}&limit=${limit}`),
     createTransaction: (data: any) =>
         fetchApi<any>('/finance/transactions', {
             method: 'POST',
             body: JSON.stringify(data),
         }),
+    getDashboardStats: () => fetchApi<any>('/finance/dashboard-stats'),
 };

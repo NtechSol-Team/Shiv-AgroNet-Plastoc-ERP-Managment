@@ -15,7 +15,15 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from '../db/index';
-import { purchaseBills, purchaseBillItems, suppliers, rawMaterials, stockMovements, paymentTransactions, billPaymentAllocations, bankCashAccounts, generalLedger, rawMaterialBatches } from '../db/schema';
+import { createStockMovement } from '../services/inventory.service';
+
+// ... (imports remain)
+import { purchaseBills, purchaseBillItems, suppliers, rawMaterials, paymentTransactions, billPaymentAllocations, bankCashAccounts, generalLedger, rawMaterialBatches, finishedProducts, expenseHeads } from '../db/schema';
+// Removed stockMovements from imports as we use the service now
+
+// ... (inside the route)
+
+
 import { eq, desc, sql, count as countFn, and, inArray } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
@@ -133,7 +141,7 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
         console.log('POST /purchase/bills - START');
         console.log('Request body:', JSON.stringify(req.body, null, 2));
 
-        const { date, invoiceNumber, supplierId, status = 'Draft', items } = req.body as CreateBillRequest;
+        const { date, invoiceNumber, supplierId, status = 'Draft', items, type = 'RAW_MATERIAL' } = req.body;
 
         // Validate inputs
         if (!invoiceNumber || !supplierId || !items || items.length === 0) {
@@ -141,7 +149,7 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
             throw createError('Invoice Number, Supplier and at least one item required', 400);
         }
 
-        console.log(`✓ Validation passed: ${items.length} items to process`);
+        console.log(`✓ Validation passed: ${items.length} items to process. Type: ${type}`);
 
         // Get supplier for GST calculation
         const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, supplierId));
@@ -151,16 +159,12 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
         }
 
         console.log(`✓ Supplier found: ${supplier.name} (${supplier.code})`);
-        console.log(`  State Code: ${supplier.stateCode}, GST: ${supplier.gstNo}`);
-
         const isInterState = (supplier.stateCode || '27') !== COMPANY_STATE_CODE;
-        console.log(`  Inter-state: ${isInterState ? 'YES (IGST)' : 'NO (CGST+SGST)'}`);
 
         // Generate bill code
         const countResult = await db.select({ cnt: countFn() }).from(purchaseBills);
         const billCount = Number(countResult[0]?.cnt || 0);
         const billCode = `PB-${String(billCount + 1).padStart(3, '0')}`;
-        console.log(`✓ Generated bill code: ${billCode}`);
 
         // Calculate totals from items
         let subtotal = 0;
@@ -170,16 +174,12 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
         const discountAmount = parseFloat(req.body.discountAmount || '0');
 
         console.log('\n--- Processing Items ---');
-        const processedItems = items.map((item, index) => {
-            console.log(`\nItem ${index + 1}:`, {
-                rawMaterialId: item.rawMaterialId,
-                quantity: item.quantity,
-                rate: item.rate,
-                gstPercent: item.gstPercent
-            });
-
-            const amount = item.quantity * item.rate;
-            const gstAmount = (amount * item.gstPercent) / 100;
+        const processedItems = items.map((item: any, index: number) => {
+            const quantity = parseFloat(item.quantity) || 0;
+            const rate = parseFloat(item.rate) || 0;
+            const gstPercent = parseFloat(item.gstPercent) || 0;
+            const amount = quantity * rate;
+            const gstAmount = (amount * gstPercent) / 100;
 
             subtotal += amount;
 
@@ -192,14 +192,15 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
 
             const processed = {
                 ...item,
+                quantity,
+                rate,
                 amount,
+                gstPercent,
                 cgst: isInterState ? 0 : gstAmount / 2,
                 sgst: isInterState ? 0 : gstAmount / 2,
                 igst: isInterState ? gstAmount : 0,
                 total: amount + gstAmount,
             };
-
-            console.log(`  Amount: ₹${amount.toFixed(2)}, GST: ₹${gstAmount.toFixed(2)}, Total: ₹${processed.total.toFixed(2)}`);
 
             return processed;
         });
@@ -207,17 +208,12 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
         const totalTax = totalCgst + totalSgst + totalIgst;
         const grandTotal = Math.round(subtotal + totalTax - discountAmount);
 
-        console.log('\n--- Bill Totals ---');
-        console.log(`Subtotal: ₹${subtotal.toFixed(2)}`);
-        console.log(`Discount: ₹${discountAmount.toFixed(2)}`);
-        console.log(`Tax: ₹${totalTax.toFixed(2)}`);
-        console.log(`Grand Total: ₹${grandTotal}`);
-
         // Create bill
         console.log('\n--- Creating Purchase Bill ---');
         const [bill] = await db.insert(purchaseBills).values({
             code: billCode,
             invoiceNumber,
+            type,
             date: new Date(date),
             supplierId,
             supplierGST: supplier.gstNo,
@@ -242,24 +238,63 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
         // Insert line items
         console.log('\n--- Inserting Line Items ---');
         const insertedItems = await Promise.all(
-            processedItems.map(async (item, index) => {
+            processedItems.map(async (item: any, index: number) => {
                 console.log(`\nInserting item ${index + 1}...`);
 
-                // Get material for HSN and name
-                const [material] = await db.select().from(rawMaterials).where(eq(rawMaterials.id, item.rawMaterialId));
+                let materialName = '';
+                let hsnCode = '';
+                let rawMaterialId = null;
+                let finishedProductId = null;
+                let expenseHeadId = null;
 
-                if (!material) {
-                    console.log(`❌ Material not found: ${item.rawMaterialId}`);
-                    throw createError(`Material not found: ${item.rawMaterialId}`, 404);
+                // Validate and Fetch Details based on Type
+                if (type === 'RAW_MATERIAL') {
+                    const [material] = await db.select().from(rawMaterials).where(eq(rawMaterials.id, item.rawMaterialId));
+                    if (!material) throw createError(`Material not found: ${item.rawMaterialId}`, 404);
+                    materialName = material.name;
+                    hsnCode = material.hsnCode || '3901';
+                    rawMaterialId = item.rawMaterialId;
+                } else if (type === 'FINISHED_GOODS') {
+                    const [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+                    if (!product) throw createError(`Product not found: ${item.finishedProductId}`, 404);
+                    materialName = product.name;
+                    hsnCode = product.hsnCode || '5608';
+                    finishedProductId = item.finishedProductId;
+                } else if (type === 'GENERAL') {
+                    if (item.expenseHeadId) {
+                        const [head] = await db.select().from(expenseHeads).where(eq(expenseHeads.id, item.expenseHeadId));
+                        if (!head) throw createError(`Expense Head not found: ${item.expenseHeadId}`, 404);
+                        materialName = head.name;
+                        expenseHeadId = item.expenseHeadId;
+                    } else if (item.expenseHeadName) {
+                        // Check if exists by name
+                        const [existing] = await db.select().from(expenseHeads).where(eq(expenseHeads.name, item.expenseHeadName));
+                        if (existing) {
+                            materialName = existing.name;
+                            expenseHeadId = existing.id;
+                        } else {
+                            // Create new Expense Head
+                            const [newHead] = await db.insert(expenseHeads).values({
+                                name: item.expenseHeadName,
+                                code: `EXP-${Date.now()}-${Math.floor(Math.random() * 1000)}`, // Simple auto-code
+                                category: 'Variable'
+                            }).returning();
+                            materialName = newHead.name;
+                            expenseHeadId = newHead.id;
+                        }
+                    } else {
+                        throw createError('Expense Head ID or Name required for General Purchase', 400);
+                    }
+                    hsnCode = ''; // Expenses usually don't have HSN in this context
                 }
-
-                console.log(`  Material: ${material.name} (${material.code})`);
 
                 const itemData = {
                     billId: bill.id,
-                    rawMaterialId: item.rawMaterialId,
-                    materialName: material.name, // ✅ FIXED: Added missing materialName field
-                    hsnCode: material.hsnCode || '3901',
+                    rawMaterialId,
+                    finishedProductId,
+                    expenseHeadId,
+                    materialName,
+                    hsnCode,
                     quantity: String(item.quantity),
                     rate: String(item.rate),
                     amount: String(item.amount),
@@ -267,50 +302,59 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
                     cgst: String(item.cgst),
                     sgst: String(item.sgst),
                     igst: String(item.igst),
-                    totalAmount: String(item.total), // ✅ FIXED: Using totalAmount (schema field name)
+                    totalAmount: String(item.total),
                 };
-
-                console.log('  Insert data:', itemData);
 
                 const [insertedItem] = await db.insert(purchaseBillItems).values(itemData).returning();
 
-                console.log(`  ✓ Item inserted: ID=${insertedItem.id}`);
-
                 // Create stock movement if confirmed
                 if (status === 'Confirmed') {
-                    console.log(`  Creating stock movement (RAW_IN)...`);
+                    if (type === 'RAW_MATERIAL') {
+                        await createStockMovement({
+                            date: new Date(),
+                            movementType: 'RAW_IN',
+                            itemType: 'raw_material',
+                            rawMaterialId: rawMaterialId!,
+                            quantityIn: parseFloat(String(item.quantity)),
+                            quantityOut: 0,
+                            referenceType: 'purchase',
+                            referenceCode: billCode,
+                            referenceId: bill.id,
+                            reason: `Purchase from ${supplier.name} (Inv: ${invoiceNumber})`
+                        });
 
-                    await db.insert(stockMovements).values({
-                        date: new Date(),
-                        movementType: 'RAW_IN',
-                        itemType: 'raw_material',
-                        rawMaterialId: item.rawMaterialId,
-                        quantityIn: String(item.quantity),
-                        quantityOut: '0',
-                        runningBalance: '0', // Calculated by service
-                        referenceType: 'purchase',
-                        referenceCode: billCode,
-                        referenceId: bill.id,
-                        reason: `Purchase from ${supplier.name} (Inv: ${invoiceNumber})`,
-                    });
+                        // Traceability Batch
+                        const batchCode = `RMB-${billCode}-${index + 1}`;
+                        await db.insert(rawMaterialBatches).values({
+                            batchCode,
+                            rawMaterialId: rawMaterialId!,
+                            purchaseBillId: bill.id,
+                            invoiceNumber: invoiceNumber,
+                            quantity: String(item.quantity),
+                            quantityUsed: '0',
+                            rate: String(item.rate),
+                            status: 'Active'
+                        });
 
-                    // Create Raw Material Batch for Traceability
-                    const batchCode = `RMB-${billCode}-${index + 1}`;
-                    await db.insert(rawMaterialBatches).values({
-                        batchCode,
-                        rawMaterialId: item.rawMaterialId,
-                        purchaseBillId: bill.id,
-                        invoiceNumber: invoiceNumber,
-                        quantity: String(item.quantity),
-                        quantityUsed: '0',
-                        rate: String(item.rate),
-                        status: 'Active'
-                    });
-
-                    console.log(`  ✓ Stock movement & Batch (${batchCode}) created`);
+                    } else if (type === 'FINISHED_GOODS') {
+                        // Finished Goods Trading Stock
+                        await createStockMovement({
+                            date: new Date(),
+                            movementType: 'FG_IN', // Represents Stock In (Purchased)
+                            itemType: 'finished_product',
+                            finishedProductId: finishedProductId!,
+                            quantityIn: parseFloat(String(item.quantity)),
+                            quantityOut: 0,
+                            referenceType: 'purchase', // Tag as purchased
+                            referenceCode: billCode,
+                            referenceId: bill.id,
+                            reason: `Trading Purchase from ${supplier.name}`
+                        });
+                    }
+                    // GENERAL Purchase creates NO stock movement.
                 }
 
-                return { ...insertedItem, rawMaterial: material };
+                return insertedItem;
             })
         );
 
@@ -318,16 +362,12 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
 
         // Update supplier outstanding if confirmed
         if (status === 'Confirmed') {
-            console.log('\n--- Updating Supplier Outstanding ---');
             const currentOutstanding = parseFloat(supplier.outstanding || '0');
             const newOutstanding = currentOutstanding + grandTotal;
 
             await db.update(suppliers)
                 .set({ outstanding: String(newOutstanding) })
                 .where(eq(suppliers.id, supplierId));
-
-            console.log(`  Old outstanding: ₹${currentOutstanding}`);
-            console.log(`  New outstanding: ₹${newOutstanding}`);
         }
 
         console.log('\n✅ POST /purchase/bills - SUCCESS');

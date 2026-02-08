@@ -127,6 +127,10 @@ app.listen(PORT, async () => {
         const { sql } = await import('drizzle-orm');
         await db.execute(sql`SELECT 1`);
         console.log('✅ Database connected successfully');
+
+        // Warmup cache with master data
+        const { cache } = await import('./services/cache.service');
+        await cache.warmup();
     } catch (err) {
         console.error('❌ Database connection failed:', err);
     }

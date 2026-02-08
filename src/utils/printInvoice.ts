@@ -765,6 +765,10 @@ export function printInvoice(invoice: InvoiceData): void {
     <!-- Header -->
     <div class="header">
       <div class="company-info">
+        <!-- Product Logo -->
+        <div style="margin-bottom: 10px;">
+           <img src="${window.location.origin}/product-logo.png" alt="Logo" style="height: 50px; object-fit: contain;">
+        </div>
         <div class="company-name">${company.name}</div>
         <div class="company-tagline">${company.tagline}</div>
         <div class="company-details">
@@ -1178,6 +1182,12 @@ export function printPurchaseBill(bill: any): void {
         ___________________<br>
         Authorized Signatory
       </div>
+    </div>
+  </div>
+</body>
+    <div style="text-align: center; margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px;">
+        <p style="font-size: 8px; color: #999; margin-bottom: 5px;">Powered By</p>
+        <img src="${window.location.origin}/parent-logo.png" alt="StartUp" style="height: 30px; opacity: 0.6;">
     </div>
   </div>
 </body>

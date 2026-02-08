@@ -11,9 +11,31 @@ import {
     bankCashAccounts,
     generalLedger
 } from '../db/schema';
-import { eq, desc, sql } from 'drizzle-orm';
+import { eq, desc, sql, count as countFn } from 'drizzle-orm';
 
 const router = Router();
+
+/**
+ * GET /finance/dashboard-stats
+ * Get aggregated stats for dashboard
+ */
+router.get('/dashboard-stats', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const [stats] = await db.select({
+            totalLoansTaken: sql<string>`coalesce(sum(case when ${financialTransactions.transactionType} = 'LOAN_TAKEN' then ${financialTransactions.amount} else 0 end), 0)`,
+            totalLoansGiven: sql<string>`coalesce(sum(case when ${financialTransactions.transactionType} = 'LOAN_GIVEN' then ${financialTransactions.amount} else 0 end), 0)`,
+            totalInvestments: sql<string>`coalesce(sum(case when ${financialTransactions.transactionType} = 'INVESTMENT_RECEIVED' then ${financialTransactions.amount} else 0 end), 0)`,
+        }).from(financialTransactions);
+
+        res.json(successResponse({
+            totalLoansTaken: parseFloat(stats.totalLoansTaken),
+            totalLoansGiven: parseFloat(stats.totalLoansGiven),
+            totalInvestments: parseFloat(stats.totalInvestments)
+        }));
+    } catch (error) {
+        next(error);
+    }
+});
 
 /**
  * GET /finance/entities
@@ -115,18 +137,37 @@ router.get('/entities/:id/stats', async (req: Request, res: Response, next: Next
 
 /**
  * GET /finance/transactions
- * List all Financial Transactions
+ * List all Financial Transactions (Paginated)
  */
 router.get('/transactions', async (req: Request, res: Response, next: NextFunction) => {
     try {
+        const page = parseInt(req.query.page as string) || 1;
+        const limit = parseInt(req.query.limit as string) || 20;
+        const offset = (page - 1) * limit;
+
+        // Get Total Count
+        const [totalObj] = await db.select({ count: countFn() }).from(financialTransactions);
+        const total = Number(totalObj.count);
+
         const txs = await db.query.financialTransactions.findMany({
             orderBy: [desc(financialTransactions.transactionDate)],
+            limit: limit,
+            offset: offset,
             with: {
                 party: true,
                 account: true,
             }
         });
-        res.json(successResponse(txs));
+
+        res.json(successResponse({
+            data: txs,
+            meta: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit)
+            }
+        }));
     } catch (error) {
         next(error);
     }

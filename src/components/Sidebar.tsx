@@ -33,8 +33,13 @@ export function Sidebar({ activeModule, onModuleChange }: SidebarProps) {
 
     return (
         <aside className="w-64 h-screen fixed left-0 top-0 bg-white border-r border-slate-100 flex flex-col z-50 transition-all duration-300">
+            {/* Top Logo Area - Product Logo */}
+            <div className="h-20 flex items-center justify-center border-b border-slate-100">
+                <img src="/product-logo.png" alt="Product Logo" className="h-16 object-contain" />
+            </div>
+
             {/* Top Spacing / Navigation Label */}
-            <div className="pt-8 px-6 mb-2">
+            <div className="pt-6 px-6 mb-2">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Apps</p>
             </div>
 
@@ -64,18 +69,11 @@ export function Sidebar({ activeModule, onModuleChange }: SidebarProps) {
                 })}
             </nav>
 
-            {/* Brand Footer */}
-            <div className="p-6 border-t-2 border-slate-200 mt-2">
-                <div className="flex items-center">
-                    <div className="w-9 h-9 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center text-white mr-3 shadow-lg shadow-blue-500/30">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
-                    </div>
-                    <div>
-                        <h1 className="text-sm font-bold text-slate-900 leading-tight">Shiv Egronet</h1>
-                        <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mt-0.5">Manufacture OS</p>
-                    </div>
+            {/* Brand Footer - Parent Logo */}
+            <div className="p-4 border-t-2 border-slate-200 bg-slate-50/50">
+                <div className="flex flex-col items-center justify-center">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-2">Powered By</p>
+                    <img src="/parent-logo.png" alt="Parent Logo" className="h-12 object-contain" />
                 </div>
             </div>
         </aside>

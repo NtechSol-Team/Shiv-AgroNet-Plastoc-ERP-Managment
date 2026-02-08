@@ -125,7 +125,7 @@ export function Sales() {
         mastersApi.getFinishedProducts(),
         salesApi.getSummary(),
         mastersApi.getAccounts(), // Fetch accounts for receipt
-        accountsApi.getTransactions({ type: 'RECEIPT' }), // Fetch receipts
+        accountsApi.getTransactions({ type: 'RECEIPT', partyType: 'customer' }), // Fetch receipts for customers only
         salesApi.getAvailableBells(),
       ]);
 
@@ -917,6 +917,14 @@ export function Sales() {
                                 <optgroup label="Bell Batches">
                                   {/* Group Bells by Batch Code */}
                                   {Object.values(availableBells.reduce((acc: any, bell) => {
+                                    // FILTER: Skip bells that are already in invoiceItems (top-level or children)
+                                    const isUsed = invoiceItems.some(item =>
+                                      item.bellItemId === bell.id ||
+                                      (item.childItems && item.childItems.some(child => child.id === bell.id))
+                                    );
+
+                                    if (isUsed) return acc;
+
                                     // Prefer Batch Code, fallback to Bell Code
                                     const key = bell.batch?.code || bell.code;
                                     if (!acc[key]) acc[key] = { code: key, count: 0, bells: [], products: [] };
@@ -988,6 +996,7 @@ export function Sales() {
                     <thead className="bg-gray-100 border-b border-gray-300">
                       <tr>
                         <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Date</th>
+                        <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Allocations / Bill No</th>
                         <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Receipt #</th>
                         <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Customer</th>
                         <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Mode</th>
@@ -998,12 +1007,26 @@ export function Sales() {
                     <tbody className="divide-y divide-gray-200">
                       {salesReceipts.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="px-6 py-12 text-center text-sm text-gray-500 italic">No receipts recorded.</td>
+                          <td colSpan={7} className="px-6 py-12 text-center text-sm text-gray-500 italic">No receipts recorded.</td>
                         </tr>
                       ) : (
                         salesReceipts.map((receipt) => (
                           <tr key={receipt.id} className={`hover:bg-emerald-50 transition-colors ${receipt.status === 'Reversed' ? 'bg-red-50 opacity-70' : ''}`}>
                             <td className="px-4 py-1.5 text-xs text-gray-600">{new Date(receipt.date).toLocaleDateString()}</td>
+                            <td className="px-4 py-1.5 text-xs text-gray-600">
+                              {receipt.allocations && receipt.allocations.length > 0 ? (
+                                <div className="flex flex-col gap-1">
+                                  {receipt.allocations.map((alloc: any, i: number) => (
+                                    <div key={i} className="flex justify-between items-center bg-gray-50 px-2 py-0.5 rounded border border-gray-100">
+                                      <span className="font-mono font-bold text-blue-600 text-[10px]">{alloc.billNumber}</span>
+                                      <span className="font-mono text-gray-800 text-[10px]">₹{parseFloat(alloc.amount).toLocaleString()}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-gray-400 italic text-[10px]">-</span>
+                              )}
+                            </td>
                             <td className="px-4 py-1.5 text-xs font-mono font-bold text-emerald-700">
                               {receipt.code}
                               {receipt.status === 'Reversed' && <span className="ml-2 text-[9px] bg-red-200 text-red-800 px-1 rounded">REVERSED</span>}

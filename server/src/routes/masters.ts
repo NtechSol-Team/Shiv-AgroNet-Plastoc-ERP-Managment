@@ -25,7 +25,7 @@ import {
 import { eq, count as countFn } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
-import { getRawMaterialStock, getFinishedProductStock } from '../services/inventory.service';
+import { getRawMaterialStock, getFinishedProductStock, getAllRawMaterialsWithStock, getAllFinishedProductsWithStock } from '../services/inventory.service';
 import { cache } from '../services/cache.service';
 
 const router = Router();
@@ -36,7 +36,7 @@ const router = Router();
 
 /**
  * GET /masters/raw-materials
- * Get all raw materials with calculated stock
+ * Get all raw materials with calculated stock (OPTIMIZED)
  */
 router.get('/raw-materials', async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -46,17 +46,10 @@ router.get('/raw-materials', async (req: Request, res: Response, next: NextFunct
             return res.json(successResponse(cached));
         }
 
-        const items = await db.select().from(rawMaterials).orderBy(rawMaterials.code);
+        // Use batch-optimized function (single query instead of N+1)
+        const itemsWithStock = await getAllRawMaterialsWithStock();
 
-        // Add calculated stock from movements
-        const itemsWithStock = await Promise.all(
-            items.map(async (item) => {
-                const stock = await getRawMaterialStock(item.id);
-                return { ...item, stock: stock.toFixed(2) };
-            })
-        );
-
-        cache.set(cacheKey, itemsWithStock);
+        cache.set(cacheKey, itemsWithStock, cache.TTL.COMPUTED); // 5 min for stock data
         res.json(successResponse(itemsWithStock));
     } catch (error) {
         next(error);
@@ -148,7 +141,7 @@ router.delete('/raw-materials/:id', async (req: Request, res: Response, next: Ne
 
 /**
  * GET /masters/finished-products
- * Get all finished products with calculated stock
+ * Get all finished products with calculated stock (OPTIMIZED)
  */
 router.get('/finished-products', async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -156,17 +149,10 @@ router.get('/finished-products', async (req: Request, res: Response, next: NextF
         const cached = cache.get(cacheKey);
         if (cached) return res.json(successResponse(cached));
 
-        const items = await db.select().from(finishedProducts).orderBy(finishedProducts.code);
+        // Use batch-optimized function (single query instead of N+1)
+        const itemsWithStock = await getAllFinishedProductsWithStock();
 
-        // Add calculated stock from movements
-        const itemsWithStock = await Promise.all(
-            items.map(async (item) => {
-                const stock = await getFinishedProductStock(item.id);
-                return { ...item, stock: stock.toFixed(2) };
-            })
-        );
-
-        cache.set(cacheKey, itemsWithStock);
+        cache.set(cacheKey, itemsWithStock, cache.TTL.COMPUTED); // 5 min for stock data
         res.json(successResponse(itemsWithStock));
     } catch (error) {
         next(error);

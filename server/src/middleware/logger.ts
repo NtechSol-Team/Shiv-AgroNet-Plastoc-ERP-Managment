@@ -57,6 +57,12 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction) =
     const path = req.originalUrl || req.url;
     const methodColor = methodColors[method] || colors.white;
 
+    // Skip logging for noisy paths (health checks, static assets, favicon)
+    const skipPaths = ['/', '/favicon.ico', '/health'];
+    if (skipPaths.includes(path) || path.startsWith('/_next') || path.startsWith('/assets')) {
+        return next();
+    }
+
     // Log request start
     console.log(
         `${colors.dim}[${getTimestamp()}]${colors.reset} ` +

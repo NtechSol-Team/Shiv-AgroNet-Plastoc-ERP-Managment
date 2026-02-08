@@ -456,7 +456,7 @@ export function BellInventory() {
                                                 <option value="">Choose a finished product...</option>
                                                 {products.map(p => (
                                                     <option key={p.id} value={p.id}>
-                                                        {p.name} ({p.length}x{p.width}) - Stock: {parseFloat(p.stock || '0').toFixed(0)}kg
+                                                        {p.name} ({p.length}x{p.width} | {p.gsm || 'N/A'} GSM) - Stock: {parseFloat(p.stock || '0').toFixed(0)}kg
                                                     </option>
                                                 ))}
                                             </select>

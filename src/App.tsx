@@ -11,6 +11,7 @@ import { Reports } from './components/Reports';
 // import { Header } from './components/Header'; // Deprecated
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
+import { MasterDataProvider } from './context/MasterDataContext';
 
 export default function App() {
   const [activeModule, setActiveModule] = useState('inventory');
@@ -41,20 +42,22 @@ export default function App() {
   };
 
   return (
-    <div className="flex min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-blue-100 selection:text-blue-900 overflow-x-hidden">
-      {/* Sidebar Navigation - Fixed width 16rem (64) */}
-      <Sidebar activeModule={activeModule} onModuleChange={setActiveModule} />
+    <MasterDataProvider>
+      <div className="flex min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-blue-100 selection:text-blue-900 overflow-x-hidden">
+        {/* Sidebar Navigation - Fixed width 16rem (64) */}
+        <Sidebar activeModule={activeModule} onModuleChange={setActiveModule} />
 
-      {/* Main Content Area - Pushed right by 16rem */}
-      <div className="flex-1 flex flex-col ml-64 min-w-0 transition-all duration-300">
-        <TopBar title={activeModule} />
+        {/* Main Content Area - Pushed right by 16rem */}
+        <div className="flex-1 flex flex-col ml-64 min-w-0 transition-all duration-300">
+          <TopBar title={activeModule} />
 
-        <main className="flex-1 overflow-y-auto p-4 md:p-8">
-          <div className="max-w-full mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {renderModule()}
-          </div>
-        </main>
+          <main className="flex-1 overflow-y-auto p-4 md:p-8">
+            <div className="max-w-full mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+              {renderModule()}
+            </div>
+          </main>
+        </div>
       </div>
-    </div>
+    </MasterDataProvider>
   );
 }

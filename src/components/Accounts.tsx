@@ -27,6 +27,7 @@ interface Transaction {
   referenceCode?: string;
   account?: Account;
   remarks?: string;
+  accountName?: string;
 }
 
 interface Customer {
@@ -83,7 +84,8 @@ export function Accounts() {
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
-  const [ledgerData, setLedgerData] = useState<any>(null); // For storing filtered ledger data
+  const [ledgerData, setLedgerData] = useState<any>(null); // For Customer/Supplier
+  const [accountLedgerData, setAccountLedgerData] = useState<any>(null); // For Bank/Cash Account
 
   // Pagination State
   const [page, setPage] = useState(1);
@@ -136,6 +138,7 @@ export function Accounts() {
   };
 
   const fetchTransactions = async () => {
+    // Only fetch general list if no account selected (or if we want to keep it in background)
     const res = await accountsApi.getTransactions({}, page, limit);
     if (res.data) {
       // Handle paginated response structure
@@ -162,6 +165,15 @@ export function Accounts() {
     }
   }, [activeTab, selectedCustomerId, selectedSupplierId]);
 
+  // Effect for Account Ledger
+  useEffect(() => {
+    if (selectedAccountId) {
+      loadAccountLedger(selectedAccountId);
+    } else {
+      setAccountLedgerData(null);
+    }
+  }, [selectedAccountId]);
+
   const loadCustomerLedger = async (id: string) => {
     const res = await accountsApi.getCustomerLedger(id);
     if (res.data) setLedgerData(res.data);
@@ -170,6 +182,11 @@ export function Accounts() {
   const loadSupplierLedger = async (id: string) => {
     const res = await accountsApi.getSupplierLedger(id);
     if (res.data) setLedgerData(res.data);
+  };
+
+  const loadAccountLedger = async (id: string) => {
+    const res = await accountsApi.getLedger(id);
+    if (res.data) setAccountLedgerData(res.data);
   };
 
   // ============================================================
@@ -186,6 +203,7 @@ export function Accounts() {
       });
       setShowExpenseModal(false);
       fetchInitialData();
+      if (selectedAccountId) loadAccountLedger(selectedAccountId); // Refresh ledger if active
     } catch (err) {
       setError('Failed to record expense');
     }
@@ -196,10 +214,7 @@ export function Accounts() {
     return type === 'RECEIPT' ? 'text-green-600' : 'text-red-600';
   };
 
-  // Filter transactions based on selection
-  const filteredTransactions = selectedAccountId
-    ? transactions.filter(t => (t as any).accountId === selectedAccountId)
-    : transactions;
+  // Filter transactions based on selection - REMOVED, using conditional rendering instead
 
   // ============================================================
   // RENDER HELPERS
@@ -365,146 +380,215 @@ export function Accounts() {
             </div>
           </div>
 
-          {/* Recent Transactions Table */}
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
-            <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-lg font-medium text-gray-900">
-                Recent Transactions
-                {selectedAccountId && (
-                  <span className="text-sm font-normal text-gray-500 ml-2">
-                    (Filtered by {accounts.find(a => a.id === selectedAccountId)?.name})
-                  </span>
-                )}
-              </h3>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ref #</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Party / Description</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Account</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {(() => {
-                    // 1. Merge Transactions and Expenses
-                    const allTransactions = [
-                      ...transactions.map(t => ({ ...t, uiType: t.type })), // Keep original type
-                      ...expenses.map(e => ({
-                        id: e.id,
-                        date: e.date,
-                        code: (e as any).code || 'EXP', // Handle missing code if any
-                        description: e.description,
-                        type: 'EXPENSE',
-                        uiType: 'EXPENSE',
-                        amount: e.amount,
-                        partyName: e.expenseHead?.name || 'Expense', // Show Category as Party
-                        account: e.account,
-                        accountId: e.account?.id
-                      }))
-                    ];
-
-                    // 2. Sort by Date Descending
-                    allTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-                    // 3. Filter by Selected Account
-                    const displayedTransactions = selectedAccountId
-                      ? allTransactions.filter(t => (t as any).accountId === selectedAccountId)
-                      : allTransactions;
-
-                    if (displayedTransactions.length === 0) {
-                      return (
-                        <tr>
-                          <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
-                            No transactions found for the selected filter.
-                          </td>
-                        </tr>
-                      );
-                    }
-
-                    // 4. Render
-                    return displayedTransactions.slice(0, 50).map((txn: any, idx) => (
-                      <tr key={`${txn.uiType}-${txn.id}`} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 text-sm text-gray-900">
-                          {new Date(txn.date).toLocaleDateString()}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-500">
-                          <span className={`px-2 py-1 rounded text-xs font-medium ${txn.uiType === 'EXPENSE' ? 'bg-orange-100 text-orange-800' : 'bg-gray-100 text-gray-800'}`}>
-                            {txn.code}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-900">
-                          <div className="font-medium">{txn.partyName || '-'}</div>
-                          {txn.uiType === 'EXPENSE' && <div className="text-xs text-gray-500">{txn.description}</div>}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-500">
-                          {accounts.find(a => a.id === txn.accountId)?.name || txn.account?.name || '-'}
-                        </td>
-                        <td className={`px-6 py-4 text-sm text-right font-bold ${txn.uiType === 'RECEIPT' ? 'text-green-600' : 'text-red-600'
-                          }`}>
-                          {txn.uiType === 'RECEIPT' ? '+' : '-'} ₹{parseFloat(txn.amount).toLocaleString()}
-                        </td>
-                      </tr>
-                    ));
-                  })()}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Pagination Controls */}
-            <div className="bg-gray-50 px-4 py-3 border-t border-gray-300 flex items-center justify-between sm:px-6">
-              <div className="flex-1 flex justify-between sm:hidden">
-                <button
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                  className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-                >
-                  Previous
-                </button>
-                <button
-                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                  className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-                >
-                  Next
-                </button>
-              </div>
-              <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+          {/* Transaction List or Account Ledger */}
+          {selectedAccountId && accountLedgerData ? (
+            // ACCOUNT LEDGER VIEW (PASSBOOK STYLE)
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+              <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-blue-50">
                 <div>
-                  <p className="text-sm text-gray-700">
-                    Showing page <span className="font-medium">{page}</span> of <span className="font-medium">{totalPages}</span>
+                  <h3 className="text-lg font-bold text-blue-900">
+                    {accountLedgerData.account.name} - Statement
+                  </h3>
+                  <p className="text-xs text-blue-600 mt-1">
+                    Current Balance: <span className="font-bold text-lg">₹{parseFloat(accountLedgerData.summary.currentBalance).toLocaleString()}</span>
                   </p>
                 </div>
-                <div>
-                  <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
-                    <button
-                      onClick={() => setPage(p => Math.max(1, p - 1))}
-                      disabled={page === 1}
-                      className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      <span className="sr-only">Previous</span>
-                      <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                        <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                      disabled={page === totalPages}
-                      className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      <span className="sr-only">Next</span>
-                      <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                        <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                      </svg>
-                    </button>
-                  </nav>
+                <div className="text-right text-xs text-gray-500">
+                  <div>Total Inflow: <span className="text-green-600 font-bold">₹{accountLedgerData.summary.totalInflow}</span></div>
+                  <div>Total Outflow: <span className="text-red-600 font-bold">₹{accountLedgerData.summary.totalOutflow}</span></div>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Particualrs</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Debit (Out)</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Credit (In)</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {(() => {
+                      // Calculate Running Balances
+                      // We have 'history' sorted DESC (Newest First)
+                      // Final Balance (Latest) is known.
+                      // Balance[i-1] (Previous/NextInArray) = Balance[i] - Credit[i] + Debit[i]
+
+                      const history = accountLedgerData.history || [];
+                      let currentBal = parseFloat(accountLedgerData.summary.currentBalance);
+
+                      // We need to map running balances. 
+                      // Render is Top-Down (Newest First).
+                      // So Row 0 Balance = Current Balance.
+                      // Row 1 Balance = Row 0 Balance - Row 0 NetChange.
+
+                      const rowsWithBalance = history.map((txn: any) => {
+                        const debit = txn.isDebit ? txn.amount : 0;
+                        const credit = txn.isCredit ? txn.amount : 0;
+                        const bal = currentBal;
+
+                        // Update for NEXT row (older transaction)
+                        // Current Balance was achieved AFTER this transaction.
+                        // So Balance BEFORE this = Current - Credit + Debit
+                        currentBal = currentBal - credit + debit;
+
+                        return { ...txn, balance: bal, debit, credit };
+                      });
+
+                      if (rowsWithBalance.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
+                              No transactions found for this account.
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return rowsWithBalance.map((txn: any) => (
+                        <tr key={txn.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 text-sm text-gray-900 whitespace-nowrap">
+                            {new Date(txn.date).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-900">
+                            <div className="font-medium">{txn.partyName || '-'}</div>
+                            <div className="text-xs text-gray-500">{txn.description}</div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-500">
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${txn.category === 'Trade' ? 'bg-blue-100 text-blue-800' :
+                              txn.category === 'Expense' ? 'bg-orange-100 text-orange-800' :
+                                'bg-purple-100 text-purple-800'
+                              }`}>
+                              {txn.type}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-right text-red-600">
+                            {txn.debit > 0 ? `₹${txn.debit.toLocaleString()}` : '-'}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-right text-green-600">
+                            {txn.credit > 0 ? `₹${txn.credit.toLocaleString()}` : '-'}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-right font-bold font-mono text-gray-900">
+                            ₹{txn.balance.toLocaleString()}
+                          </td>
+                        </tr>
+                      ));
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            // DEFAULT RECENT TRANSACTIONS VIEW
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+              <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                <h3 className="text-lg font-medium text-gray-900">
+                  Recent Transactions
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ref #</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Party / Description</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Account</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {(() => {
+                      // 1. Merge Transactions and Expenses (Legacy Frontend Merge - consider removing if using unified API entirely)
+                      // Actually, the new API /accounts/transactions returns unified data if we update logic, 
+                      // but currently keeping the merge for safety until we verify API response structure used here.
+
+                      // NOTE: The previous logic manually merged 'transactions' and 'expenses' arrays.
+                      // Since we have updated the backend to return unified, we should rely on that?
+                      // Checked fetchTransactions: It calls accountsApi.getTransactions.
+                      // The backend NOW returns Unified.
+                      // BUT fetchTransactions sets 'transactions' state.
+                      // 'expenses' state is fetched separately.
+
+                      // If backend returns unified in 'transactions', we shouldn't merge 'expenses' again potentially?
+                      // Let's check `fetchInitialData`. It fetches `accountsApi.getExpenses()`.
+                      // If `getTransactions` returns everything, we might double count if we merge again.
+
+                      // CHECK Backend accounts.ts: `GET /transactions` returns unified.
+                      // CHECK Frontend: `fetchTransactions` sets `transactions`.
+                      // So `transactions` already contains expenses!
+
+                      // FIX: Do NOT merge `expenses` state here. Just use `transactions`.
+
+                      const allTransactions = transactions.map(t => ({
+                        ...t,
+                        uiType: (t as any).uiType || t.type, // Backend might return 'type', logic below uses it.
+                        code: t.code || (t as any).id.substring(0, 8), // Fallback
+                      }));
+
+                      // Sort by Date Descending
+                      allTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                      if (allTransactions.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                              No recent transactions found.
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return allTransactions.slice(0, 50).map((txn: any, idx) => (
+                        <tr key={`${txn.id}-${idx}`} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 text-sm text-gray-900">
+                            {new Date(txn.date).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-500">
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${txn.category === 'Expense' ? 'bg-orange-100 text-orange-800' : 'bg-gray-100 text-gray-800'}`}>
+                              {txn.code || 'TXN'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-900">
+                            <div className="font-medium">{txn.partyName || '-'}</div>
+                            {txn.category === 'Expense' && <div className="text-xs text-gray-500">{txn.description}</div>}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-500">
+                            {(txn as any).accountName || ((txn as any).mode === 'Adjustment' ? 'Adjustment' : accounts.find(a => a.id === (txn as any).accountId)?.name || (txn as any).account?.name || '-')}
+                          </td>
+                          <td className={`px-6 py-4 text-sm text-right font-bold ${txn.type === 'RECEIPT' || txn.type === 'LOAN_TAKEN' ? 'text-green-600' : 'text-red-600'
+                            }`}>
+                            {txn.type === 'RECEIPT' || txn.type === 'LOAN_TAKEN' ? '+' : '-'} ₹{parseFloat(txn.amount).toLocaleString()}
+                          </td>
+                        </tr>
+                      ));
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination Controls */}
+              <div className="bg-gray-50 px-4 py-3 border-t border-gray-300 flex items-center justify-between sm:px-6">
+                {/* Existing Pagination Logic... */}
+                <div className="flex-1 flex justify-between sm:hidden">
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50">Previous</button>
+                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50">Next</button>
+                </div>
+                <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                  <div><p className="text-sm text-gray-700">Showing page <span className="font-medium">{page}</span> of <span className="font-medium">{totalPages}</span></p></div>
+                  <div>
+                    <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                      <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"><span className="sr-only">Previous</span>&larr;</button>
+                      <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"><span className="sr-only">Next</span>&rarr;</button>
+                    </nav>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 

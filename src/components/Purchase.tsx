@@ -38,9 +38,25 @@ interface RawMaterial {
   unit: string;
 }
 
+interface FinishedProduct {
+  id: string;
+  code: string;
+  name: string;
+  hsnCode: string;
+  unit: string;
+}
+
+interface ExpenseHead {
+  id: string;
+  code: string;
+  name: string;
+}
+
 interface PurchaseItem {
   id: string;
-  rawMaterialId: string;
+  rawMaterialId?: string;
+  finishedProductId?: string;
+  expenseHeadId?: string;
   materialName: string;
   hsnCode: string;
   quantity: string;
@@ -88,6 +104,8 @@ export function Purchase() {
   const [purchaseBills, setPurchaseBills] = useState<PurchaseBill[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
+  const [finishedProducts, setFinishedProducts] = useState<FinishedProduct[]>([]);
+  const [expenseHeads, setExpenseHeads] = useState<ExpenseHead[]>([]);
   const [summary, setSummary] = useState<any>(null);
 
   // Form State
@@ -95,6 +113,7 @@ export function Purchase() {
   const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
   const [items, setItems] = useState<PurchaseItem[]>([]);
   const [billStatus, setBillStatus] = useState<'Draft' | 'Confirmed'>('Confirmed');
+  const [purchaseType, setPurchaseType] = useState<'RAW_MATERIAL' | 'GENERAL' | 'FINISHED_GOODS'>('RAW_MATERIAL');
   /* State for discount and invoice number */
   const [discountAmount, setDiscountAmount] = useState<string>('');
   const [invoiceNumber, setInvoiceNumber] = useState<string>('');
@@ -135,17 +154,18 @@ export function Purchase() {
     setLoading(true);
     setError(null);
     try {
-      const [billsRes, suppliersRes, materialsRes, summaryRes, accountsRes, paymentsRes] = await Promise.all([
-        purchaseApi.getBills(page, limit), // Pass page and limit
+      const [billsRes, suppliersRes, materialsRes, finishedRes, expensesRes, summaryRes, accountsRes, paymentsRes] = await Promise.all([
+        purchaseApi.getBills(page, limit),
         mastersApi.getSuppliers(),
         mastersApi.getRawMaterials(),
+        mastersApi.getFinishedProducts(),
+        mastersApi.getExpenseHeads(),
         purchaseApi.getSummary(),
         mastersApi.getAccounts(),
-        accountsApi.getTransactions({ type: 'PAYMENT' }),
+        accountsApi.getTransactions({ type: 'PAYMENT', partyType: 'supplier' }), // Fetch payments for suppliers only
       ]);
 
       if (billsRes.data) {
-        // Handle paginated response structure
         const isPaginated = !Array.isArray(billsRes.data) && 'data' in billsRes.data;
         const bills = isPaginated ? (billsRes.data as any).data : billsRes.data;
         const meta = isPaginated ? (billsRes.data as any).meta : { totalPages: 1 };
@@ -155,6 +175,8 @@ export function Purchase() {
       }
       if (suppliersRes.data) setSuppliers(suppliersRes.data);
       if (materialsRes.data) setRawMaterials(materialsRes.data);
+      if (finishedRes.data) setFinishedProducts(finishedRes.data);
+      if (expensesRes.data) setExpenseHeads(expensesRes.data);
       if (summaryRes.data) setSummary(summaryRes.data);
       if (accountsRes.data) setAccounts(accountsRes.data);
       if (paymentsRes.data) {
@@ -229,6 +251,8 @@ export function Purchase() {
     const newItem: PurchaseItem = {
       id: crypto.randomUUID(),
       rawMaterialId: '',
+      finishedProductId: '',
+      expenseHeadId: '',
       materialName: '',
       hsnCode: '',
       quantity: '',
@@ -260,13 +284,27 @@ export function Purchase() {
 
       const updatedItem = { ...item, [field]: value };
 
-      // Auto-fill material details when selecting material
+      // Auto-fill material details when selecting
       if (field === 'rawMaterialId') {
         const material = rawMaterials.find(m => m.id === value);
         if (material) {
           updatedItem.materialName = material.name;
           updatedItem.hsnCode = material.hsnCode || '3901';
           updatedItem.gstPercent = material.gstPercent || '18';
+        }
+      } else if (field === 'finishedProductId') {
+        const product = finishedProducts.find(p => p.id === value);
+        if (product) {
+          updatedItem.materialName = product.name;
+          updatedItem.hsnCode = product.hsnCode || '5608';
+          updatedItem.gstPercent = '12'; // Default for FG? Assume 18 or 12.
+        }
+      } else if (field === 'expenseHeadId') {
+        const head = expenseHeads.find(h => h.id === value);
+        if (head) {
+          updatedItem.materialName = head.name;
+          updatedItem.hsnCode = '';
+          updatedItem.gstPercent = '0'; // Expenses often 0 or 18. Let user edit.
         }
       }
 
@@ -283,9 +321,41 @@ export function Purchase() {
       updatedItem.cgst = gst.cgst;
       updatedItem.sgst = gst.sgst;
       updatedItem.igst = gst.igst;
+      updatedItem.amount = amount;
+      updatedItem.cgst = gst.cgst;
+      updatedItem.sgst = gst.sgst;
+      updatedItem.igst = gst.igst;
       updatedItem.total = gst.total;
 
       return updatedItem;
+    }));
+  };
+
+  const updateItemExpenseHead = (itemId: string, value: string) => {
+    // Check if selected value matches an existing ID
+    const existingHead = expenseHeads.find(h => h.name === value || h.id === value);
+
+    setItems(items.map(item => {
+      if (item.id !== itemId) return item;
+
+      if (existingHead) {
+        return {
+          ...item,
+          expenseHeadId: existingHead.id,
+          materialName: existingHead.name,
+          hsnCode: '',
+          gstPercent: '0'
+        };
+      } else {
+        // New Expense Head
+        return {
+          ...item,
+          expenseHeadId: undefined, // Clear ID to indicate new
+          materialName: value, // Store the typed name
+          hsnCode: '',
+          gstPercent: '0'
+        };
+      }
     }));
   };
 
@@ -317,6 +387,7 @@ export function Purchase() {
     setBillStatus('Confirmed');
     setDiscountAmount(''); // Reset discount
     setInvoiceNumber(''); // Reset invoice number
+    setPurchaseType('RAW_MATERIAL'); // Reset type
     setError(null);
   };
 
@@ -331,15 +402,26 @@ export function Purchase() {
       return;
     }
 
-    if (items.length === 0 || items.every(item => !item.rawMaterialId)) {
-      console.log('❌ Validation failed: No items');
+    const hasValidItems = items.some(item =>
+      (purchaseType === 'RAW_MATERIAL' && item.rawMaterialId) ||
+      (purchaseType === 'FINISHED_GOODS' && item.finishedProductId) ||
+      (purchaseType === 'GENERAL' && (item.expenseHeadId || item.materialName))
+    );
+
+    if (items.length === 0 || !hasValidItems) {
+      console.log('❌ Validation failed: No valid items found for type', purchaseType);
       setError('Please add at least one item');
       return;
     }
 
-    const invalidItems = items.filter(item =>
-      item.rawMaterialId && (!item.quantity || parseFloat(item.quantity) <= 0 || !item.rate || parseFloat(item.rate) <= 0)
-    );
+    const invalidItems = items.filter(item => {
+      const hasIdOrName =
+        (purchaseType === 'RAW_MATERIAL' && item.rawMaterialId) ||
+        (purchaseType === 'FINISHED_GOODS' && item.finishedProductId) ||
+        (purchaseType === 'GENERAL' && (item.expenseHeadId || item.materialName));
+
+      return hasIdOrName && (!item.quantity || parseFloat(item.quantity) <= 0 || !item.rate || parseFloat(item.rate) <= 0);
+    });
 
     if (invalidItems.length > 0) {
       console.log('❌ Validation failed: Invalid items', invalidItems);
@@ -360,13 +442,17 @@ export function Purchase() {
         date: billDate,
         supplierId: selectedSupplier.id,
         status: billStatus,
+        type: purchaseType, // Added type
         discountAmount: discountAmount || '0',  // Added discount
         invoiceNumber: invoiceNumber, // Added invoice number
         items: items
-          .filter(item => item.rawMaterialId)
+          .filter(item => (purchaseType === 'RAW_MATERIAL' && item.rawMaterialId) || (purchaseType === 'FINISHED_GOODS' && item.finishedProductId) || (purchaseType === 'GENERAL' && (item.expenseHeadId || item.materialName)))
           .map(item => ({
-            rawMaterialId: item.rawMaterialId,
-            quantity: parseFloat(item.quantity),
+            rawMaterialId: purchaseType === 'RAW_MATERIAL' ? item.rawMaterialId : undefined,
+            finishedProductId: purchaseType === 'FINISHED_GOODS' ? item.finishedProductId : undefined,
+            expenseHeadId: purchaseType === 'GENERAL' ? item.expenseHeadId : undefined,
+            expenseHeadName: (purchaseType === 'GENERAL' && !item.expenseHeadId) ? item.materialName : undefined, // Send name for new heads
+            quantity: parseFloat(item.quantity) || 1, // Default to 1 for expenses if left empty
             rate: parseFloat(item.rate),
             gstPercent: parseFloat(item.gstPercent),
           })),
@@ -757,6 +843,51 @@ export function Purchase() {
               <div className="p-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
                 {/* Header Inputs */}
                 <div className="col-span-1 lg:col-span-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 border-b border-gray-200 pb-4">
+                  <div className="col-span-1 lg:col-span-4 flex space-x-6 pb-2 border-b border-gray-100">
+                    <label className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="purchaseType"
+                        value="RAW_MATERIAL"
+                        checked={purchaseType === 'RAW_MATERIAL'}
+                        onChange={(e) => {
+                          setPurchaseType(e.target.value as any);
+                          setItems([]); // Clear items on type change
+                        }}
+                        className="text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-sm font-bold text-gray-700">Raw Material Purchase</span>
+                    </label>
+                    <label className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="purchaseType"
+                        value="FINISHED_GOODS"
+                        checked={purchaseType === 'FINISHED_GOODS'}
+                        onChange={(e) => {
+                          setPurchaseType(e.target.value as any);
+                          setItems([]);
+                        }}
+                        className="text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-sm font-bold text-gray-700">Trading Purchase (FG)</span>
+                    </label>
+                    <label className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="purchaseType"
+                        value="GENERAL"
+                        checked={purchaseType === 'GENERAL'}
+                        onChange={(e) => {
+                          setPurchaseType(e.target.value as any);
+                          setItems([]);
+                        }}
+                        className="text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-sm font-bold text-gray-700">General Expense</span>
+                    </label>
+                  </div>
+
                   <div>
                     <label htmlFor="billDate" className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Bill Date</label>
                     <input id="billDate" type="date" value={billDate} onChange={e => setBillDate(e.target.value)} className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-medium" />
@@ -766,9 +897,11 @@ export function Purchase() {
                     <input id="invoiceNumber" type="text" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-bold" placeholder="e.g. INV-2024-001" />
                   </div>
                   <div className="col-span-1 sm:col-span-2">
-                    <label htmlFor="supplierSelect" className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Supplier Account</label>
+                    <label htmlFor="supplierSelect" className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
+                      {purchaseType === 'GENERAL' ? 'Party / Vendor' : 'Supplier Account'}
+                    </label>
                     <select id="supplierSelect" value={selectedSupplier?.id || ''} onChange={e => handleSupplierSelect(e.target.value)} className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-bold bg-white">
-                      <option value="">Select Supplier...</option>
+                      <option value="">Select Accounts...</option>
                       {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} - {s.gstNo}</option>)}
                     </select>
                   </div>
@@ -784,7 +917,7 @@ export function Purchase() {
                 {/* Supplier Info */}
                 {selectedSupplier && (
                   <div className="col-span-12 bg-blue-50 border border-blue-100 p-2 rounded-sm text-xs flex justify-between items-center">
-                    <span className="font-bold text-blue-800 tracking-wider uppercase">Supplier Details:</span>
+                    <span className="font-bold text-blue-800 tracking-wider uppercase">Party Details:</span>
                     <span className="text-gray-700">GSTIN: <strong>{selectedSupplier.gstNo}</strong></span>
                     <span className="text-gray-700">State Code: <strong>{selectedSupplier.stateCode}</strong></span>
                     <span className={`font-bold ${parseFloat(selectedSupplier.outstanding) > 0 ? 'text-red-600' : 'text-green-600'}`}>
@@ -800,40 +933,128 @@ export function Purchase() {
                     <table className="w-full text-left">
                       <thead className="bg-gray-100 border-b border-gray-300">
                         <tr>
-                          <th className="px-3 py-1.5 text-[10px] font-bold text-gray-600 uppercase">Material</th>
-                          <th className="px-3 py-1.5 text-[10px] font-bold text-gray-600 uppercase w-24">HSN</th>
-                          <th className="px-3 py-1.5 text-[10px] font-bold text-gray-600 uppercase text-right w-24">Qty (kg)</th>
-                          <th className="px-3 py-1.5 text-[10px] font-bold text-gray-600 uppercase text-right w-24">Rate (₹)</th>
-                          <th className="px-3 py-1.5 text-[10px] font-bold text-gray-600 uppercase text-right w-16">GST %</th>
-                          <th className="px-3 py-1.5 text-[10px] font-bold text-gray-600 uppercase text-right w-24">Tax</th>
-                          <th className="px-3 py-1.5 text-[10px] font-bold text-gray-600 uppercase text-right w-32">Total</th>
-                          <th className="px-3 py-1.5 w-10"></th>
+                          <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-8">#</th>
+                          <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                            {purchaseType === 'RAW_MATERIAL' ? 'Raw Material' : purchaseType === 'FINISHED_GOODS' ? 'Finished Product' : 'Expense Head'}
+                          </th>
+                          {purchaseType !== 'GENERAL' && <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24">HSN</th>}
+                          <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24 text-right">Qty</th>
+                          <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-28 text-right">Rate</th>
+                          <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-32 text-right">Amount</th>
+                          <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-20 text-right">GST %</th>
+                          <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-28 text-right">Tax</th>
+                          <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-32 text-right">Total</th>
+                          <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-10"></th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-200">
                         {items.map((item, index) => (
                           <tr key={item.id} className="hover:bg-gray-50">
-                            <td className="px-3 py-1">
-                              <select autoFocus={index === 0} value={item.rawMaterialId} onChange={e => updateItem(item.id, 'rawMaterialId', e.target.value)} className="w-full text-sm bg-transparent border-0 focus:ring-0 p-0 font-medium">
-                                <option value="">Select Material...</option>
-                                {rawMaterials.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                              </select>
+                            <td className="px-3 py-2 text-xs text-center text-gray-400">{index + 1}</td>
+                            <td className="px-3 py-2">
+                              {purchaseType === 'RAW_MATERIAL' && (
+                                <select
+                                  value={item.rawMaterialId}
+                                  onChange={(e) => updateItem(item.id, 'rawMaterialId', e.target.value)}
+                                  className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all font-medium"
+                                >
+                                  <option value="">Select Material...</option>
+                                  {rawMaterials.map(rm => (
+                                    <option key={rm.id} value={rm.id}>{rm.name} - {rm.stock} {rm.unit}</option>
+                                  ))}
+                                </select>
+                              )}
+                              {purchaseType === 'FINISHED_GOODS' && (
+                                <select
+                                  value={item.finishedProductId}
+                                  onChange={(e) => updateItem(item.id, 'finishedProductId', e.target.value)}
+                                  className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all font-medium"
+                                >
+                                  <option value="">Select Product...</option>
+                                  {finishedProducts.map(fp => (
+                                    <option key={fp.id} value={fp.id}>{fp.name} ({fp.code})</option>
+                                  ))}
+                                </select>
+                              )}
+                              {purchaseType === 'GENERAL' && (
+                                <>
+                                  <input
+                                    list={`expense-heads-${item.id}`}
+                                    value={item.materialName} // Display name (either from existing or typed)
+                                    onChange={(e) => updateItemExpenseHead(item.id, e.target.value)}
+                                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all font-medium"
+                                    placeholder="Type or select Expense Head..."
+                                  />
+                                  <datalist id={`expense-heads-${item.id}`}>
+                                    {expenseHeads.map(eh => (
+                                      <option key={eh.id} value={eh.name} />
+                                    ))}
+                                  </datalist>
+                                </>
+                              )}
                             </td>
-                            <td className="px-3 py-1"><input type="text" value={item.hsnCode} onChange={e => updateItem(item.id, 'hsnCode', e.target.value)} className="w-full text-sm bg-transparent border-0 focus:ring-0 p-0" /></td>
-                            <td className="px-3 py-1"><input type="number" value={item.quantity} onChange={e => updateItem(item.id, 'quantity', e.target.value)} className="w-full text-right text-sm bg-transparent border-0 focus:ring-0 p-0" placeholder="0" /></td>
-                            <td className="px-3 py-1"><input type="number" value={item.rate} onChange={e => updateItem(item.id, 'rate', e.target.value)} className="w-full text-right text-sm bg-transparent border-0 focus:ring-0 p-0" placeholder="0.00" /></td>
-                            <td className="px-3 py-1">
-                              <select value={item.gstPercent} onChange={e => updateItem(item.id, 'gstPercent', e.target.value)} className="w-full text-right text-sm bg-transparent border-0 focus:ring-0 p-0">
-                                <option value="18">18%</option>
-                                <option value="12">12%</option>
-                                <option value="5">5%</option>
+                            {purchaseType !== 'GENERAL' && (
+                              <td className="px-3 py-2">
+                                <input
+                                  type="text"
+                                  value={item.hsnCode}
+                                  readOnly
+                                  className="w-full px-2 py-1 text-xs border border-transparent bg-transparent text-gray-500 text-center"
+                                />
+                              </td>
+                            )}
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.quantity}
+                                onChange={(e) => updateItem(item.id, 'quantity', e.target.value)}
+                                className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 text-right font-mono"
+                                placeholder="0.00"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.rate}
+                                onChange={(e) => updateItem(item.id, 'rate', e.target.value)}
+                                className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 text-right font-mono"
+                                placeholder="0.00"
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-right text-sm font-mono text-gray-700">
+                              {item.amount.toFixed(2)}
+                            </td>
+                            <td className="px-3 py-2">
+                              <select
+                                value={item.gstPercent}
+                                onChange={(e) => updateItem(item.id, 'gstPercent', e.target.value)}
+                                className="w-full px-1 py-1 text-xs border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 text-right"
+                              >
                                 <option value="0">0%</option>
+                                <option value="5">5%</option>
+                                <option value="12">12%</option>
+                                <option value="18">18%</option>
+                                <option value="28">28%</option>
                               </select>
                             </td>
-                            <td className="px-3 py-1 text-right text-xs text-gray-500">{(item.cgst + item.sgst + item.igst).toFixed(2)}</td>
-                            <td className="px-3 py-1 text-right text-sm font-bold text-gray-900">{item.total.toFixed(2)}</td>
-                            <td className="px-3 py-1 text-center">
-                              <button onClick={() => removeItem(item.id)} disabled={items.length <= 1} className="text-gray-400 hover:text-red-600 disabled:opacity-30"><Trash2 className="w-3 h-3" /></button>
+                            <td className="px-3 py-2 text-right text-xs font-mono text-gray-500">
+                              {(item.cgst + item.sgst + item.igst).toFixed(2)}
+                            </td>
+                            <td className="px-3 py-2 text-right text-sm font-mono font-bold text-gray-900 bg-gray-50">
+                              {item.total.toFixed(2)}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              <button
+                                onClick={() => removeItem(item.id)}
+                                className="text-gray-400 hover:text-red-600 transition-colors"
+                                tabIndex={-1}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -922,7 +1143,19 @@ export function Purchase() {
                             {payment.code}
                             {payment.status === 'Reversed' && <span className="ml-2 text-[9px] bg-red-200 text-red-800 px-1 rounded">REVERSED</span>}
                           </td>
-                          <td className="px-4 py-1.5 text-sm font-bold text-gray-900">{payment.partyName}</td>
+                          <td className="px-4 py-1.5 text-sm font-bold text-gray-900">
+                            {payment.partyName}
+                            {/* Allocations Display */}
+                            {payment.allocations && payment.allocations.length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {payment.allocations.map((alloc: any, idx: number) => (
+                                  <span key={idx} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">
+                                    {alloc.billNumber}: ₹{parseFloat(alloc.amount).toLocaleString()}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
                           <td className="px-4 py-1.5 text-sm font-medium text-gray-600">{payment.mode}</td>
                           <td className="px-4 py-1.5 text-sm font-mono font-bold text-gray-900 text-right">₹{parseFloat(payment.amount).toLocaleString()}</td>
                           <td className="px-4 py-1.5 text-right text-xs text-blue-600 font-bold">
