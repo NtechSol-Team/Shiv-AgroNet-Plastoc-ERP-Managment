@@ -104,6 +104,7 @@ async function main() {
                     size: item.size,
                     pieceCount: item.pieceCount,
                     netWeight: item.netWeight,
+                    grossWeight: item.netWeight, // Used same for test simplification
                     status: 'Available'
                 });
             }
