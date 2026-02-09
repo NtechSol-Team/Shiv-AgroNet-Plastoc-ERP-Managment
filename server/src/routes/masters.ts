@@ -20,7 +20,8 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { db } from '../db/index';
 import {
     rawMaterials, finishedProducts, machines, customers,
-    suppliers, expenseHeads, bankCashAccounts, employees
+    suppliers, expenseHeads, bankCashAccounts, employees,
+    productionBatches, stockMovements, bellItems
 } from '../db/schema';
 import { eq, count as countFn } from 'drizzle-orm';
 import { successResponse } from '../types/api';
@@ -223,9 +224,73 @@ router.put('/finished-products/:id', async (req: Request, res: Response, next: N
  */
 router.delete('/finished-products/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        await db.delete(finishedProducts).where(eq(finishedProducts.id, req.params.id));
+        const { id } = req.params;
+
+        // 1. Find all production batches that produced this product (as primary or secondary output)
+        const relatedBatches = await db.query.productionBatches.findMany({
+            where: (batches, { eq, or }) => or(
+                eq(batches.finishedProductId, id)
+            ),
+            with: {
+                outputs: true
+            }
+        });
+
+        // Also find batches where this product is in outputs but not primary (rare but possible)
+        const outputBatches = await db.query.productionBatchOutputs.findMany({
+            where: (outputs, { eq }) => eq(outputs.finishedProductId, id),
+            with: {
+                batch: true
+            }
+        });
+
+        // Combine unique batch IDs
+        const batchIds = new Set<string>();
+        relatedBatches.forEach(b => batchIds.add(b.id));
+        outputBatches.forEach(ob => batchIds.add(ob.batchId));
+
+        const batchesToDelete = Array.from(batchIds);
+
+        if (batchesToDelete.length > 0) {
+            console.log(`Cascading delete: Removing ${batchesToDelete.length} batches for FG ${id}`);
+
+            // 2. Delete Stock Movements related to these batches
+            // This DELETES 'RAW_OUT' (restoring RM Stock) and 'FG_IN' (removing FG Stock)
+            // movements.referenceId = batch.id AND refType = 'production'
+            // We can't use 'inArray' easily with simple delete, so we loop or use raw query.
+            // Using loop for safety and simplicity with Drizzle payload
+            for (const batchId of batchesToDelete) {
+                await db.delete(stockMovements)
+                    .where(
+                        // @ts-ignore
+                        eq(stockMovements.referenceId, batchId)
+                    );
+            }
+
+            // 3. Delete the Batches (Cascade should handle inputs/outputs/movements if configured, 
+            // but we manually deleted movements above to be sure about stock logic)
+            // Note: productionBatchInputs/Outputs cascade on batch delete.
+            for (const batchId of batchesToDelete) {
+                await db.delete(productionBatches).where(eq(productionBatches.id, batchId));
+            }
+        }
+
+        // 4. Delete Bell Items (Inventory)
+        // Bell items reference finishedProduct. If we don't delete them, we get FK violation.
+        // And since bell items ARE the inventory, deleting the product should delete its inventory.
+        await db.delete(bellItems).where(eq(bellItems.finishedProductId, id));
+
+        // 5. Delete manual stock movements for this FG (e.g. adjustments)
+        await db.delete(stockMovements).where(eq(stockMovements.finishedProductId, id));
+
+        // 6. Finally delete the Master
+        await db.delete(finishedProducts).where(eq(finishedProducts.id, id));
+
         cache.del('masters:finished-products');
-        res.json(successResponse({ deleted: true }));
+        // Clear summary cache as stock changed
+        cache.del('inventory:summary');
+
+        res.json(successResponse({ deleted: true, batchesRemoved: batchesToDelete.length }));
     } catch (error) {
         next(error);
     }

@@ -182,7 +182,7 @@ export function Sales() {
           bellItemId: bell.id,
           product: `${bell.code} - ${bell.finishedProduct?.name}`,
           hsnCode: bell.finishedProduct?.hsnCode || '5608',
-          quantity: bell.netWeight, // Fixed quantity from bell
+          quantity: bell.grossWeight || bell.netWeight, // Use grossWeight (what customer receives)
           rate: bell.finishedProduct?.ratePerKg || '0',
           taxPercent: bell.finishedProduct?.gstPercent || '18',
           childItems: []
@@ -195,13 +195,13 @@ export function Sales() {
 
       if (bellsInGroup.length > 0) {
         // Populate Form for Manual Addition
-        const totalWeight = bellsInGroup.reduce((sum, b) => sum + parseFloat(b.netWeight), 0);
+        const totalWeight = bellsInGroup.reduce((sum, b) => sum + parseFloat(b.grossWeight || b.netWeight), 0);
         const representative = bellsInGroup[0];
 
         setCurrentItem({
           finishedProductId: representative.finishedProductId,
           bellItemId: '', // No single ID
-          product: `${groupCode} (Bell)`,
+          product: `${groupCode} (Bale)`,
           hsnCode: representative.finishedProduct?.hsnCode || '5608',
           quantity: totalWeight.toString(),
           rate: (representative.finishedProduct?.ratePerKg || '0').toString(),
@@ -964,7 +964,7 @@ export function Sales() {
                                       <thead className="bg-gray-50">
                                         <tr>
                                           <th className="px-1 py-0.5 border">Product</th>
-                                          <th className="px-1 py-0.5 border">Size / GSM</th>
+                                          <th className="px-1 py-0.5 border">Size / Shade</th>
                                           <th className="px-1 py-0.5 border">Pieces</th>
                                           <th className="px-1 py-0.5 border">Weight</th>
                                         </tr>
@@ -1003,8 +1003,8 @@ export function Sales() {
                                 onChange={e => handleProductSelect(e.target.value)}
                                 className="w-full text-sm bg-transparent border-0 border-b border-blue-300 focus:ring-0 p-1 font-medium"
                               >
-                                <option value="">Select Bell/Batch...</option>
-                                <optgroup label="Bell Batches">
+                                <option value="">Select Bale/Batch...</option>
+                                <optgroup label="Bale Batches">
                                   {/* Group Bells by Batch Code */}
                                   {Object.values(availableBells.reduce((acc: any, bell) => {
                                     // FILTER: Skip bells that are already in invoiceItems (top-level or children)

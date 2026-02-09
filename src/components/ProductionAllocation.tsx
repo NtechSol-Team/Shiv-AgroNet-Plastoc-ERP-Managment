@@ -295,7 +295,7 @@ export function ProductionAllocation() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    GSM
+                    Shade
                   </label>
                   <input
                     type="number"
@@ -331,7 +331,7 @@ export function ProductionAllocation() {
                     <div className="flex justify-between">
                       <span className="text-gray-600">Product Spec:</span>
                       <span className="font-medium text-gray-900">
-                        {formData.length}m × {formData.width}m × {formData.gsm} GSM
+                        {formData.length}m × {formData.width}m × {formData.gsm} Shade
                       </span>
                     </div>
                   )}

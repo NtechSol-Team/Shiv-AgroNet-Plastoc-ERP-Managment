@@ -154,7 +154,7 @@ export function ProductionCompletion() {
                   <div className="col-span-2">
                     <span className="text-gray-600">Product Configuration:</span>
                     <div className="font-medium text-gray-900">
-                      L: {selectedBatchData.productConfig.length}m × W: {selectedBatchData.productConfig.width}m × GSM: {selectedBatchData.productConfig.gsm}
+                      L: {selectedBatchData.productConfig.length}m × W: {selectedBatchData.productConfig.width}m × Shade: {selectedBatchData.productConfig.gsm}
                     </div>
                   </div>
                 </div>

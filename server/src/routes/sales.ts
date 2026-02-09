@@ -480,6 +480,75 @@ router.get('/summary', async (req: Request, res: Response, next: NextFunction) =
     }
 });
 
+/**
+ * DELETE /sales/invoices/:id
+ * Delete (void) a sales invoice
+ * - Restores bell item status to 'Available' if bells were used
+ * - Creates reversal stock movements
+ */
+router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+
+        // Find the invoice with its items using salesInvoices which has relations defined
+        const invoice = await db.query.salesInvoices.findFirst({
+            where: eq(salesInvoices.id, id),
+            with: {
+                items: true
+            }
+        });
+
+        if (!invoice) {
+            throw createError('Invoice not found', 404);
+        }
+
+        // Cannot delete already paid invoices
+        if (invoice.status === 'Paid') {
+            throw createError('Cannot delete a paid invoice. Please reverse payments first.', 400);
+        }
+
+        await db.transaction(async (tx) => {
+            // 1. Restore bell items to Available status
+            for (const item of invoice.items || []) {
+                if (item.bellItemId) {
+                    await tx.update(bellItems)
+                        .set({ status: 'Available' })
+                        .where(eq(bellItems.id, item.bellItemId));
+                }
+            }
+
+            // 2. Create reversal stock movements for FG items
+            for (const item of invoice.items || []) {
+                if (item.finishedProductId) {
+                    await tx.insert(stockMovements).values({
+                        id: crypto.randomUUID(),
+                        date: new Date(),
+                        movementType: 'SI_REVERSAL',
+                        itemType: 'finished_product',
+                        finishedProductId: item.finishedProductId,
+                        quantityIn: String(item.quantity), // Restore stock
+                        quantityOut: '0',
+                        referenceType: 'sales_invoice_reversal',
+                        referenceId: invoice.id,
+                        referenceCode: invoice.invoiceNumber,
+                        reason: `Reversal of deleted invoice ${invoice.invoiceNumber}`,
+                    });
+                }
+            }
+
+            // 3. Delete invoice items
+            await tx.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+
+            // 4. Delete the invoice
+            await tx.delete(salesInvoices).where(eq(salesInvoices.id, id));
+        });
+
+        res.json(successResponse({ message: 'Invoice deleted successfully' }));
+    } catch (error) {
+        next(error);
+    }
+});
+
 export default router;
 
 // ============================================================

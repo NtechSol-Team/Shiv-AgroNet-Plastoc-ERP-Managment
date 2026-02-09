@@ -233,7 +233,7 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                             <th className="px-3 py-2 text-left text-xs font-bold text-green-800 uppercase">Code</th>
                                             <th className="px-3 py-2 text-left text-xs font-bold text-green-800 uppercase">Material</th>
                                             <th className="px-3 py-2 text-right text-xs font-bold text-green-800 uppercase">Weight</th>
-                                            <th className="px-3 py-2 text-right text-xs font-bold text-green-800 uppercase">GSM</th>
+                                            <th className="px-3 py-2 text-right text-xs font-bold text-green-800 uppercase">Shade</th>
                                             <th className="px-3 py-2 text-right text-xs font-bold text-green-800 uppercase">Width</th>
                                             <th className="px-3 py-2 text-center text-xs font-bold text-green-800 uppercase">Action</th>
                                         </tr>
@@ -299,7 +299,7 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                             <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase">Material</th>
                                         )}
                                         <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase">Net Weight (kg) <span className="text-red-500">*</span></th>
-                                        <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase w-24">GSM</th>
+                                        <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase w-24">Shade</th>
                                         <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase w-24">Width (mm)</th>
                                         <th className="px-3 py-2 text-center text-xs font-bold text-blue-800 uppercase w-16">✕</th>
                                     </tr>

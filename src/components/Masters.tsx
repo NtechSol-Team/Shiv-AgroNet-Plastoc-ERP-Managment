@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, X, Loader2, Package } from 'lucide-react';
+import { Plus, Edit2, X, Loader2, Package, Trash2 } from 'lucide-react';
 import { mastersApi } from '../lib/api';
 
 type MasterType = 'raw-material' | 'finished-product' | 'machine' | 'customer' | 'supplier' | 'expense' | 'accounts' | 'employee';
@@ -185,6 +185,27 @@ export function Masters() {
     setSaving(false);
   };
 
+  const handleDelete = async (id: string, type: MasterType) => {
+    if (!window.confirm('Are you sure you want to delete this item?')) return;
+
+    setLoading(true);
+    let result;
+    try {
+      if (type === 'finished-product') {
+        result = await mastersApi.deleteFinishedProduct(id);
+      }
+
+      if (result?.error) {
+        setError(result.error);
+      } else {
+        fetchData(); // Refresh list
+      }
+    } catch (err) {
+      setError('Failed to delete item');
+    }
+    setLoading(false);
+  };
+
   const renderForm = () => {
     switch (activeTab) {
       case 'raw-material':
@@ -248,7 +269,7 @@ export function Masters() {
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">GSM</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Shade</label>
               <input type="text" value={formData.gsm || ''} onChange={(e) => setFormData({ ...formData, gsm: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
             </div>
@@ -588,11 +609,22 @@ export function Masters() {
                 <tr key={fp.id} className="hover:bg-slate-50/80 transition-colors group">
                   <Td className="font-mono text-slate-400 text-xs">{fp.code}</Td>
                   <Td className="font-medium text-slate-900">{fp.name}</Td>
-                  <Td className="text-slate-500">{fp.length} x {fp.width} <span className="text-xs text-slate-400">({fp.gsm} GSM)</span></Td>
+                  <Td className="text-slate-500">{fp.length} x {fp.width} <span className="text-xs text-slate-400">({fp.gsm} Shade)</span></Td>
                   <Td>{fp.hsnCode} <span className="text-slate-300 mx-1">/</span> {fp.gstPercent}%</Td>
                   <Td className="font-medium text-slate-900">{fp.stock} kg</Td>
                   <Td>₹{fp.ratePerKg}</Td>
-                  <Td><ActionButton onClick={() => handleEdit(fp)} /></Td>
+                  <Td>
+                    <div className="flex items-center space-x-1">
+                      <ActionButton onClick={() => handleEdit(fp)} />
+                      <button
+                        onClick={() => handleDelete(fp.id, 'finished-product')}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                        title="Delete Product"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </Td>
                 </tr>
               ))}
             </tbody>

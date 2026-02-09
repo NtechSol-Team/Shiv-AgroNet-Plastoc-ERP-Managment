@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, Loader2, Package } from 'lucide-react';
-import { inventoryApi } from '../lib/api';
+import { Search, Filter, Loader2, Package, Edit2, Trash2, X } from 'lucide-react';
+import { inventoryApi, mastersApi } from '../lib/api';
 
 import { BellInventory } from './BellInventory';
 
@@ -13,6 +13,12 @@ export function Inventory() {
   const [rawMaterials, setRawMaterials] = useState<any[]>([]);
   const [stockMovements, setStockMovements] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>(null);
+
+  // Edit Modal State
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [formData, setFormData] = useState<any>({});
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -44,6 +50,47 @@ export function Inventory() {
       currency: 'INR',
       minimumFractionDigits: 0,
     }).format(value);
+  };
+
+  const handleEdit = (item: any) => {
+    setEditingItem(item);
+    setFormData({ ...item });
+    setShowEditModal(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this product? This will also remove related production batches and revert raw material stock.')) return;
+
+    setLoading(true);
+    try {
+      const result = await mastersApi.deleteFinishedProduct(id);
+      if (result.error) {
+        setError(result.error);
+      } else {
+        fetchData(); // Refresh list
+      }
+    } catch (err) {
+      setError('Failed to delete item');
+    }
+    setLoading(false);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await mastersApi.updateFinishedProduct(editingItem.id, formData);
+      if (result.error) {
+        setError(result.error);
+      } else {
+        setShowEditModal(false);
+        setEditingItem(null);
+        fetchData();
+      }
+    } catch (err) {
+      setError('Failed to save changes');
+    }
+    setSaving(false);
   };
 
   if (loading) {
@@ -105,7 +152,7 @@ export function Inventory() {
               Finished Goods
             </button>
             <button onClick={() => setActiveTab('bells')} className={`pb-2 text-sm font-bold uppercase border-b-2 transition-colors ${activeTab === 'bells' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-              Bell Inventory
+              Bale Inventory
             </button>
             <button onClick={() => setActiveTab('raw-material')} className={`pb-2 text-sm font-bold uppercase border-b-2 transition-colors ${activeTab === 'raw-material' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
               Raw Materials
@@ -139,9 +186,10 @@ export function Inventory() {
                         <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider w-24">Item Code</th>
                         <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider">Product Name</th>
                         <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider">Dimensions</th>
-                        <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider">GSM</th>
+                        <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider">Shade</th>
                         <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-right">Stock (Kg)</th>
                         <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-center">Status</th>
+                        <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
@@ -157,6 +205,24 @@ export function Inventory() {
                               <span className="text-[10px] font-bold bg-red-100 text-red-700 px-1 rounded">LOW STOCK</span> :
                               <span className="text-[10px] font-bold text-green-700">OK</span>
                             }
+                          </td>
+                          <td className="px-4 py-1.5 text-right">
+                            <div className="flex items-center justify-end space-x-1">
+                              <button
+                                onClick={() => handleEdit(item)}
+                                className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-all"
+                                title="Edit Product"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(item.id)}
+                                className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-all"
+                                title="Delete Product"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -214,6 +280,121 @@ export function Inventory() {
           )}
         </div>
       </div>
+
+      {/* Edit Modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center p-4 border-b border-gray-100 bg-gray-50">
+              <h3 className="font-bold text-lg text-gray-800">Edit Finished Product</h3>
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Product Name</label>
+                <input
+                  type="text"
+                  value={formData.name || ''}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-bold text-gray-800"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Length (m)</label>
+                  <input
+                    type="text"
+                    value={formData.length || ''}
+                    onChange={(e) => setFormData({ ...formData, length: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Width (m)</label>
+                  <input
+                    type="text"
+                    value={formData.width || ''}
+                    onChange={(e) => setFormData({ ...formData, width: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Shade (GSM)</label>
+                  <input
+                    type="text"
+                    value={formData.gsm || ''}
+                    onChange={(e) => setFormData({ ...formData, gsm: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Standard Rate (₹/Kg)</label>
+                  <input
+                    type="number"
+                    value={formData.ratePerKg || ''}
+                    onChange={(e) => setFormData({ ...formData, ratePerKg: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">HSN Code</label>
+                  <input
+                    type="text"
+                    value={formData.hsnCode || '5608'}
+                    onChange={(e) => setFormData({ ...formData, hsnCode: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">GST Rate (%)</label>
+                  <input
+                    type="number"
+                    value={formData.gstPercent || '18'}
+                    onChange={(e) => setFormData({ ...formData, gstPercent: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-gray-50 border-t border-gray-100 flex justify-end space-x-3">
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-lg shadow-blue-200 transition-all flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <span>Save Changes</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -313,7 +494,7 @@ function RawMaterialTable({ rawMaterials }: { rawMaterials: any[] }) {
                                 <th className="px-4 py-2 font-medium">Bill #</th>
                                 <th className="px-4 py-2 font-medium">Inward Date</th>
                                 <th className="px-4 py-2 text-right font-medium">Weight (Kg)</th>
-                                <th className="px-4 py-2 text-center font-medium">GSM</th>
+                                <th className="px-4 py-2 text-center font-medium">Shade</th>
                                 <th className="px-4 py-2 text-center font-medium">Width</th>
                                 <th className="px-4 py-2 text-center font-medium">Status</th>
                                 <th className="px-4 py-2 text-right font-medium">Age</th>
@@ -332,8 +513,8 @@ function RawMaterialTable({ rawMaterials }: { rawMaterials: any[] }) {
                                     <td className="px-4 py-2 text-center text-gray-500">{roll.length || '-'}</td>
                                     <td className="px-4 py-2 text-center">
                                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${roll.status === 'In Stock' ? 'bg-green-100 text-green-700' :
-                                          roll.status === 'Consumed' ? 'bg-gray-100 text-gray-600' :
-                                            'bg-orange-100 text-orange-700'
+                                        roll.status === 'Consumed' ? 'bg-gray-100 text-gray-600' :
+                                          'bg-orange-100 text-orange-700'
                                         }`}>
                                         {roll.status}
                                       </span>

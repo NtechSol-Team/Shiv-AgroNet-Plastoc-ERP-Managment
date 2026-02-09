@@ -492,7 +492,7 @@ export function Production() {
                             <option value="">Select Target Product...</option>
                             {finishedProducts.map(p => (
                               <option key={p.id} value={p.id}>
-                                {p.name} - {p.gsm || 'N/A'} GSM
+                                {p.name} - {p.gsm || 'N/A'} Shade
                               </option>
                             ))}
                           </select>
@@ -653,7 +653,7 @@ export function Production() {
                                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Product</label>
                                 <div className="text-sm font-bold text-slate-800 truncate" title={out.finishedProduct?.name}>
                                   {out.finishedProduct?.name || 'Unknown Product'}
-                                  {out.finishedProduct?.gsm && <span className="ml-2 text-xs font-normal text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{out.finishedProduct.gsm} GSM</span>}
+                                  {out.finishedProduct?.gsm && <span className="ml-2 text-xs font-normal text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{out.finishedProduct.gsm} Shade</span>}
                                 </div>
                               </div>
                               <div className="w-48">

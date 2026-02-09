@@ -160,6 +160,7 @@ export const purchaseBillItems = pgTable('purchase_bill_items', {
     createdAt: timestamp('created_at').defaultNow(),
 });
 
+
 // NEW: Raw Material Batches (Traceable Inventory)
 export const rawMaterialBatches = pgTable('raw_material_batches', {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -557,7 +558,9 @@ export const bellItems = pgTable('bell_items', {
     gsm: text('gsm').notNull(),
     size: text('size').notNull(),
     pieceCount: decimal('piece_count', { precision: 10, scale: 2 }).default('1'),
-    netWeight: decimal('net_weight', { precision: 10, scale: 2 }).notNull(),
+    grossWeight: decimal('gross_weight', { precision: 10, scale: 2 }).notNull(), // What customer receives
+    weightLoss: decimal('weight_loss', { precision: 10, scale: 2 }).default('0'), // In grams
+    netWeight: decimal('net_weight', { precision: 10, scale: 2 }).notNull(), // grossWeight - (weightLoss/1000), used for stock deduction
     status: text('status').default('Available'), // Available, Issued, Deleted
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),

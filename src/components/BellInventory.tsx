@@ -9,7 +9,9 @@ interface BellItem {
     gsm: string;
     size: string;
     pieceCount: string;
-    netWeight: string;
+    grossWeight: string;
+    weightLoss: string; // In grams
+    netWeight: string;  // Calculated: grossWeight - (weightLoss/1000)
     status: 'Available' | 'Issued' | 'Deleted';
     finishedProduct?: {
         name: string;
@@ -40,7 +42,8 @@ interface NewBellItem {
     gsm: string;
     size: string;
     pieceCount: string;
-    netWeight: string;
+    grossWeight: string; // User enters this
+    weightLoss: string;  // User enters this in grams
 }
 
 export function BellInventory() {
@@ -103,7 +106,8 @@ export function BellInventory() {
             gsm: selectedProduct.gsm,
             size: `${selectedProduct.length}x${selectedProduct.width}`,
             pieceCount: '1',
-            netWeight: ''
+            grossWeight: '',
+            weightLoss: '0'
         }]);
     };
 
@@ -120,13 +124,20 @@ export function BellInventory() {
 
     const getStockSummary = () => {
         const usageMap = new Map<string, number>();
-        let totalWeight = 0;
+        let totalGrossWeight = 0;
+        let totalNetWeight = 0;
 
         bellItems.forEach(item => {
-            const w = parseFloat(item.netWeight) || 0;
-            totalWeight += w;
+            const gross = parseFloat(item.grossWeight) || 0;
+            const weightLossGrams = parseFloat(item.weightLoss) || 0;
+            const netW = gross - (weightLossGrams / 1000); // Net weight = Gross - (weightLoss in grams / 1000)
+
+            totalGrossWeight += gross;
+            totalNetWeight += netW;
+
+            // Stock validation uses NET weight (what we deduct from inventory)
             const current = usageMap.get(item.finishedProductId) || 0;
-            usageMap.set(item.finishedProductId, current + w);
+            usageMap.set(item.finishedProductId, current + netW);
         });
 
         const validationErrors: string[] = [];
@@ -148,10 +159,10 @@ export function BellInventory() {
             }
         });
 
-        return { totalWeight, productSummaries, validationErrors, isValid: validationErrors.length === 0 };
+        return { totalGrossWeight, totalNetWeight, productSummaries, validationErrors, isValid: validationErrors.length === 0 };
     };
 
-    const { totalWeight, productSummaries, validationErrors, isValid } = getStockSummary();
+    const { totalGrossWeight, totalNetWeight, productSummaries, validationErrors, isValid } = getStockSummary();
 
     const handleSubmit = async () => {
         setError(null);
@@ -159,7 +170,12 @@ export function BellInventory() {
         try {
             if (bellItems.length === 0) throw new Error('At least one item is required');
             for (const item of bellItems) {
-                if (!item.netWeight || parseFloat(item.netWeight) <= 0) throw new Error('All items must have a valid positive Net Weight');
+                const gross = parseFloat(item.grossWeight);
+                const weightLossGrams = parseFloat(item.weightLoss) || 0;
+                const netWeight = gross - (weightLossGrams / 1000);
+
+                if (!item.grossWeight || gross <= 0) throw new Error('All items must have a valid positive Gross Weight');
+                if (netWeight <= 0) throw new Error(`Net Weight must be positive. Check weight loss values.`);
             }
             if (!isValid) throw new Error(validationErrors[0]);
 
@@ -169,7 +185,8 @@ export function BellInventory() {
                     gsm: item.gsm,
                     size: item.size,
                     pieceCount: item.pieceCount,
-                    netWeight: item.netWeight
+                    grossWeight: item.grossWeight,
+                    weightLoss: item.weightLoss
                 }))
             };
             const res = await bellInventoryApi.createBell(payload);
@@ -259,8 +276,8 @@ export function BellInventory() {
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h2 className="text-xl font-bold text-slate-800">Bell Production Batches</h2>
-                    <p className="text-sm text-slate-500">Manage Multi-Item Bell Production • Inventory Deductions</p>
+                    <h2 className="text-xl font-bold text-slate-800">Bale Production Batches</h2>
+                    <p className="text-sm text-slate-500">Manage Multi-Item Bale Production • Inventory Deductions</p>
                 </div>
                 <div className="flex items-center space-x-3">
                     <button
@@ -276,7 +293,7 @@ export function BellInventory() {
                         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center shadow-sm transition-all text-sm font-medium"
                     >
                         <Plus className="w-4 h-4 mr-2" />
-                        Create New Bell Batch
+                        Create New Bale Batch
                     </button>
                 </div>
             </div>
@@ -313,14 +330,14 @@ export function BellInventory() {
                         </div>
                     </div>
                     <div className="w-40">
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">Filter by GSM</label>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Filter by Shade</label>
                         <div className="relative">
                             <select
                                 value={filterGsm}
                                 onChange={(e) => setFilterGsm(e.target.value)}
                                 className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
                             >
-                                <option value="">All GSM</option>
+                                <option value="">All Shade</option>
                                 {uniqueGsms.map(g => <option key={String(g)} value={String(g)}>{g}</option>)}
                             </select>
                             <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
@@ -417,7 +434,7 @@ export function BellInventory() {
                                                                 <tr>
                                                                     <th className="px-4 py-2 text-left font-semibold text-gray-600">Item Code</th>
                                                                     <th className="px-4 py-2 text-left font-semibold text-gray-600">Product</th>
-                                                                    <th className="px-4 py-2 text-left font-semibold text-gray-600">Size / GSM</th>
+                                                                    <th className="px-4 py-2 text-left font-semibold text-gray-600">Size / Shade</th>
                                                                     <th className="px-4 py-2 text-right font-semibold text-gray-600">Pieces</th>
                                                                     <th className="px-4 py-2 text-right font-semibold text-gray-600">Weight</th>
                                                                     <th className="px-4 py-2 text-center font-semibold text-gray-600">Status</th>
@@ -429,7 +446,7 @@ export function BellInventory() {
                                                                     <tr key={item.id}>
                                                                         <td className="px-4 py-2 font-mono text-xs text-blue-600">{item.code}</td>
                                                                         <td className="px-4 py-2 font-medium text-gray-900">{item.finishedProduct?.name || 'Unknown Product'}</td>
-                                                                        <td className="px-4 py-2 text-gray-600">{item.size} | {item.gsm} GSM</td>
+                                                                        <td className="px-4 py-2 text-gray-600">{item.size} | {item.gsm} Shade</td>
                                                                         <td className="px-4 py-2 text-right text-gray-600">
                                                                             {editingBellItem?.id === item.id ? (
                                                                                 <input
@@ -511,8 +528,8 @@ export function BellInventory() {
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
                         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 flex-shrink-0">
                             <div>
-                                <h3 className="text-xl font-bold text-gray-900">Create Mixed Bell Batch</h3>
-                                <p className="text-sm text-gray-500">Produce multiple bells from various products</p>
+                                <h3 className="text-xl font-bold text-gray-900">Create Mixed Bale Batch</h3>
+                                <p className="text-sm text-gray-500">Produce multiple bales from various products</p>
                             </div>
                             <button onClick={() => setShowCreateModal(false)} className="text-gray-400 hover:text-gray-600">
                                 <X className="w-5 h-5" />
@@ -539,7 +556,7 @@ export function BellInventory() {
                                                 <option value="">Choose a finished product...</option>
                                                 {products.map(p => (
                                                     <option key={p.id} value={p.id}>
-                                                        {p.name} ({p.length}x{p.width} | {p.gsm || 'N/A'} GSM) - Stock: {parseFloat(p.stock || '0').toFixed(0)}kg
+                                                        {p.name} ({p.length}x{p.width} | {p.gsm || 'N/A'} Shade) - Stock: {parseFloat(p.stock || '0').toFixed(0)}kg
                                                     </option>
                                                 ))}
                                             </select>
@@ -568,54 +585,77 @@ export function BellInventory() {
                                 <div className="space-y-3">
                                     <table className="w-full border border-gray-200 rounded-lg overflow-hidden">
                                         <thead className="bg-gray-50 text-xs font-bold text-gray-500 uppercase tracking-wider text-left">
-                                            <tr>
-                                                <th className="px-4 py-2 w-12">#</th>
+                                            <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                                <th className="px-4 py-2 w-8">#</th>
                                                 <th className="px-4 py-2">Product</th>
-                                                <th className="px-4 py-2">GSM / Size</th>
-                                                <th className="px-4 py-2 w-24">Pieces</th>
-                                                <th className="px-4 py-2 w-40">Net Weight (Kg)</th>
+                                                <th className="px-4 py-2">Shade / Size</th>
+                                                <th className="px-4 py-2 w-20">Pieces</th>
+                                                <th className="px-4 py-2 w-28">Gross Wt (Kg)</th>
+                                                <th className="px-4 py-2 w-24">Loss (g)</th>
+                                                <th className="px-4 py-2 w-28">Net Wt (Kg)</th>
                                                 <th className="px-4 py-2 w-12"></th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-200">
-                                            {bellItems.map((item, idx) => (
-                                                <tr key={idx} className="hover:bg-gray-50 group">
-                                                    <td className="px-4 py-2 text-center text-gray-400 font-mono text-xs">{idx + 1}</td>
-                                                    <td className="px-4 py-2">
-                                                        <div className="text-sm font-medium text-gray-900">{item.productName}</div>
-                                                    </td>
-                                                    <td className="px-4 py-2">
-                                                        <div className="text-sm text-gray-500">{item.size} | {item.gsm} GSM</div>
-                                                    </td>
-                                                    <td className="px-4 py-2">
-                                                        <input
-                                                            type="number"
-                                                            min="1"
-                                                            value={item.pieceCount}
-                                                            onChange={(e) => updateItem(idx, 'pieceCount', e.target.value)}
-                                                            className="w-full border border-gray-200 rounded px-2 py-1 text-sm text-right focus:ring-1 focus:ring-blue-500 outline-none"
-                                                        />
-                                                    </td>
-                                                    <td className="px-4 py-2">
-                                                        <input
-                                                            type="number"
-                                                            step="0.01"
-                                                            value={item.netWeight}
-                                                            onChange={(e) => updateItem(idx, 'netWeight', e.target.value)}
-                                                            className="w-full border border-blue-200 bg-blue-50/30 rounded px-2 py-1 text-sm text-right font-bold text-gray-900 focus:ring-1 focus:ring-blue-500 outline-none"
-                                                            placeholder="0.00"
-                                                        />
-                                                    </td>
-                                                    <td className="px-4 py-2 text-center">
-                                                        <button
-                                                            onClick={() => removeItem(idx)}
-                                                            className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                                                        >
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
+                                            {bellItems.map((item, idx) => {
+                                                const grossW = parseFloat(item.grossWeight) || 0;
+                                                const lossG = parseFloat(item.weightLoss) || 0;
+                                                const netW = grossW - (lossG / 1000);
+                                                return (
+                                                    <tr key={idx} className="hover:bg-gray-50 group">
+                                                        <td className="px-4 py-2 text-center text-gray-400 font-mono text-xs">{idx + 1}</td>
+                                                        <td className="px-4 py-2">
+                                                            <div className="text-sm font-medium text-gray-900">{item.productName}</div>
+                                                        </td>
+                                                        <td className="px-4 py-2">
+                                                            <div className="text-sm text-gray-500">{item.size} | {item.gsm} Shade</div>
+                                                        </td>
+                                                        <td className="px-4 py-2">
+                                                            <input
+                                                                type="number"
+                                                                min="1"
+                                                                value={item.pieceCount}
+                                                                onChange={(e) => updateItem(idx, 'pieceCount', e.target.value)}
+                                                                className="w-full border border-gray-200 rounded px-2 py-1 text-sm text-right focus:ring-1 focus:ring-blue-500 outline-none"
+                                                            />
+                                                        </td>
+                                                        <td className="px-4 py-2">
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                value={item.grossWeight}
+                                                                onChange={(e) => updateItem(idx, 'grossWeight', e.target.value)}
+                                                                className="w-full border border-blue-200 bg-blue-50/30 rounded px-2 py-1 text-sm text-right font-bold text-gray-900 focus:ring-1 focus:ring-blue-500 outline-none"
+                                                                placeholder="0.00"
+                                                            />
+                                                        </td>
+                                                        <td className="px-4 py-2">
+                                                            <input
+                                                                type="number"
+                                                                step="1"
+                                                                min="0"
+                                                                value={item.weightLoss}
+                                                                onChange={(e) => updateItem(idx, 'weightLoss', e.target.value)}
+                                                                className="w-full border border-orange-200 bg-orange-50/30 rounded px-2 py-1 text-sm text-right text-gray-900 focus:ring-1 focus:ring-orange-500 outline-none"
+                                                                placeholder="0"
+                                                            />
+                                                        </td>
+                                                        <td className="px-4 py-2 text-right">
+                                                            <span className={`font-mono text-sm ${netW > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                                {netW > 0 ? netW.toFixed(2) : '-'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-4 py-2 text-center">
+                                                            <button
+                                                                onClick={() => removeItem(idx)}
+                                                                className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                                                            >
+                                                                <Trash2 className="w-4 h-4" />
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
                                         </tbody>
                                     </table>
                                 </div>

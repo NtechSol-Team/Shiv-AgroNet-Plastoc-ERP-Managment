@@ -834,7 +834,7 @@ export function Purchase() {
                           <td className="px-4 py-1.5 text-xs font-mono font-bold text-blue-700">{bill.code}</td>
                           <td className="px-4 py-1.5 text-sm font-bold text-gray-900">{bill.supplier?.name}</td>
                           <td className="px-4 py-1.5 text-sm font-bold text-gray-900">
-                            {bill.items?.map((i: any, idx) => <div key={idx}>{i.materialName}{i.color ? <span className="text-gray-500 font-normal"> ({i.color})</span> : ''}</div>)}
+                            {bill.items?.map((i: any, idx) => <div key={idx}>{i.materialName}{i.rawMaterial?.color ? <span className="text-gray-500 font-normal"> ({i.rawMaterial.color})</span> : ''}</div>)}
                           </td>
                           <td className="px-4 py-1.5 text-sm font-mono text-gray-900 text-right">
                             {bill.items?.map((i: any, idx) => <div key={idx}>{i.quantity} kg</div>)}

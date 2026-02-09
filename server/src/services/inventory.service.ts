@@ -455,26 +455,31 @@ export async function getInventorySummary() {
 // ============================================================
 
 /**
- * Get available batches for a raw material (FIFO)
- * Returns batches with remaining quantity > 0
+ * Get available batches/rolls for a raw material (FIFO)
+ * UPDATED: Now queries rawMaterialRolls instead of rawMaterialBatches
+ * because rolls are the single source of truth for raw material inventory
+ * Returns rolls with status = 'In Stock' ordered by creation date (FIFO)
  */
 export async function getAvailableBatches(rawMaterialId: string) {
-    // NEW: Updated to include relations for traceability
-    const batches = await db.query.rawMaterialBatches.findMany({
+    // Query rolls (not batches) - rolls are the actual inventory items
+    const rolls = await db.query.rawMaterialRolls.findMany({
         where: and(
-            eq(rawMaterialBatches.rawMaterialId, rawMaterialId),
-            eq(rawMaterialBatches.status, 'Active')
+            eq(rawMaterialRolls.rawMaterialId, rawMaterialId),
+            eq(rawMaterialRolls.status, 'In Stock')
         ),
         with: {
-            purchaseBill: {
-                with: { supplier: true }
-            }
+            purchaseBill: true
         },
-        orderBy: (rmb, { asc }) => [asc(rmb.createdAt)],
+        orderBy: (roll, { asc }) => [asc(roll.createdAt)], // FIFO: oldest first
     });
 
-    // Filter only those with actual remaining quantity (double check)
-    return batches.filter(batch =>
-        (parseFloat(batch.quantity) - parseFloat(batch.quantityUsed || '0')) > 0
-    );
+    // Transform rolls to match the expected batch interface for compatibility
+    return rolls.map(roll => ({
+        id: roll.id,
+        batchCode: roll.rollCode, // Use rollCode as batchCode for display
+        quantity: roll.netWeight, // Total roll weight
+        quantityUsed: '0', // Rolls are consumed whole, so no partial use tracking here
+        purchaseBill: roll.purchaseBill,
+        createdAt: roll.createdAt,
+    }));
 }
