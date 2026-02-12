@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, Loader2, Package, Edit2, Trash2, X } from 'lucide-react';
+import { Search, Filter, Loader2, Package, Edit2, Trash2, X, Plus } from 'lucide-react';
 import { inventoryApi, mastersApi } from '../lib/api';
 
 import { BellInventory } from './BellInventory';
+import { QuickProductionEntry } from './QuickProductionEntry';
 
 export function Inventory() {
   const [activeTab, setActiveTab] = useState<'finished-goods' | 'raw-material' | 'bells' | 'movements'>('finished-goods');
@@ -19,6 +20,9 @@ export function Inventory() {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [formData, setFormData] = useState<any>({});
   const [saving, setSaving] = useState(false);
+
+  // Quick Production Entry Modal
+  const [showQuickEntry, setShowQuickEntry] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -162,13 +166,24 @@ export function Inventory() {
             </button>
           </div>
 
-          <div className="relative w-64">
-            <input
-              type="text"
-              placeholder="Search SKU or Name..."
-              className="w-full pl-3 pr-8 py-1.5 bg-white border border-gray-300 rounded-sm text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-            />
-            <Search className="absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <div className="flex items-center space-x-3">
+            {activeTab === 'finished-goods' && (
+              <button
+                onClick={() => setShowQuickEntry(true)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/30 transition-all flex items-center space-x-2 font-medium text-sm"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add from Production</span>
+              </button>
+            )}
+            <div className="relative w-64">
+              <input
+                type="text"
+                placeholder="Search SKU or Name..."
+                className="w-full pl-3 pr-8 py-1.5 bg-white border border-gray-300 rounded-sm text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+              />
+              <Search className="absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+            </div>
           </div>
         </div>
 
@@ -394,6 +409,16 @@ export function Inventory() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Quick Production Entry Modal */}
+      {showQuickEntry && (
+        <QuickProductionEntry
+          onClose={() => setShowQuickEntry(false)}
+          onSuccess={() => {
+            fetchData(); // Refresh inventory
+          }}
+        />
       )}
     </div>
   );

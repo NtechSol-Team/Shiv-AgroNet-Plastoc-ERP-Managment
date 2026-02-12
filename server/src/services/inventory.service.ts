@@ -461,11 +461,13 @@ export async function getInventorySummary() {
  * Returns rolls with status = 'In Stock' ordered by creation date (FIFO)
  */
 export async function getAvailableBatches(rawMaterialId: string) {
-    // Query rolls (not batches) - rolls are the actual inventory items
+    console.log(`\n=== getAvailableRolls for material: ${rawMaterialId} ===`);
+
+    // Query rolls - the user wants to select individual rolls for production
     const rolls = await db.query.rawMaterialRolls.findMany({
         where: and(
             eq(rawMaterialRolls.rawMaterialId, rawMaterialId),
-            eq(rawMaterialRolls.status, 'In Stock')
+            eq(rawMaterialRolls.status, 'In Stock') // Only show available rolls
         ),
         with: {
             purchaseBill: true
@@ -473,15 +475,26 @@ export async function getAvailableBatches(rawMaterialId: string) {
         orderBy: (roll, { asc }) => [asc(roll.createdAt)], // FIFO: oldest first
     });
 
-    // Transform rolls to match the expected batch interface for compatibility
-    return rolls.map(roll => ({
-        id: roll.id,
-        batchCode: roll.rollCode, // Use rollCode as batchCode for display
-        quantity: roll.netWeight, // Total roll weight
-        quantityUsed: '0', // Rolls are consumed whole, so no partial use tracking here
-        purchaseBill: roll.purchaseBill,
-        createdAt: roll.createdAt,
-    }));
+    console.log(`Found ${rolls.length} available rolls`);
+
+    // Return rolls formatted for the dropdown
+    const result = rolls.map(roll => {
+        const weight = parseFloat(roll.netWeight);
+        console.log(`  - ${roll.rollCode}: Weight=${weight}kg, Status=${roll.status}`);
+
+        return {
+            id: roll.id, // Roll ID
+            batchCode: roll.rollCode, // Show roll code in dropdown
+            quantity: roll.netWeight, // Total roll weight
+            quantityUsed: '0', // Rolls are discrete units
+            available: roll.netWeight, // Full roll weight available
+            purchaseBill: roll.purchaseBill,
+            createdAt: roll.createdAt,
+        };
+    });
+
+    console.log(`Returning ${result.length} rolls\n`);
+    return result;
 }
 // ============================================================
 // PENDING QUANTITY TRACKING

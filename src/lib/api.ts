@@ -263,6 +263,11 @@ export const productionApi = {
             method: 'POST',
             body: JSON.stringify(data),
         }),
+    quickComplete: (data: { batchId: string; finishedProductId: string; outputWeight: number; weightLossGrams: number }) =>
+        fetchApi<any>('/production/quick-complete', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
     getStats: () => fetchApi<any>('/production/stats'),
 };
 

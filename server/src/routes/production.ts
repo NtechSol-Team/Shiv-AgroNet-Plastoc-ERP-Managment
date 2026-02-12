@@ -14,7 +14,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from '../db/index';
-import { productionBatches, machines, rawMaterials, finishedProducts, stockMovements, productionBatchInputs, productionBatchOutputs, rawMaterialBatches } from '../db/schema';
+import { productionBatches, machines, rawMaterials, finishedProducts, stockMovements, productionBatchInputs, productionBatchOutputs, rawMaterialBatches, rawMaterialRolls } from '../db/schema';
 import { eq, desc, sql, count as countFn } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
@@ -189,40 +189,70 @@ router.post('/batches', async (req: Request, res: Response, next: NextFunction) 
         for (const input of batchInputs) {
 
 
-            // Handle specific batch consumption if provided (ignore empty strings)
-            if (input.materialBatchId && input.materialBatchId.trim() !== '') {
-                const [batch] = await db.select().from(rawMaterialBatches).where(eq(rawMaterialBatches.id, input.materialBatchId));
+            // Handle specific roll selection if provided
+            // materialBatchId is actually a ROLL ID from the dropdown (misnamed for backward compat)
+            // Filter out: null, undefined, empty strings, or whitespace-only strings
+            const hasValidRollId = input.materialBatchId &&
+                typeof input.materialBatchId === 'string' &&
+                input.materialBatchId.trim().length > 0;
 
-                if (!batch) {
-                    throw createError('Selected raw material batch not found', 404);
+            if (hasValidRollId) {
+                // Look up the ROLL (not batch!)
+                const [roll] = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.id, input.materialBatchId!));
+
+                if (!roll) {
+                    throw createError(`Roll not found: ${input.materialBatchId}. If you don't want to specify a roll, leave it empty for FIFO allocation.`, 404);
                 }
 
-                const currentUsed = parseFloat(batch.quantityUsed || '0');
-                const totalQty = parseFloat(batch.quantity);
-                const available = totalQty - currentUsed;
+                const rollWeight = parseFloat(roll.netWeight);
 
-                if (input.quantity > available) {
-                    throw createError(`Insufficient quantity in batch ${batch.batchCode}. Available: ${available}, Requested: ${input.quantity}`, 400);
+                // Check if requested quantity matches roll weight (or is less for partial use)
+                if (input.quantity > rollWeight) {
+                    throw createError(`Requested quantity (${input.quantity}kg) exceeds roll weight (${rollWeight}kg) for ${roll.rollCode}`, 400);
                 }
 
-                // Update Batch Usage
-                const newUsed = currentUsed + input.quantity;
-                const newStatus = newUsed >= (totalQty - 0.01) ? 'Exhausted' : 'Active'; // Tolerance
-
-                await db.update(rawMaterialBatches)
+                // Mark the roll as "Consumed"
+                await db.update(rawMaterialRolls)
                     .set({
-                        quantityUsed: String(newUsed),
-                        status: newStatus,
+                        status: 'Consumed',
                         updatedAt: new Date()
                     })
-                    .where(eq(rawMaterialBatches.id, input.materialBatchId));
+                    .where(eq(rawMaterialRolls.id, input.materialBatchId!));
+
+                console.log(`✓ Marked roll ${roll.rollCode} as Consumed`);
+            } else {
+                // No specific roll selected - use FIFO to auto-select and mark rolls as consumed  
+                const availableRolls = await db.query.rawMaterialRolls.findMany({
+                    where: (rolls, { and, eq }) => and(
+                        eq(rolls.rawMaterialId, input.rawMaterialId),
+                        eq(rolls.status, 'In Stock')
+                    ),
+                    orderBy: (rolls, { asc }) => [asc(rolls.createdAt)] // FIFO
+                });
+
+                let remainingToConsume = input.quantity;
+                for (const roll of availableRolls) {
+                    if (remainingToConsume <= 0) break;
+
+                    const rollWeight = parseFloat(roll.netWeight);
+                    await db.update(rawMaterialRolls)
+                        .set({
+                            status: 'Consumed',
+                            updatedAt: new Date()
+                        })
+                        .where(eq(rawMaterialRolls.id, roll.id));
+
+                    console.log(`✓ Auto-consumed roll ${roll.rollCode} (${rollWeight}kg) via FIFO`);
+                    remainingToConsume -= rollWeight;
+                }
             }
+
 
 
             await db.insert(productionBatchInputs).values({
                 batchId: batch.id,
                 rawMaterialId: input.rawMaterialId,
-                materialBatchId: input.materialBatchId || null, // Link to batch
+                materialBatchId: null, // Not using batch tracking - rolls are tracked by status change
                 quantity: String(input.quantity)
             });
 
@@ -392,6 +422,149 @@ router.post('/batches/:id/complete', async (req: Request, res: Response, next: N
 
         // Add warning if loss exceeded
         const response: any = { ...fullBatch };
+        if (lossExceeded) {
+            response.warning = `Production loss ${lossPercentage.toFixed(2)}% exceeds ${LOSS_THRESHOLD_PERCENT}% threshold`;
+        }
+
+        res.json(successResponse(response));
+    } catch (error) {
+        next(error);
+    }
+});
+
+// ============================================================
+// QUICK COMPLETE (Direct Production Entry)
+// ============================================================
+
+/**
+ * POST /production/quick-complete
+ * Quick production entry from inventory
+ * 
+ * Allows creating finished goods directly from production batches
+ * with automatic stock calculation including weight loss
+ */
+router.post('/quick-complete', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const {
+            batchId,
+            finishedProductId, // Selected from dropdown
+            outputWeight, // in kg
+            weightLossGrams // in grams
+        } = req.body;
+
+        // Validate inputs
+        if (!batchId || !finishedProductId) {
+            throw createError('Batch ID and Product ID are required', 400);
+        }
+        if (!outputWeight || parseFloat(outputWeight) <= 0) {
+            throw createError('Output weight must be greater than 0', 400);
+        }
+        if (weightLossGrams === undefined || parseFloat(weightLossGrams) < 0) {
+            throw createError('Weight loss must be 0 or greater', 400);
+        }
+
+        // Get batch
+        const batch = await db.query.productionBatches.findFirst({
+            where: eq(productionBatches.id, batchId),
+            with: { outputs: true }
+        });
+
+        if (!batch) throw createError('Batch not found', 404);
+        if (batch.status !== 'in-progress') {
+            throw createError('Batch is not in progress', 400);
+        }
+
+        // Calculate total consumption
+        const output = parseFloat(outputWeight);
+        const loss = parseFloat(weightLossGrams) / 1000; // Convert grams to kg
+        const totalConsumption = output + loss;
+        const inputQty = parseFloat(batch.inputQuantity || '0');
+
+        // Validate consumption
+        if (totalConsumption > inputQty) {
+            throw createError(
+                `Total consumption (${totalConsumption.toFixed(2)}kg) exceeds batch input (${inputQty.toFixed(2)}kg)`,
+                400
+            );
+        }
+
+        // Calculate remaining and determine status
+        const remaining = inputQty - totalConsumption;
+        const newStatus = remaining > 0.01 ? 'partially-completed' : 'completed'; // 0.01kg tolerance
+
+        // Calculate loss percentage
+        const lossPercentage = inputQty > 0 ? (loss / inputQty) * 100 : 0;
+        const lossExceeded = lossPercentage > LOSS_THRESHOLD_PERCENT;
+
+        // Update or insert output record
+        const existing = batch.outputs.find(o => o.finishedProductId === finishedProductId);
+        if (existing) {
+            await db.update(productionBatchOutputs)
+                .set({ outputQuantity: String(output) })
+                .where(eq(productionBatchOutputs.id, existing.id));
+        } else {
+            await db.insert(productionBatchOutputs).values({
+                batchId: batch.id,
+                finishedProductId,
+                outputQuantity: String(output)
+            });
+        }
+
+        // Create FG_IN stock movement
+        await db.insert(stockMovements).values({
+            date: new Date(),
+            movementType: 'FG_IN',
+            itemType: 'finished_product',
+            finishedProductId,
+            quantityIn: String(output),
+            quantityOut: '0',
+            runningBalance: '0', // Calculated separately
+            referenceType: 'production',
+            referenceCode: batch.code,
+            referenceId: batch.id,
+            reason: `Quick production entry from batch ${batch.code}`,
+        });
+
+        // Update batch header
+        await db.update(productionBatches)
+            .set({
+                outputQuantity: String(output),
+                completionDate: new Date(),
+                lossQuantity: String(loss),
+                lossPercentage: String(lossPercentage),
+                lossExceeded,
+                status: newStatus, // Smart status based on remaining stock
+                updatedAt: new Date(),
+            })
+            .where(eq(productionBatches.id, batchId));
+
+        // Fetch updated batch and product
+        const [updatedBatch, product] = await Promise.all([
+            db.query.productionBatches.findFirst({
+                where: eq(productionBatches.id, batchId),
+                with: {
+                    machine: true,
+                    outputs: { with: { finishedProduct: true } }
+                }
+            }),
+            db.query.finishedProducts.findFirst({
+                where: eq(finishedProducts.id, finishedProductId)
+            })
+        ]);
+
+        // Prepare response with warnings
+        const response: any = {
+            batch: updatedBatch,
+            product,
+            consumption: {
+                output: output,
+                loss: loss,
+                total: totalConsumption,
+                remaining: remaining,
+                status: newStatus
+            }
+        };
+
         if (lossExceeded) {
             response.warning = `Production loss ${lossPercentage.toFixed(2)}% exceeds ${LOSS_THRESHOLD_PERCENT}% threshold`;
         }

@@ -275,7 +275,41 @@ router.delete('/finished-products/:id', async (req: Request, res: Response, next
             }
         }
 
-        // 4. Delete Bell Items (Inventory)
+        // 4. Check for Invoice Dependencies
+        // If any bell items for this product are on invoices, we cannot delete
+        const bellItemsForProduct = await db.query.bellItems.findMany({
+            where: eq(bellItems.finishedProductId, id)
+        });
+
+        if (bellItemsForProduct.length > 0) {
+            const bellItemIds = bellItemsForProduct.map(bi => bi.id);
+
+            // Check if any of these bell items are on invoices
+            const invoicedItems = await db.query.invoiceItems.findMany({
+                where: (invoiceItems, { inArray, isNotNull, and }) =>
+                    and(
+                        inArray(invoiceItems.bellItemId as any, bellItemIds),
+                        isNotNull(invoiceItems.bellItemId)
+                    )
+            });
+
+            if (invoicedItems.length > 0) {
+                // Get unique invoice IDs and fetch their codes
+                const invoiceIds = [...new Set(invoicedItems.map(ii => ii.invoiceId))];
+                const invoices = await db.query.invoices.findMany({
+                    where: (invoices, { inArray }) => inArray(invoices.id as any, invoiceIds)
+                });
+                const invoiceNumbers = invoices.map(inv => inv.invoiceNumber).join(', ');
+
+                throw createError(
+                    `Cannot delete product: ${invoicedItems.length} bell item(s) from this product are in invoices (${invoiceNumbers}). Please delete or modify those invoices first.`,
+                    409 // Conflict
+                );
+            }
+        }
+
+
+        // 5. Delete Bell Items (Inventory)
         // Bell items reference finishedProduct. If we don't delete them, we get FK violation.
         // And since bell items ARE the inventory, deleting the product should delete its inventory.
         await db.delete(bellItems).where(eq(bellItems.finishedProductId, id));
