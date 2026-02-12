@@ -15,10 +15,10 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from '../db/index';
-import { createStockMovement } from '../services/inventory.service';
+import { createStockMovement, getPendingBillQuantity } from '../services/inventory.service';
 
 // ... (imports remain)
-import { purchaseBills, purchaseBillItems, suppliers, rawMaterials, paymentTransactions, billPaymentAllocations, bankCashAccounts, generalLedger, rawMaterialBatches, finishedProducts, expenseHeads, productionBatchInputs, rawMaterialRolls } from '../db/schema';
+import { purchaseBills, purchaseBillItems, suppliers, rawMaterials, paymentTransactions, billPaymentAllocations, bankCashAccounts, generalLedger, rawMaterialBatches, finishedProducts, expenseHeads, productionBatchInputs, rawMaterialRolls, purchaseBillAdjustments } from '../db/schema';
 // Removed stockMovements from imports as we use the service now
 
 // ... (inside the route)
@@ -368,6 +368,119 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
 });
 
 // ============================================================
+// ROLL MANAGEMENT
+// ============================================================
+
+/**
+ * GET /purchase/next-roll-seq
+ * Get the next available global roll sequence number
+ */
+router.get('/next-roll-seq', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        // Count existing rolls to determine next sequence
+        const result = await db.select({ count: countFn() }).from(rawMaterialRolls);
+        const count = Number(result[0]?.count || 0);
+
+        // Return next sequence number (count + 1)
+        // This ensures a continuous sequence even across different bills
+        res.json(successResponse({ nextSeq: count + 1 }));
+    } catch (error) {
+        next(error);
+    }
+});
+
+// ============================================================
+// PENDING QUANTITY MANAGEMENT
+// ============================================================
+
+/**
+ * GET /purchase/pending-qty
+ * Get pending quantity for a specific supplier and material
+ */
+router.get('/pending-qty', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { supplierId, rawMaterialId } = req.query;
+
+        if (!supplierId || !rawMaterialId) {
+            throw createError('Supplier ID and Raw Material ID are required', 400);
+        }
+
+        // 1. Find confirm bills for this supplier that have this material
+        // We only care about bills that might have pending qty
+        const bills = await db
+            .select({
+                id: purchaseBills.id,
+                code: purchaseBills.code,
+                date: purchaseBills.date,
+                quantity: purchaseBillItems.quantity
+            })
+            .from(purchaseBills)
+            .innerJoin(purchaseBillItems, eq(purchaseBills.id, purchaseBillItems.billId))
+            .where(and(
+                eq(purchaseBills.supplierId, String(supplierId)),
+                eq(purchaseBills.status, 'Confirmed'),
+                eq(purchaseBillItems.rawMaterialId, String(rawMaterialId))
+            ))
+            .orderBy(desc(purchaseBills.date));
+
+        // 2. Calculate pending for each and filter > 0
+        const pendingBills = [];
+        for (const bill of bills) {
+            const pending = await getPendingBillQuantity(bill.id, String(rawMaterialId));
+            if (pending > 0.01) { // Tolerance for float precision
+                pendingBills.push({
+                    ...bill,
+                    pendingQuantity: pending
+                });
+            }
+        }
+
+        res.json(successResponse(pendingBills));
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * POST /purchase/adjust-qty
+ * Adjust pending quantity from an old bill to a new one (or just mark as adjusted)
+ */
+router.post('/adjust-qty', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { sourceBillId, targetBillId, rawMaterialId, quantity } = req.body;
+
+        if (!sourceBillId || !targetBillId || !rawMaterialId || !quantity) {
+            throw createError('Missing required fields for adjustment', 400);
+        }
+
+        const qty = parseFloat(quantity);
+        if (qty <= 0) throw createError('Quantity must be positive', 400);
+
+        // Validate source has enough pending
+        const currentPending = await getPendingBillQuantity(sourceBillId, rawMaterialId);
+        if (qty > currentPending + 0.01) { // Tolerance
+            throw createError(`Cannot adjust ${qty}kg. Only ${currentPending.toFixed(2)}kg pending.`, 400);
+        }
+
+        // Create adjustment record
+        const [adjustment] = await db.insert(purchaseBillAdjustments).values({
+            sourceBillId,
+            targetBillId,
+            rawMaterialId,
+            quantity: String(qty)
+        }).returning();
+
+        res.json(successResponse({
+            message: 'Pending quantity adjusted successfully',
+            adjustment
+        }));
+
+    } catch (error) {
+        next(error);
+    }
+});
+
+// ============================================================
 // GET PURCHASE SUMMARY
 // ============================================================
 
@@ -674,6 +787,13 @@ router.delete('/bills/:id', async (req: Request, res: Response, next: NextFuncti
 
         // Delete raw material batches linked to this bill
         await db.delete(rawMaterialBatches).where(eq(rawMaterialBatches.purchaseBillId, id));
+
+        // Delete adjustments where this bill is source or target
+        await db.delete(purchaseBillAdjustments).where(eq(purchaseBillAdjustments.sourceBillId, id));
+        await db.delete(purchaseBillAdjustments).where(eq(purchaseBillAdjustments.targetBillId, id));
+
+        // Delete rolls linked to this bill
+        await db.delete(rawMaterialRolls).where(eq(rawMaterialRolls.purchaseBillId, id));
 
         // Delete items
         await db.delete(purchaseBillItems).where(eq(purchaseBillItems.billId, id));

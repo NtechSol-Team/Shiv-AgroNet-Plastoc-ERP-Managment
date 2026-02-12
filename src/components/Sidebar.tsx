@@ -28,6 +28,7 @@ export function Sidebar({ activeModule, onModuleChange }: SidebarProps) {
         { id: 'production', label: 'Production', icon: Cog },
         { id: 'accounts', label: 'Accounts', icon: CreditCard },
         { id: 'finance', label: 'Finance', icon: Wallet },
+        { id: 'samples', label: 'Samples', icon: Archive }, // Using Archive icon for now
         { id: 'reports', label: 'Reports', icon: FileText }
     ];
 

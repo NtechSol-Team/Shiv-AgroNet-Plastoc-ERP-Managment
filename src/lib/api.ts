@@ -237,6 +237,16 @@ export const purchaseApi = {
         }),
     deleteRoll: (billId: string, rollId: string) =>
         fetchApi<any>(`/purchase/bills/${billId}/rolls/${rollId}`, { method: 'DELETE' }),
+    getNextRollSeq: () => fetchApi<any>('/purchase/next-roll-seq'),
+
+    // Pending Quantity Management
+    getPendingQuantity: (supplierId: string, rawMaterialId: string) =>
+        fetchApi<any[]>(`/purchase/pending-qty?supplierId=${supplierId}&rawMaterialId=${rawMaterialId}`),
+    adjustPendingQuantity: (data: any) =>
+        fetchApi<any>('/purchase/adjust-qty', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
 };
 
 // ==================== PRODUCTION API ====================
@@ -387,4 +397,20 @@ export const financeApi = {
             body: JSON.stringify(data),
         }),
     getDashboardStats: () => fetchApi<any>('/finance/dashboard-stats'),
+};
+
+// ==================== SAMPLES API ====================
+export const samplesApi = {
+    getAll: () => fetchApi<any[]>('/samples'),
+    create: (data: any) =>
+        fetchApi<any>('/samples', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
+    update: (id: string, data: any) =>
+        fetchApi<any>(`/samples/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        }),
+    delete: (id: string) => fetchApi<any>(`/samples/${id}`, { method: 'DELETE' }),
 };

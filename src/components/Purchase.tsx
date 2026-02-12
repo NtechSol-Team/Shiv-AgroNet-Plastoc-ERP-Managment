@@ -33,6 +33,7 @@ interface RawMaterial {
   id: string;
   code: string;
   name: string;
+  color: string;
   hsnCode: string;
   gstPercent: string;
   stock: string;
@@ -68,6 +69,9 @@ interface PurchaseItem {
   sgst: number;
   igst: number;
   total: number;
+  pendingQuantity?: number; // Fetched from API
+  sourceBills?: any[]; // Store bills for adjustment
+  pendingAdjustment?: { qty: number; sourceBills: any[] }; // To be processed on save
 }
 
 interface PurchaseBill {
@@ -483,8 +487,47 @@ export function Purchase() {
         setError(result.error);
       } else {
         const action = editingBillId ? 'updated' : 'created';
+        const newBillId = result.data.id; // Correctly get the ID
         console.log(`✓ Bill ${action} successfully:`, result.data?.code);
         console.log('  Items in response:', result.data?.items?.length || 0);
+
+        // Process Pending Adjustments
+        // If an item has 'pendingAdjustment', we must create adjustment records linking past bills to this new bill
+        if (newBillId && purchaseType === 'RAW_MATERIAL') {
+          for (const item of items) {
+            if (item.pendingAdjustment && item.pendingAdjustment.qty > 0) {
+              try {
+                console.log(`Processing adjustment for ${item.materialName}: ${item.pendingAdjustment.qty} kg`);
+                // We need to distribute this qty across the source bills (FIFO)
+                // item.sourceBills should be sorted by date (desc) from the API, but we want FIFO/Oldest first usually?
+                // Actually the API returns them sorted by date DESC.
+                // Let's allocate to the OLDEST available bill first (reverse the array).
+                const sourceBills = [...(item.pendingAdjustment.sourceBills || [])].reverse();
+
+                let remainingToAdjust = item.pendingAdjustment.qty;
+
+                for (const sourceBill of sourceBills) {
+                  if (remainingToAdjust <= 0) break;
+
+                  const canAdjust = Math.min(remainingToAdjust, sourceBill.pendingQuantity);
+                  if (canAdjust > 0) {
+                    await purchaseApi.adjustPendingQuantity({
+                      sourceBillId: sourceBill.id,
+                      targetBillId: newBillId,
+                      rawMaterialId: item.rawMaterialId,
+                      quantity: canAdjust
+                    });
+                    remainingToAdjust -= canAdjust;
+                  }
+                }
+
+              } catch (adjErr) {
+                console.error('Failed to auto-create adjustment:', adjErr);
+                // We don't block the bill success, but maybe show a warning?
+              }
+            }
+          }
+        }
 
         setSuccess(`Purchase bill ${result.data?.code} ${action} successfully!`);
         setShowForm(false);
@@ -707,6 +750,95 @@ export function Purchase() {
 
     setItems(billItems);
     setShowForm(true);
+  };
+
+  // ============================================================
+  // PENDING QUANTITY LOGIC
+  // ============================================================
+
+  const [adjustmentModal, setAdjustmentModal] = useState<{
+    isOpen: boolean;
+    itemIndex: number;
+    rawMaterialId: string;
+    pendingBills: any[];
+  }>({ isOpen: false, itemIndex: -1, rawMaterialId: '', pendingBills: [] });
+
+  const checkPendingQuantity = async (index: number, rawMaterialId: string) => {
+    if (!selectedSupplier || !rawMaterialId) return;
+
+    try {
+      const result = await purchaseApi.getPendingQuantity(selectedSupplier.id, rawMaterialId);
+      if (result.data) {
+        // Exclude current bill if editing
+        const filteredData = editingBillId
+          ? result.data.filter((b: any) => b.id !== editingBillId)
+          : result.data;
+
+        const totalPending = filteredData.reduce((sum: number, b: any) => sum + b.pendingQuantity, 0);
+
+        // Update item with pending info
+        const newItems = [...items];
+        newItems[index] = {
+          ...newItems[index],
+          pendingQuantity: totalPending,
+          sourceBills: filteredData // Store source bills for later adjustment
+        };
+        setItems(newItems);
+      }
+    } catch (err) {
+      console.error('Failed to check pending qty:', err);
+    }
+  };
+
+  // Watch for material changes to trigger check
+  useEffect(() => {
+    items.forEach((item, index) => {
+      if (item.rawMaterialId && selectedSupplier && purchaseType === 'RAW_MATERIAL') {
+        // Debounce or just check if not already checked? 
+        // For simplicity, we'll let the user click "Check" or check on selection
+      }
+    });
+  }, [items, selectedSupplier]);
+
+  const openAdjustmentModal = async (index: number, rawMaterialId: string) => {
+    if (!selectedSupplier) return;
+    setLoading(true);
+    try {
+      const result = await purchaseApi.getPendingQuantity(selectedSupplier.id, rawMaterialId);
+      if (result.data) {
+        setAdjustmentModal({
+          isOpen: true,
+          itemIndex: index,
+          rawMaterialId,
+          pendingBills: result.data
+        });
+      }
+    } catch (e) {
+      setError("Failed to fetch pending bills");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAdjustConfirm = async (billId: string, adjustQty: number) => {
+    if (editingBillId) {
+      try {
+        await purchaseApi.adjustPendingQuantity({
+          sourceBillId: billId,
+          targetBillId: editingBillId,
+          rawMaterialId: adjustmentModal.rawMaterialId,
+          quantity: adjustQty
+        });
+        setSuccess("Adjustment recorded!");
+        setAdjustmentModal({ ...adjustmentModal, isOpen: false });
+        // Refresh
+        checkPendingQuantity(adjustmentModal.itemIndex, adjustmentModal.rawMaterialId);
+      } catch (e) {
+        setError("Failed to adjust");
+      }
+    } else {
+      alert("Please save the bill as Draft first to perform adjustments.");
+    }
   };
 
 
@@ -1081,7 +1213,9 @@ export function Purchase() {
                                 >
                                   <option value="">Select Material...</option>
                                   {rawMaterials.map(rm => (
-                                    <option key={rm.id} value={rm.id}>{rm.name} - {rm.stock} {rm.unit}</option>
+                                    <option key={rm.id} value={rm.id}>
+                                      {rm.name} | {rm.color} - Stock: {rm.stock} {rm.unit}
+                                    </option>
                                   ))}
                                 </select>
                               )}
@@ -1134,6 +1268,81 @@ export function Purchase() {
                                 className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 text-right font-mono"
                                 placeholder="0.00"
                               />
+                              {/* Pending Qty Badge */}
+                              {purchaseType === 'RAW_MATERIAL' && item.rawMaterialId && (
+                                <div className="mt-1 flex items-center justify-end space-x-2">
+                                  {item.pendingQuantity === undefined ? (
+                                    <button
+                                      onClick={() => checkPendingQuantity(index, item.rawMaterialId!)}
+                                      className="text-[10px] text-blue-600 hover:underline"
+                                      tabIndex={-1}
+                                    >
+                                      Check Pending
+                                    </button>
+                                  ) : item.pendingQuantity > 0 && (
+                                    <div className="flex items-center gap-2 bg-orange-50 px-2 py-0.5 rounded border border-orange-100">
+                                      <span className="text-[10px] text-orange-800 font-medium">
+                                        Pending: {item.pendingQuantity.toFixed(2)} kg
+                                      </span>
+
+                                      {!item.pendingAdjustment ? (
+                                        <button
+                                          onClick={() => {
+                                            // Add pending quantity to current quantity
+                                            const currentQty = parseFloat(item.quantity) || 0;
+                                            const newQty = currentQty + item.pendingQuantity!;
+
+                                            const newItems = [...items];
+                                            newItems[index] = {
+                                              ...newItems[index],
+                                              quantity: newQty.toFixed(2),
+                                              pendingAdjustment: {
+                                                qty: item.pendingQuantity!,
+                                                sourceBills: item.sourceBills || [] // We need to store source bills from checkPendingQuantity
+                                              }
+                                            };
+                                            // Trigger recalculation
+                                            // Reuse existing calculation logic by updating quantity directly?
+                                            // Logic mirrors updateItem partially
+                                            const qty = parseFloat(newItems[index].quantity) || 0;
+                                            const rate = parseFloat(newItems[index].rate) || 0;
+                                            const gst = parseFloat(newItems[index].gstPercent) || 0;
+                                            const amount = qty * rate;
+                                            const gstAmount = amount * (gst / 100);
+
+                                            // Determine GST split
+                                            let cgst = 0, sgst = 0, igst = 0;
+                                            if (isInterState) {
+                                              igst = gstAmount;
+                                            } else {
+                                              cgst = gstAmount / 2;
+                                              sgst = gstAmount / 2;
+                                            }
+
+                                            newItems[index] = {
+                                              ...newItems[index],
+                                              amount,
+                                              cgst,
+                                              sgst,
+                                              igst,
+                                              total: amount + gstAmount
+                                            };
+                                            setItems(newItems);
+                                          }}
+                                          className="text-[10px] font-bold text-blue-600 hover:underline flex items-center"
+                                          title="Add this pending quantity to current bill"
+                                        >
+                                          <Plus className="w-3 h-3 mr-0.5" /> Add
+                                        </button>
+                                      ) : (
+                                        <span className="text-[10px] text-green-600 font-bold flex items-center">
+                                          <CheckCircle className="w-3 h-3 mr-1" /> Added
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </td>
                             <td className="px-3 py-2">
                               <input
@@ -1617,6 +1826,93 @@ export function Purchase() {
       )}
 
       {/* Adjust Advance Modal Removed */}
+      {/* Adjustment Modal */}
+      {adjustmentModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+            <h3 className="text-lg font-bold mb-4">Adjust Pending Quantity</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Select a previous bill to adjust pending quantity from. This will link the stock from this bill to the previous one.
+            </p>
+
+            <div className="space-y-3 max-h-60 overflow-y-auto">
+              {adjustmentModal.pendingBills.length === 0 ? (
+                <p className="text-sm text-gray-500">No pending bills found.</p>
+              ) : (
+                adjustmentModal.pendingBills.map(bill => (
+                  <div key={bill.id} className="border p-3 rounded hover:bg-gray-50 flex justify-between items-center">
+                    <div>
+                      <div className="font-bold text-sm">{bill.code}</div>
+                      <div className="text-xs text-gray-500">{new Date(bill.date).toLocaleDateString()}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-bold text-orange-600">{bill.pendingQuantity.toFixed(2)} kg</div>
+                      <button
+                        onClick={() => {
+                          const qty = parseFloat(prompt(`Enter quantity to adjust (Max ${bill.pendingQuantity})`, bill.pendingQuantity.toString()) || '0');
+                          if (qty > 0 && qty <= bill.pendingQuantity) {
+                            handleAdjustConfirm(bill.id, qty);
+                          } else if (qty > bill.pendingQuantity) {
+                            alert("Quantity exceeds pending amount");
+                          }
+                        }}
+                        className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded mt-1 hover:bg-blue-200"
+                      >
+                        Adjust
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setAdjustmentModal({ ...adjustmentModal, isOpen: false })}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmation.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-sm p-6">
+            <h3 className="text-lg font-bold mb-2 text-gray-900">Confirm Deletion</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Are you sure you want to delete this purchase bill? This action cannot be undone and will reverse stock movements.
+            </p>
+            {deleteConfirmation.error && (
+              <div className="bg-red-50 text-red-700 text-xs p-2 rounded mb-4">
+                {deleteConfirmation.error}
+              </div>
+            )}
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setDeleteConfirmation({ isOpen: false, id: null })}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium text-sm"
+                disabled={loading}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteBill}
+                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 font-medium text-sm flex items-center"
+                disabled={loading}
+              >
+                {loading && <Loader2 className="w-3 h-3 animate-spin mr-2" />}
+                Delete Bill
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
+

@@ -58,12 +58,38 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
         }
     }, [rolls.length]);
 
+    const [pendingQty, setPendingQty] = useState(0);
+
+    const [nextSeq, setNextSeq] = useState(1);
+
     const fetchRolls = async () => {
         setLoading(true);
         try {
             const result = await purchaseApi.getRolls(bill.id);
             if (result.error) throw new Error(result.error);
             setExistingRolls(result.data || []);
+
+            // Check pending quantity for all materials in bill
+            if (bill.supplier?.id) {
+                let totalPending = 0;
+                for (const item of billItems) {
+                    const pendingRes = await purchaseApi.getPendingQuantity(bill.supplier.id, item.rawMaterialId);
+                    if (pendingRes.data) {
+                        const p = pendingRes.data
+                            .filter((b: any) => b.id !== bill.id)
+                            .reduce((sum: number, b: any) => sum + b.pendingQuantity, 0);
+                        totalPending += p;
+                    }
+                }
+                setPendingQty(totalPending);
+            }
+
+            // Fetch next available global sequence
+            const seqRes = await purchaseApi.getNextRollSeq();
+            if (seqRes.data) {
+                setNextSeq(seqRes.data.nextSeq);
+            }
+
         } catch (err: any) {
             setError(err.message || "Failed to load rolls");
         }
@@ -78,8 +104,10 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
             return;
         }
 
-        const nextIndex = existingRolls.length + rolls.length + 1;
-        const rollCode = `ROLL-${bill.code}-${String(nextIndex).padStart(3, '0')}`;
+        // Generate Code: ROLL-{GlobalSeq}
+        // Offset by current new rolls length to avoid duplicates in this session
+        const currentSeq = nextSeq + rolls.length;
+        const rollCode = `ROLL-${String(currentSeq).padStart(4, '0')}`;
 
         setRolls([
             ...rolls,
@@ -88,7 +116,7 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                 rollCode,
                 netWeight: '',
                 gsm: '',
-                width: '',
+                width: '', // Changed from length to width
                 rawMaterialId: defaultMaterialId
             }
         ]);
@@ -221,6 +249,18 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                             </div>
                         </div>
                     </div>
+                    {/* Pending from Past Bills Warning */}
+                    {pendingQty > 0 && (
+                        <div className="bg-orange-50 border border-orange-200 p-3 rounded-lg flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <AlertTriangle className="w-5 h-5 text-orange-600" />
+                                <div>
+                                    <p className="text-sm font-bold text-orange-800">Pending Quantity from Past Bills: {pendingQty.toFixed(2)} kg</p>
+                                    <p className="text-xs text-orange-600">You can accept extra rolls up to this amount to adjust against previous shortfalls.</p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Existing Rolls */}
                     {existingRolls.length > 0 && (

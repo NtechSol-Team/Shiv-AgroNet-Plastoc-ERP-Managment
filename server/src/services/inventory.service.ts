@@ -20,8 +20,8 @@
  */
 
 import { db } from '../db/index';
-import { stockMovements, rawMaterials, finishedProducts, purchaseBills, purchaseBillItems, productionBatches, rawMaterialBatches, rawMaterialRolls } from '../db/schema';
-import { eq, and, sql, desc } from 'drizzle-orm';
+import { stockMovements, rawMaterials, finishedProducts, purchaseBills, purchaseBillItems, productionBatches, rawMaterialBatches, rawMaterialRolls, purchaseBillAdjustments } from '../db/schema';
+import { eq, and, sql, desc, sum } from 'drizzle-orm';
 import { invalidateInventorySummary, invalidateDashboardKPIs } from './precomputed.service';
 
 // ============================================================
@@ -482,4 +482,64 @@ export async function getAvailableBatches(rawMaterialId: string) {
         purchaseBill: roll.purchaseBill,
         createdAt: roll.createdAt,
     }));
+}
+// ============================================================
+// PENDING QUANTITY TRACKING
+// ============================================================
+
+/**
+ * Calculate pending quantity for a specific purchase bill item
+ * Pending = Bill Qty - Rolls Created - Adjustments Made
+ */
+export async function getPendingBillQuantity(billId: string, rawMaterialId: string): Promise<number> {
+    // 1. Get Bill Item Quantity
+    const [billItem] = await db
+        .select({ quantity: purchaseBillItems.quantity })
+        .from(purchaseBillItems)
+        .where(and(
+            eq(purchaseBillItems.billId, billId),
+            eq(purchaseBillItems.rawMaterialId, rawMaterialId)
+        ));
+
+    if (!billItem) return 0;
+    const billQty = parseFloat(billItem.quantity);
+
+    // 2. Get Total Weight of Rolls linked to this bill and material
+    const [rollsResult] = await db
+        .select({ totalWeight: sql<string>`COALESCE(SUM(${rawMaterialRolls.netWeight}), 0)` })
+        .from(rawMaterialRolls)
+        .where(and(
+            eq(rawMaterialRolls.purchaseBillId, billId),
+            eq(rawMaterialRolls.rawMaterialId, rawMaterialId)
+        ));
+
+    const rollsQty = parseFloat(rollsResult?.totalWeight || '0');
+
+    // 3. Get Total Adjustments (where this bill is the SOURCE - i.e. stock transferred OUT to another bill)
+    const [sourceAdjResult] = await db
+        .select({ totalAdjusted: sql<string>`COALESCE(SUM(${purchaseBillAdjustments.quantity}), 0)` })
+        .from(purchaseBillAdjustments)
+        .where(and(
+            eq(purchaseBillAdjustments.sourceBillId, billId),
+            eq(purchaseBillAdjustments.rawMaterialId, rawMaterialId)
+        ));
+
+    const sourceAdjustedQty = parseFloat(sourceAdjResult?.totalAdjusted || '0');
+
+    // 4. Get Total Adjustments (where this bill is the TARGET - i.e. stock transferred IN from another bill)
+    // This effectively reduces the "Rolls" count for this bill because some rolls are attributed to previous bills
+    const [targetAdjResult] = await db
+        .select({ totalAdjusted: sql<string>`COALESCE(SUM(${purchaseBillAdjustments.quantity}), 0)` })
+        .from(purchaseBillAdjustments)
+        .where(and(
+            eq(purchaseBillAdjustments.targetBillId, billId),
+            eq(purchaseBillAdjustments.rawMaterialId, rawMaterialId)
+        ));
+
+    const targetAdjustedQty = parseFloat(targetAdjResult?.totalAdjusted || '0');
+
+    // 5. Calculate Pending
+    // Formula: BillQty - (Rolls - TargetAdjustments) - SourceAdjustments
+    // Simplified: BillQty - Rolls + TargetAdjustments - SourceAdjustments
+    return Math.max(0, billQty - rollsQty + targetAdjustedQty - sourceAdjustedQty);
 }

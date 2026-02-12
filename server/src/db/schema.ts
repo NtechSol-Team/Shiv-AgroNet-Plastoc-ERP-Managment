@@ -453,6 +453,8 @@ export const purchaseBillsRelations = relations(purchaseBills, ({ one, many }) =
     items: many(purchaseBillItems),
     rolls: many(rawMaterialRolls),
     allocations: many(billPaymentAllocations),
+    adjustmentsSource: many(purchaseBillAdjustments, { relationName: 'adjustmentsSource' }),
+    adjustmentsTarget: many(purchaseBillAdjustments, { relationName: 'adjustmentsTarget' }),
 }));
 
 export const purchaseBillItemsRelations = relations(purchaseBillItems, ({ one }) => ({
@@ -530,6 +532,25 @@ export const invoicePaymentAllocationsRelations = relations(invoicePaymentAlloca
 export const billPaymentAllocationsRelations = relations(billPaymentAllocations, ({ one }) => ({
     payment: one(paymentTransactions, { fields: [billPaymentAllocations.paymentId], references: [paymentTransactions.id] }),
     bill: one(purchaseBills, { fields: [billPaymentAllocations.billId], references: [purchaseBills.id] }),
+}));
+
+// ==================== SAMPLE MANAGEMENT ====================
+
+export const productSamples = pgTable('product_samples', {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    partyId: text('party_id').references(() => suppliers.id), // Can be null if generic sample
+    finishedProductId: text('finished_product_id').notNull().references(() => finishedProducts.id),
+    quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
+    date: timestamp('date').defaultNow().notNull(),
+    batchCode: text('batch_code'), // Optional link to specific batch
+    purpose: text('purpose'), // Marketing, Testing, etc.
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const productSamplesRelations = relations(productSamples, ({ one }) => ({
+    party: one(suppliers, { fields: [productSamples.partyId], references: [suppliers.id] }),
+    finishedProduct: one(finishedProducts, { fields: [productSamples.finishedProductId], references: [finishedProducts.id] }),
 }));
 
 // ==================== BELL INVENTORY ====================
@@ -685,4 +706,25 @@ export const rawMaterialRolls = pgTable('raw_material_rolls', {
 export const rawMaterialRollsRelations = relations(rawMaterialRolls, ({ one }) => ({
     purchaseBill: one(purchaseBills, { fields: [rawMaterialRolls.purchaseBillId], references: [purchaseBills.id] }),
     rawMaterial: one(rawMaterials, { fields: [rawMaterialRolls.rawMaterialId], references: [rawMaterials.id] }),
+}));
+
+// ==================== PURCHASE BILL ADJUSTMENTS (PENDING QTY) ====================
+
+export const purchaseBillAdjustments = pgTable('purchase_bill_adjustments', {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    sourceBillId: text('source_bill_id').notNull().references(() => purchaseBills.id), // The past bill with pending qty
+    targetBillId: text('target_bill_id').notNull().references(() => purchaseBills.id), // The current bill absorbing the pending qty
+    rawMaterialId: text('raw_material_id').notNull().references(() => rawMaterials.id),
+    quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
+    createdAt: timestamp('created_at').defaultNow(),
+}, (table) => ({
+    sourceBillIdx: index('pb_adjustments_source_idx').on(table.sourceBillId),
+    targetBillIdx: index('pb_adjustments_target_idx').on(table.targetBillId),
+    materialIdx: index('pb_adjustments_material_idx').on(table.rawMaterialId),
+}));
+
+export const purchaseBillAdjustmentsRelations = relations(purchaseBillAdjustments, ({ one }) => ({
+    sourceBill: one(purchaseBills, { fields: [purchaseBillAdjustments.sourceBillId], references: [purchaseBills.id], relationName: 'adjustmentsSource' }),
+    targetBill: one(purchaseBills, { fields: [purchaseBillAdjustments.targetBillId], references: [purchaseBills.id], relationName: 'adjustmentsTarget' }),
+    rawMaterial: one(rawMaterials, { fields: [purchaseBillAdjustments.rawMaterialId], references: [rawMaterials.id] }),
 }));

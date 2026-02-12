@@ -6,7 +6,8 @@ import { Production } from './components/Production';
 import { Inventory } from './components/Inventory';
 import { Sales } from './components/Sales';
 import { Accounts } from './components/Accounts';
-import { Finance } from './components/Finance'; // NEW
+import { Finance } from './components/Finance';
+import { Samples } from './components/Samples'; // NEW
 import { Reports } from './components/Reports';
 // import { Header } from './components/Header'; // Deprecated
 import { Sidebar } from './components/Sidebar';
@@ -32,8 +33,10 @@ export default function App() {
         return <Sales />;
       case 'accounts':
         return <Accounts />;
-      case 'finance': // Add Case
+      case 'finance':
         return <Finance />;
+      case 'samples': // Add Case
+        return <Samples />;
       case 'reports':
         return <Reports />;
       default:
