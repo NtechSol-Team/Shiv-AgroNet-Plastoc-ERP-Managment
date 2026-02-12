@@ -84,11 +84,18 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                 setPendingQty(totalPending);
             }
 
+
             // Fetch next available global sequence
             const seqRes = await purchaseApi.getNextRollSeq();
+            console.log('📋 Next Roll Seq API Response:', seqRes);
             if (seqRes.data) {
+                console.log('✓ Setting nextSeq to:', seqRes.data.nextSeq);
                 setNextSeq(seqRes.data.nextSeq);
+            } else {
+                console.warn('⚠️ No data in getNextRollSeq response, defaulting to 1');
+                setNextSeq(1);
             }
+
 
         } catch (err: any) {
             setError(err.message || "Failed to load rolls");
@@ -108,6 +115,8 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
         // Offset by current new rolls length to avoid duplicates in this session
         const currentSeq = nextSeq + rolls.length;
         const rollCode = `ROLL-${String(currentSeq).padStart(4, '0')}`;
+
+        console.log(`🎯 Generated Roll Code: ${rollCode} (nextSeq=${nextSeq}, offset=${rolls.length})`);
 
         setRolls([
             ...rolls,

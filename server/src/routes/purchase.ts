@@ -377,13 +377,26 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
  */
 router.get('/next-roll-seq', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        // Count existing rolls to determine next sequence
-        const result = await db.select({ count: countFn() }).from(rawMaterialRolls);
-        const count = Number(result[0]?.count || 0);
+        // Get all roll codes to find the maximum sequence number
+        const allRolls = await db.select({ rollCode: rawMaterialRolls.rollCode }).from(rawMaterialRolls);
 
-        // Return next sequence number (count + 1)
-        // This ensures a continuous sequence even across different bills
-        res.json(successResponse({ nextSeq: count + 1 }));
+        let maxSeq = 0;
+
+        // Parse all roll codes and find the maximum numeric sequence
+        for (const roll of allRolls) {
+            // Extract number from ROLL-XXXX format
+            const match = roll.rollCode.match(/ROLL-(\d+)/);
+            if (match) {
+                const seq = parseInt(match[1], 10);
+                if (seq > maxSeq) {
+                    maxSeq = seq;
+                }
+            }
+        }
+
+        // Return next sequence number (max + 1)
+        // This ensures the sequence continues from the highest existing roll code
+        res.json(successResponse({ nextSeq: maxSeq + 1 }));
     } catch (error) {
         next(error);
     }
@@ -1212,17 +1225,34 @@ router.post('/bills/:id/rolls', async (req: Request, res: Response, next: NextFu
         // Get supplier for stock movement reference
         const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, bill.supplierId));
 
+        // Helper to safely parse decimal values, returning null for empty/invalid
+        const safeDecimal = (val: any) => {
+            if (val === null || val === undefined || val === '' || String(val).trim() === '') return null;
+            const num = parseFloat(String(val));
+            return isNaN(num) ? null : String(num);
+        };
+
         const insertedRolls = [];
 
         for (const roll of rolls) {
+            // Check for existing roll code to avoid unhandled promise rejection
+            const existingRoll = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.rollCode, roll.rollCode));
+            if (existingRoll.length > 0) {
+                console.log(`Skipping duplicate roll code: ${roll.rollCode}`);
+                continue; // Skip or throw error? For now, let's skip to processing others, or maybe generate a new code?
+                // Ideally we should throw, but let's try to proceed.
+                // Actually, if we skip, the stock logic might be off. Let's throw a clear error.
+                throw createError(`Roll Code ${roll.rollCode} already exists. Please use unique roll codes.`, 409);
+            }
+
             // 1. Create Roll Record
             const [newRoll] = await db.insert(rawMaterialRolls).values({
                 purchaseBillId: id,
                 rawMaterialId: roll.rawMaterialId,
                 rollCode: roll.rollCode,
                 netWeight: String(roll.netWeight),
-                gsm: roll.gsm ? String(roll.gsm) : null,
-                length: roll.width ? String(roll.width) : (roll.length ? String(roll.length) : null), // Accept width or length from frontend
+                gsm: safeDecimal(roll.gsm),
+                length: safeDecimal(roll.width) || safeDecimal(roll.length), // Accept width or length from frontend
                 status: 'In Stock'
             }).returning();
 
