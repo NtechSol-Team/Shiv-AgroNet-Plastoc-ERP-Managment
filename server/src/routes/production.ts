@@ -146,7 +146,7 @@ router.post('/batches', async (req: Request, res: Response, next: NextFunction) 
         if (!machineId) throw createError('Machine ID required', 400);
         if (batchInputs.length === 0) throw createError('At least one input material required', 400);
         if (batchInputs.length > 6) throw createError('Maximum 6 input materials allowed', 400);
-        if (batchOutputs.length === 0) throw createError('At least one target product required', 400);
+        // Outputs are now optional - removed validation
         if (batchOutputs.length > 4) throw createError('Maximum 4 target products allowed', 400);
 
         // Validate stock for all inputs
@@ -180,7 +180,7 @@ router.post('/batches', async (req: Request, res: Response, next: NextFunction) 
             machineId,
             // Legacy fields for primary item
             rawMaterialId: batchInputs[0].rawMaterialId,
-            finishedProductId: batchOutputs[0], // Primary target
+            finishedProductId: batchOutputs.length > 0 ? batchOutputs[0] : null, // Optional: Primary target
             inputQuantity: String(totalInputQty),
             status: 'in-progress',
         }).returning();
@@ -188,8 +188,9 @@ router.post('/batches', async (req: Request, res: Response, next: NextFunction) 
         // Insert Inputs & Create Movements
         for (const input of batchInputs) {
 
-            // Handle specific batch consumption if provided
-            if (input.materialBatchId) {
+
+            // Handle specific batch consumption if provided (ignore empty strings)
+            if (input.materialBatchId && input.materialBatchId.trim() !== '') {
                 const [batch] = await db.select().from(rawMaterialBatches).where(eq(rawMaterialBatches.id, input.materialBatchId));
 
                 if (!batch) {
@@ -216,6 +217,7 @@ router.post('/batches', async (req: Request, res: Response, next: NextFunction) 
                     })
                     .where(eq(rawMaterialBatches.id, input.materialBatchId));
             }
+
 
             await db.insert(productionBatchInputs).values({
                 batchId: batch.id,

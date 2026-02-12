@@ -90,7 +90,7 @@ export function Production() {
     const validInputs = allocationForm.inputs.filter(i => i.rawMaterialId && i.quantity);
     const validOutputs = allocationForm.outputs.filter(o => o);
 
-    if (!allocationForm.machineId || validInputs.length === 0 || validOutputs.length === 0) {
+    if (!allocationForm.machineId || validInputs.length === 0) {
       setError('Please fill all required fields');
       return;
     }
