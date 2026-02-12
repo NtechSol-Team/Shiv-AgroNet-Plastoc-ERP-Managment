@@ -11,11 +11,11 @@ export const APP_CONFIG = {
    */
   company: {
     /** Company/Business name */
-    name: 'SHIV AGRONET INDUSTRIES',
+    name: 'SHIV AGRONET',
     /** Company tagline/description */
     tagline: 'Manufacturers of Quality HDPE/PP Woven Products',
     /** Legal name (for invoices) */
-    legalName: 'SHIV AGRONET INDUSTRIES',
+    legalName: 'SHIV AGRONET',
     /** Company state code for GST calculations (Maharashtra = 27, Gujarat = 24) */
     stateCode: '24',
     /** State name */

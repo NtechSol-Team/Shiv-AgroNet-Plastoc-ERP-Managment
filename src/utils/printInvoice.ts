@@ -384,7 +384,7 @@ export function printInvoice(invoice: InvoiceData): void {
 
     /* Footer */
     .footer { margin-top: auto; border-top: 1px solid #000; }
-    .signatory-box { height: 70px; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; padding: 10px; }
+    .signatory-box { height: 90px; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; padding: 10px; }
     
     @media print { body { -webkit-print-color-adjust: exact; } }
   </style>
@@ -562,9 +562,15 @@ export function printInvoice(invoice: InvoiceData): void {
             Branch: <strong>${company.bankDetails.branchName || 'Surat'}</strong>
           </div>
           
-          <div class="info-label" style="margin-top: 8px;">Terms</div>
+          <div class="info-label" style="margin-top: 8px;">Terms & Conditions</div>
           <div class="small-text" style="font-style: italic;">
-             ${terms[0]} <br> Subject to ${company.city} Jurisdiction.
+            <ol style="padding-left: 12px; margin: 2px 0;">
+              <li>Goods Once Sold Will Not Be Taken Back Or Exchanged.</li>
+              <li>Interest Rate @24% P.A. If Payment Is Not Received Within Due Days.</li>
+              <li>Our Responsibility Ceases Once Goods Leave Our Premises.</li>
+              <li>Material Checked And Dispatched Under Our Strict Supervision.</li>
+              <li>Subject to Mangrol Jurisdiction Only. E.&.O.E</li>
+            </ol>
           </div>
        </div>
        <div class="totals-box">
@@ -590,7 +596,7 @@ export function printInvoice(invoice: InvoiceData): void {
             <span>${formatCurrency(finalGrandTotal)}</span>
           </div>
           <div class="signatory-box">
-             <div class="small-text">For, <strong>${company.legalName}</strong></div>
+             <div class="small-text" style="font-size: 9pt;">For, <strong>${company.legalName}</strong></div>
              <div style="font-weight: bold; font-size: 8pt;">Authorized Signatory</div>
           </div>
        </div>
