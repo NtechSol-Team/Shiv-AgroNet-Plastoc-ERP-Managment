@@ -27,9 +27,9 @@ export const APP_CONFIG = {
     /** CIN (if applicable) */
     cin: '',
     /** Address Line 1 */
-    address1: '93, V.S. Krishna Industrial Park,',
+    address1: '93, V.S. Krishna Industrial Park, Pipodara Road',
     /** Address Line 2 */
-    address2: 'Pipodara Road, Ahmedabad–Mumbai Highway, Palod, Kim,',
+    address2: 'Ahmedabad–Mumbai Highway, Palod, Kim',
     /** City */
     city: 'Surat',
     /** District */
@@ -41,13 +41,13 @@ export const APP_CONFIG = {
     /** Country */
     country: 'India',
     /** Phone Numbers */
-    phone: '', // Landline removed
+    phone: '+91 96248 55526',
     /** Mobile */
     mobile: '+91 96248 55526',
     /** Email */
-    email: 'shivagronet@gmail.com',
+    email: 'info@shivagronet.com',
     /** Website */
-    website: '', // Website removed
+    website: 'www.shivagronet.com',
     /** Default currency */
     currency: 'INR',
     /** Currency locale for formatting */

@@ -1251,6 +1251,84 @@ router.post('/bills/:id/rolls', async (req: Request, res: Response, next: NextFu
         const allRolls = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.purchaseBillId, id));
         const totalWeight = allRolls.reduce((sum, r) => sum + parseFloat(r.netWeight || '0'), 0);
 
+        // --- NEW LOGIC: FIFO ADJUSTMENT FOR EXCESS ROLLS ---
+        // Group new rolls by Raw Material to check for excess per material
+        const newRollsByMaterial = rolls.reduce((acc: any, roll: any) => {
+            acc[roll.rawMaterialId] = (acc[roll.rawMaterialId] || 0) + parseFloat(String(roll.netWeight));
+            return acc;
+        }, {});
+
+        for (const [rawMaterialId, newWeight] of Object.entries(newRollsByMaterial)) {
+            // Get Bill Item Qty
+            const [billItem] = await db.select().from(purchaseBillItems).where(and(
+                eq(purchaseBillItems.billId, id),
+                eq(purchaseBillItems.rawMaterialId, rawMaterialId)
+            ));
+
+            if (billItem) {
+                const billQty = parseFloat(billItem.quantity || '0');
+
+                // Get Total Received for this Material (Existing + New are already in DB now)
+                const materialRolls = allRolls.filter(r => r.rawMaterialId === rawMaterialId);
+                const totalReceived = materialRolls.reduce((sum, r) => sum + parseFloat(r.netWeight || '0'), 0);
+
+                // Check for Excess
+                let excess = totalReceived - billQty;
+
+                if (excess > 0.01) {
+                    // Find pending bills for this supplier & material (Direct DB Query)
+                    const potentialPendingBills = await db
+                        .select({
+                            id: purchaseBills.id,
+                            code: purchaseBills.code,
+                            date: purchaseBills.date,
+                            quantity: purchaseBillItems.quantity
+                        })
+                        .from(purchaseBills)
+                        .innerJoin(purchaseBillItems, eq(purchaseBills.id, purchaseBillItems.billId))
+                        .where(and(
+                            eq(purchaseBills.supplierId, bill.supplierId),
+                            eq(purchaseBills.status, 'Confirmed'),
+                            eq(purchaseBillItems.rawMaterialId, rawMaterialId)
+                        )); // Removed orderBy here, will sort in memory
+
+                    const pendingBills = [];
+                    for (const b of potentialPendingBills) {
+                        const pending = await getPendingBillQuantity(b.id, rawMaterialId);
+                        if (pending > 0.01) {
+                            pendingBills.push({ ...b, pendingQuantity: pending });
+                        }
+                    }
+
+                    if (pendingBills.length > 0) {
+                        // Sort by date ascending (FIFO - oldest first)
+                        pendingBills.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+                        for (const pendingBill of pendingBills) {
+                            if (excess <= 0.01) break;
+                            if (pendingBill.id === id) continue; // Skip current bill
+
+                            const adjustmentQty = Math.min(excess, pendingBill.pendingQuantity);
+
+                            if (adjustmentQty > 0) {
+                                // Create Adjustment
+                                await db.insert(purchaseBillAdjustments).values({
+                                    sourceBillId: pendingBill.id,
+                                    targetBillId: id,
+                                    rawMaterialId,
+                                    quantity: String(adjustmentQty.toFixed(2))
+                                });
+
+                                console.log(`✓ Auto-adjusted ${adjustmentQty}kg from Bill ${pendingBill.code} to ${bill.code}`);
+                                excess -= adjustmentQty;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // ---------------------------------------------------
+
         // Determine Status based on invoice qty vs roll weight? 
         // Logic: If user says it's done, it's done. But we can just set to 'Partial' if some weight exists.
         // For now, let's just update the weight. Status management can be explicit or inferred.

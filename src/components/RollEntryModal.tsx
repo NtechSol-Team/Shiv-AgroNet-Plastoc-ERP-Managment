@@ -200,7 +200,9 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
     const newTotal = rolls.reduce((sum, r) => sum + (parseFloat(r.netWeight) || 0), 0);
     const grandTotal = existingTotal + newTotal;
     const difference = grandTotal - invoiceQty;
-    const isMatch = Math.abs(difference) < 0.01;
+    const isExactMatch = Math.abs(difference) < 0.01;
+    const isAdjustedMatch = !isExactMatch && difference > 0 && difference <= pendingQty + 0.01; // Allow slight float variance
+    const isMatch = isExactMatch || isAdjustedMatch;
 
     // Get material name by ID (with color)
     const getMaterialName = (materialId: string) => {
@@ -242,10 +244,19 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                             <span className={`text-xs font-semibold uppercase ${isMatch ? 'text-green-600' : 'text-orange-600'}`}>Total Roll Weight</span>
                             <div className={`text-xl font-bold ${isMatch ? 'text-green-900' : 'text-orange-900'}`}>{grandTotal.toFixed(2)} kg</div>
                         </div>
-                        <div className={`p-3 rounded-lg border ${Math.abs(difference) < 0.01 ? 'bg-gray-50 border-gray-200' : 'bg-red-50 border-red-200'}`}>
-                            <span className={`text-xs font-semibold uppercase ${Math.abs(difference) < 0.01 ? 'text-gray-600' : 'text-red-600'}`}>Difference</span>
-                            <div className={`text-xl font-bold ${Math.abs(difference) < 0.01 ? 'text-gray-900' : 'text-red-900'}`}>
-                                {difference > 0 ? '+' : ''}{difference.toFixed(2)} kg
+                        <div className={`p-3 rounded-lg border ${isMatch ? (isAdjustedMatch ? 'bg-green-50 border-green-200' : 'bg-green-50 border-green-200') : 'bg-red-50 border-red-200'}`}>
+                            <span className={`text-xs font-semibold uppercase ${isMatch ? 'text-green-600' : 'text-red-600'}`}>Difference</span>
+                            <div className={`text-xl font-bold ${isMatch ? 'text-green-900' : 'text-red-900'}`}>
+                                {isAdjustedMatch ? (
+                                    <span className="flex flex-col">
+                                        <span>+{difference.toFixed(2)} kg</span>
+                                        <span className="text-[10px] font-normal text-green-700 bg-green-100 px-1.5 py-0.5 rounded w-fit">Adjusted from Pending</span>
+                                    </span>
+                                ) : (
+                                    <>
+                                        {difference > 0 ? '+' : ''}{difference.toFixed(2)} kg
+                                    </>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -450,7 +461,7 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                 ${loading || rolls.length === 0 ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md transition-all'}`}
                         >
                             <Save className="w-4 h-4" />
-                            {loading ? 'Saving...' : 'Save & Update Stock'}
+                            {loading ? 'Saving...' : (isAdjustedMatch ? 'Save with Adjustment' : 'Save & Update Stock')}
                         </button>
                     </div>
                 </div>
