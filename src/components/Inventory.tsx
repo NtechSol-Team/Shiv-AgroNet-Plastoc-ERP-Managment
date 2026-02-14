@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, Loader2, Package, Edit2, Trash2, X, Plus } from 'lucide-react';
+import { Search, Filter, Loader2, Package, Edit2, Trash2, X, Plus, Settings2 } from 'lucide-react';
 import { inventoryApi, mastersApi } from '../lib/api';
 
 import { BellInventory } from './BellInventory';
@@ -23,6 +23,15 @@ export function Inventory() {
 
   // Quick Production Entry Modal
   const [showQuickEntry, setShowQuickEntry] = useState(false);
+
+  // Stock Adjustment State
+  const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [adjustmentItem, setAdjustmentItem] = useState<any>(null);
+  const [adjustmentForm, setAdjustmentForm] = useState<{ type: 'add' | 'deduct', quantity: string, reason: string }>({
+    type: 'deduct',
+    quantity: '',
+    reason: ''
+  });
 
   useEffect(() => {
     fetchData();
@@ -60,6 +69,40 @@ export function Inventory() {
     setEditingItem(item);
     setFormData({ ...item });
     setShowEditModal(true);
+  };
+
+  const openAdjustmentModal = (item: any, type: 'raw_material' | 'finished_product') => {
+    setAdjustmentItem({ ...item, type });
+    setAdjustmentForm({ type: 'deduct', quantity: '', reason: '' });
+    setShowAdjustModal(true);
+  };
+
+  const handleAdjustStock = async () => {
+    if (!adjustmentForm.quantity || !adjustmentForm.reason) return;
+
+    setSaving(true);
+    try {
+      const qty = parseFloat(adjustmentForm.quantity);
+      const finalQty = adjustmentForm.type === 'add' ? qty : -qty;
+
+      const result = await inventoryApi.adjustStock({
+        itemType: adjustmentItem.type,
+        itemId: adjustmentItem.id,
+        quantity: finalQty,
+        reason: adjustmentForm.reason
+      });
+
+      if (result.error) {
+        setError(result.error);
+      } else {
+        setShowAdjustModal(false);
+        setAdjustmentItem(null);
+        fetchData(); // Refresh all data
+      }
+    } catch (err) {
+      setError('Failed to adjust stock');
+    }
+    setSaving(false);
   };
 
   const handleDelete = async (id: string) => {
@@ -231,6 +274,13 @@ export function Inventory() {
                                 <Edit2 className="w-4 h-4" />
                               </button>
                               <button
+                                onClick={() => openAdjustmentModal(item, 'finished_product')}
+                                className="p-1 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded transition-all"
+                                title="Adjust Stock"
+                              >
+                                <Settings2 className="w-4 h-4" />
+                              </button>
+                              <button
                                 onClick={() => handleDelete(item.id)}
                                 className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-all"
                                 title="Delete Product"
@@ -248,7 +298,10 @@ export function Inventory() {
               )}
 
               {activeTab === 'raw-material' && (
-                <RawMaterialTable rawMaterials={rawMaterials} />
+                <RawMaterialTable
+                  rawMaterials={rawMaterials}
+                  onAdjust={(item) => openAdjustmentModal(item, 'raw_material')}
+                />
               )}
 
               {activeTab === 'movements' && (
@@ -420,13 +473,92 @@ export function Inventory() {
           }}
         />
       )}
+
+      {/* Stock Adjustment Modal */}
+      {showAdjustModal && adjustmentItem && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center p-4 border-b border-gray-100 bg-gray-50">
+              <h3 className="font-bold text-lg text-gray-800 flex items-center">
+                <Settings2 className="w-5 h-5 mr-2 text-blue-600" />
+                Adjust Stock
+              </h3>
+              <button
+                onClick={() => { setShowAdjustModal(false); setAdjustmentItem(null); }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 mb-4">
+                <p className="text-sm text-blue-800 font-medium">Adjusting: {adjustmentItem.name}</p>
+                <p className="text-xs text-blue-600">Current Stock: {adjustmentItem.stock} kg</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Operation</label>
+                  <select
+                    value={adjustmentForm.type}
+                    onChange={e => setAdjustmentForm({ ...adjustmentForm, type: e.target.value as 'add' | 'deduct' })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
+                  >
+                    <option value="add">Add Stock (+)</option>
+                    <option value="deduct">Deduct Stock (-)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Quantity (kg)</label>
+                  <input
+                    type="number"
+                    value={adjustmentForm.quantity}
+                    onChange={e => setAdjustmentForm({ ...adjustmentForm, quantity: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-bold"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Reason</label>
+                <textarea
+                  value={adjustmentForm.reason}
+                  onChange={e => setAdjustmentForm({ ...adjustmentForm, reason: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="e.g. Damage, Found in stock, Correction"
+                  rows={2}
+                />
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  onClick={handleAdjustStock}
+                  disabled={saving || !adjustmentForm.quantity || !adjustmentForm.reason}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-lg shadow-blue-200 transition-all flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <span>Confirm Adjustment</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // Extracted Component for Raw Material Table to handle state easier
 // UPDATED: Now shows Rolls (single source of truth) instead of batches
-function RawMaterialTable({ rawMaterials }: { rawMaterials: any[] }) {
+function RawMaterialTable({ rawMaterials, onAdjust }: { rawMaterials: any[], onAdjust: (item: any) => void }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [rolls, setRolls] = useState<any[]>([]);
   const [loadingRolls, setLoadingRolls] = useState(false);
@@ -463,6 +595,7 @@ function RawMaterialTable({ rawMaterials }: { rawMaterials: any[] }) {
             <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-center">Rolls</th>
             <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-right">Value (₹)</th>
             <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-center">Status</th>
+            <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-right">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200">
@@ -485,7 +618,7 @@ function RawMaterialTable({ rawMaterials }: { rawMaterials: any[] }) {
                   <td className="px-4 py-1.5 text-sm font-bold text-gray-900">{item.name}</td>
                   <td className="px-4 py-1.5 text-xs text-gray-600">{item.color}</td>
                   <td className="px-4 py-1.5 text-xs text-right text-gray-600">₹{avgPrice.toFixed(2)}</td>
-                  <td className="px-4 py-1.5 text-sm font-mono font-bold text-right text-gray-900">{item.stock}</td>
+                  <td className="px-4 py-1.5 text-sm font-mono font-bold text-right text-gray-900">{stock.toFixed(2)}</td>
                   <td className="px-4 py-1.5 text-center">
                     <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-1.5 py-0.5 rounded">
                       {item.rollCount || 0}
@@ -497,6 +630,18 @@ function RawMaterialTable({ rawMaterials }: { rawMaterials: any[] }) {
                       <span className="text-[10px] font-bold bg-red-100 text-red-700 px-1 rounded">REORDER</span> :
                       <span className="text-[10px] font-bold text-green-700">OK</span>
                     }
+                  </td>
+                  <td className="px-4 py-1.5 text-right">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAdjust(item);
+                      }}
+                      className="p-1 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded transition-all"
+                      title="Adjust Stock"
+                    >
+                      <Settings2 className="w-4 h-4" />
+                    </button>
                   </td>
                 </tr>
                 {isExpanded && (

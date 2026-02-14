@@ -18,6 +18,7 @@ export function Production() {
   const [stats, setStats] = useState<any>(null);
   const [expandedBatches, setExpandedBatches] = useState<string[]>([]);
   const [batchOptions, setBatchOptions] = useState<Record<string, any[]>>({}); // Map: rawMaterialId -> Batch[]
+  const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
 
   const toggleBatch = (id: string) => {
     setExpandedBatches(prev =>
@@ -99,16 +100,30 @@ export function Production() {
     setError(null);
 
     try {
-      const result = await productionApi.createBatch({
-        allocationDate: allocationForm.date,
-        machineId: allocationForm.machineId,
-        inputs: validInputs.map(i => ({
-          rawMaterialId: i.rawMaterialId,
-          quantity: i.quantity,
-          materialBatchId: (i as any).materialBatchId // Forward batch linkage
-        })),
-        outputs: validOutputs,
-      });
+      let result;
+      if (editingBatchId) {
+        result = await productionApi.updateBatch(editingBatchId, {
+          allocationDate: allocationForm.date,
+          machineId: allocationForm.machineId,
+          inputs: validInputs.map(i => ({
+            rawMaterialId: i.rawMaterialId,
+            quantity: i.quantity,
+            materialBatchId: (i as any).materialBatchId
+          })),
+          outputs: validOutputs,
+        });
+      } else {
+        result = await productionApi.createBatch({
+          allocationDate: allocationForm.date,
+          machineId: allocationForm.machineId,
+          inputs: validInputs.map(i => ({
+            rawMaterialId: i.rawMaterialId,
+            quantity: i.quantity,
+            materialBatchId: (i as any).materialBatchId
+          })),
+          outputs: validOutputs,
+        });
+      }
 
       if (result.error) {
         setError(result.error);
@@ -121,6 +136,7 @@ export function Production() {
           inputs: [{ rawMaterialId: '', materialBatchId: '', quantity: '' }],
           outputs: ['']
         });
+        setEditingBatchId(null);
       }
     } catch (err) {
       setError('Failed to create allocation');
@@ -206,7 +222,7 @@ export function Production() {
     setSaving(false);
   };
 
-  const pendingBatches = productionBatches.filter(b => b.status === 'in-progress');
+  const pendingBatches = productionBatches.filter(b => b.isActive || b.status === 'in-progress' || (b.status === 'partially-completed' && (parseFloat(b.inputQuantity) - parseFloat(b.outputQuantity || '0') > 0)));
   const completedBatches = productionBatches.filter(b => b.status === 'completed');
   const exceededBatches = completedBatches.filter(b => b.lossExceeded);
 
@@ -229,7 +245,16 @@ export function Production() {
         </div>
         <div className="flex items-center space-x-3">
           <button
-            onClick={() => setShowAllocationForm(true)}
+            onClick={() => {
+              setEditingBatchId(null);
+              setAllocationForm({
+                date: new Date().toISOString().split('T')[0],
+                machineId: '',
+                inputs: [{ rawMaterialId: '', materialBatchId: '', quantity: '' }],
+                outputs: ['']
+              });
+              setShowAllocationForm(true);
+            }}
             className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/30 transition-all flex items-center space-x-2 font-medium"
           >
             <Plus className="w-4 h-4" />
@@ -260,12 +285,15 @@ export function Production() {
               <div>
                 <h2 className="text-xl font-bold text-slate-900 flex items-center">
                   <Package className="w-6 h-6 mr-3 text-blue-600" />
-                  New Production Protocol
+                  {editingBatchId ? 'Edit Production Batch' : 'New Production Protocol'}
                 </h2>
                 <p className="text-sm text-slate-500 mt-1 ml-9">Configure batch parameters, inputs, and projected targets.</p>
               </div>
               <button
-                onClick={() => setShowAllocationForm(false)}
+                onClick={() => {
+                  setShowAllocationForm(false);
+                  setEditingBatchId(null);
+                }}
                 className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors"
               >
                 <X className="w-6 h-6" />
@@ -538,7 +566,7 @@ export function Production() {
                 className="px-8 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/30 transition-all flex items-center transform active:scale-95 duration-200"
               >
                 {saving && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-                Initiate Production Protocol
+                {editingBatchId ? 'Update Batch' : 'Initiate Production Protocol'}
               </button>
             </div>
           </div>
@@ -728,7 +756,7 @@ export function Production() {
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Batch Code</th>
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Product</th>
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Input Material</th>
-                  <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Input Qty</th>
+                  <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Input / Remaining</th>
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Machine</th>
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Start Date</th>
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-center">Action</th>
@@ -742,6 +770,9 @@ export function Production() {
                 ) : (
                   pendingBatches.map((batch, index) => {
                     const isExpanded = expandedBatches.includes(batch.id);
+                    const inputQty = parseFloat(batch.inputQuantity || '0');
+                    const remaining = batch.remainingCapacity !== undefined ? parseFloat(batch.remainingCapacity) : inputQty;
+                    const hasProgress = inputQty > remaining;
 
                     return (
                       <React.Fragment key={batch.id}>
@@ -767,7 +798,14 @@ export function Production() {
                               batch.rawMaterial?.name
                             )}
                           </td>
-                          <td className="px-4 py-3 text-xs font-bold text-gray-700 text-right">{parseFloat(batch.inputQuantity || '0').toFixed(2)} kg</td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="text-xs font-bold text-gray-900">{inputQty.toFixed(2)} kg</div>
+                            {hasProgress && (
+                              <div className="text-xs font-bold text-emerald-600 mt-0.5">
+                                {remaining.toFixed(2)} kg left
+                              </div>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-sm text-gray-600">{batch.machine?.name}</td>
                           <td className="px-4 py-3 text-xs text-gray-500">
                             {new Date(batch.allocationDate).toLocaleDateString()}
@@ -781,18 +819,52 @@ export function Production() {
                                   setAllocationForm({
                                     date: batch.allocationDate.split('T')[0],
                                     machineId: batch.machineId || '',
-                                    inputs: batch.inputs?.map((inp: any) => ({
-                                      rawMaterialId: inp.rawMaterialId,
-                                      materialBatchId: inp.materialBatchId || '',
-                                      quantity: inp.quantity
-                                    })) || [{ rawMaterialId: '', materialBatchId: '', quantity: '' }],
+                                    inputs: batch.inputs?.map((inp: any) => {
+                                      let mDetails = inp.materialBatchId;
+                                      // Handle JSON array format ["id"]
+                                      try {
+                                        if (mDetails && mDetails.startsWith('[') && mDetails.endsWith(']')) {
+                                          const parsed = JSON.parse(mDetails);
+                                          if (Array.isArray(parsed) && parsed.length > 0) mDetails = parsed[0];
+                                        }
+                                      } catch (e) { }
+
+                                      return {
+                                        rawMaterialId: inp.rawMaterialId,
+                                        materialBatchId: mDetails || '',
+                                        quantity: inp.quantity
+                                      };
+                                    }) || [{ rawMaterialId: '', materialBatchId: '', quantity: '' }],
                                     outputs: batch.outputs?.map((out: any) => out.finishedProductId) ||
                                       (batch.finishedProductId ? [batch.finishedProductId] : [''])
                                   });
-                                  // Load batches for existing materials
+                                  // Load batches for existing materials AND inject currently used roll
                                   batch.inputs?.forEach((inp: any) => {
-                                    if (inp.rawMaterialId) loadBatchesForMaterial(inp.rawMaterialId);
+                                    if (inp.rawMaterialId) {
+                                      loadBatchesForMaterial(inp.rawMaterialId).then(() => {
+                                        // Inject the currently used roll if it exists
+                                        if (inp.roll) {
+                                          setBatchOptions(prev => {
+                                            const existing = prev[inp.rawMaterialId] || [];
+                                            // Check if already in list
+                                            if (!existing.find(b => b.id === inp.roll.id)) {
+                                              // Create a "Batch"-like object for the roll
+                                              const rehydratedRoll = {
+                                                id: inp.roll.id,
+                                                batchCode: inp.roll.rollCode, // Use roll code as batch code
+                                                quantity: inp.roll.netWeight, // Original weight
+                                                quantityUsed: '0', // It's fully available to THIS batch conceptually
+                                                receivedDate: inp.roll.createdAt
+                                              };
+                                              return { ...prev, [inp.rawMaterialId]: [rehydratedRoll, ...existing] };
+                                            }
+                                            return prev;
+                                          });
+                                        }
+                                      });
+                                    }
                                   });
+                                  setEditingBatchId(batch.id);
                                   setShowAllocationForm(true);
                                 }}
                                 className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"
@@ -911,6 +983,7 @@ export function Production() {
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Input</th>
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Output</th>
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Loss %</th>
+                  <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-center">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -948,6 +1021,29 @@ export function Production() {
                       <span className={`px-1 rounded text-xs font-bold ${batch.lossExceeded ? 'bg-red-100 text-red-700' : 'text-green-700'}`}>
                         {parseFloat(batch.lossPercentage).toFixed(2)}%
                       </span>
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (confirm(`Are you sure you want to delete COMPLETED batch ${batch.code}? \n\nThis will REVERSE the production:\n- Remove finished goods from stock\n- Return raw materials to stock\n\nExisting sales using these goods may prevent deletion.`)) {
+                            try {
+                              const result = await productionApi.deleteBatch(batch.id);
+                              if (result.error) {
+                                setError(result.error);
+                              } else {
+                                fetchData(); // Refresh the list
+                              }
+                            } catch (err) {
+                              setError('Failed to delete batch');
+                            }
+                          }
+                        }}
+                        className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
+                        title="Delete completed batch (Reverse Production)"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </td>
                   </tr>
                 ))}

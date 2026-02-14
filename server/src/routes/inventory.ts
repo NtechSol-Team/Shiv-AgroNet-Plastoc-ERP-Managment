@@ -23,6 +23,8 @@ import {
     getFinishedProductMovements,
     getInventorySummary,
     getAvailableBatches,
+    validateRawMaterialStock,
+    validateFinishedProductStock,
 } from '../services/inventory.service';
 
 const router = Router();
@@ -197,6 +199,9 @@ router.get('/movements/finished-product/:id', async (req: Request, res: Response
 router.post('/adjust', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { itemType, itemId, quantity, reason } = req.body;
+        const { db } = await import('../db/index');
+        const { stockMovements, rawMaterialRolls, purchaseBills, suppliers } = await import('../db/schema');
+        const { eq, and, asc } = await import('drizzle-orm');
 
         // Validate inputs
         if (!itemType || !itemId || quantity === undefined || !reason) {
@@ -212,7 +217,133 @@ router.post('/adjust', async (req: Request, res: Response, next: NextFunction) =
             throw createError('Invalid quantity. Must be a non-zero number', 400);
         }
 
-        // Create adjustment movement
+        // ===========================================
+        // RAW MATERIAL ADJUSTMENT (Roll-Based Logic)
+        // ===========================================
+        if (itemType === 'raw_material') {
+            if (adjustmentQty > 0) {
+                // ADDITION: Create a new "Adjustment" Roll
+                // We need a dummy Purchase Bill for traceability if one doesn't exist, or just link to a system bill
+                // For simplicity, we'll create a standalone roll with a special prefix
+
+                // Generate a unique roll code
+                const rollCode = `RW-ADJ-${Date.now().toString().slice(-6)}`;
+
+                // We need a purchase bill ID to satisfy foreign key. 
+                // Best practice: Find or Create a "Stock Adjustment" dummy bill/supplier
+                // For now, we'll try to find any existing bill to attach to, or create a dummy structure.
+                // safer approach: We need to loosen the FK or ensure a dummy bill exists.
+                // Let's check if we can insert without bill? No, FK is NOT NULL.
+
+                // Strategy: Find a "Stock Adjustment" bill or create one
+                let [adjBill] = await db.select().from(purchaseBills).where(eq(purchaseBills.code, 'BILL-ADJ'));
+                if (!adjBill) {
+                    // Create dummy supplier if needed
+                    let [adjSupplier] = await db.select().from(suppliers).where(eq(suppliers.name, 'System Adjustment'));
+                    if (!adjSupplier) {
+                        [adjSupplier] = await db.insert(suppliers).values({
+                            code: 'SUP-ADJ',
+                            name: 'System Adjustment',
+                            contact: 'System',
+                        }).returning();
+                    }
+
+                    [adjBill] = await db.insert(purchaseBills).values({
+                        code: 'BILL-ADJ',
+                        invoiceNumber: 'INV-ADJ',
+                        date: new Date(),
+                        supplierId: adjSupplier.id,
+                        total: '0',
+                        grandTotal: '0',
+                        status: 'Confirmed'
+                    }).returning();
+                }
+
+                await db.insert(rawMaterialRolls).values({
+                    purchaseBillId: adjBill.id,
+                    rawMaterialId: itemId,
+                    rollCode: rollCode,
+                    grossWeight: String(adjustmentQty),
+                    netWeight: String(adjustmentQty),
+                    pipeWeight: '0',
+                    length: '0',
+                    gsm: '0',
+                    status: 'In Stock'
+                });
+
+                console.log(`✓ Created adjustment roll ${rollCode} for +${adjustmentQty}kg`);
+
+            } else {
+                // DEDUCTION: FIFO Consumption
+                const deductQty = Math.abs(adjustmentQty);
+
+                // 1. Validate Stock Availability FIRST
+                const stockCheck = await validateRawMaterialStock(itemId, deductQty);
+                if (!stockCheck.isValid) {
+                    throw createError(`Insufficient stock. Cannot deduct ${deductQty}kg from ${stockCheck.currentStock}kg`, 400);
+                }
+
+                let remainingToDeduct = deductQty;
+
+                // 2. Get In Stock rolls sorted by Date (FIFO)
+                const rolls = await db.select().from(rawMaterialRolls)
+                    .where(and(
+                        eq(rawMaterialRolls.rawMaterialId, itemId),
+                        eq(rawMaterialRolls.status, 'In Stock')
+                    ))
+                    .orderBy(asc(rawMaterialRolls.createdAt));
+
+                // 3. Consume rolls
+                for (const roll of rolls) {
+                    if (remainingToDeduct <= 0) break;
+
+                    const rollWeight = parseFloat(roll.netWeight);
+
+                    if (rollWeight <= remainingToDeduct) {
+                        // Consume entire roll
+                        await db.update(rawMaterialRolls)
+                            .set({ status: 'Consumed', updatedAt: new Date() })
+                            .where(eq(rawMaterialRolls.id, roll.id));
+
+                        remainingToDeduct -= rollWeight;
+                        console.log(`✓ Consumed roll ${roll.rollCode} (${rollWeight}kg)`);
+                    } else {
+                        // Partial deduction (Update weight)
+                        const newWeight = rollWeight - remainingToDeduct;
+                        await db.update(rawMaterialRolls)
+                            .set({
+                                netWeight: String(newWeight),
+                                updatedAt: new Date()
+                            })
+                            .where(eq(rawMaterialRolls.id, roll.id));
+
+                        console.log(`✓ Reduced roll ${roll.rollCode} from ${rollWeight}kg to ${newWeight}kg`);
+                        remainingToDeduct = 0;
+                    }
+                }
+
+                if (remainingToDeduct > 0.001) {
+                    // This should theoretically not happen due to the validation above, 
+                    // unless there's a concurrency issue or database inconsistency.
+                    throw createError(`System Error: Stock validation passed but could not find enough rolls to deduct. Mismatch: ${remainingToDeduct}kg`, 500);
+                }
+            }
+        } else if (itemType === 'finished_product') {
+            // ===========================================
+            // FINISHED PRODUCT ADJUSTMENT
+            // ===========================================
+            if (adjustmentQty < 0) {
+                const deductQty = Math.abs(adjustmentQty);
+                const stockCheck = await validateFinishedProductStock(itemId, deductQty);
+                if (!stockCheck.isValid) {
+                    throw createError(`Insufficient stock. Cannot deduct ${deductQty}kg from ${stockCheck.currentStock}kg`, 400);
+                }
+            }
+        }
+
+        // ===========================================
+        // CREATE LEDGER MOVEMENT
+        // ===========================================
         const movement = await createStockMovement({
             date: new Date(),
             movementType: 'ADJUSTMENT',

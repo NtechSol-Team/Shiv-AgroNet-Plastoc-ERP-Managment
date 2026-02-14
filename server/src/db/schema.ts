@@ -206,7 +206,7 @@ export const productionBatches = pgTable('production_batches', {
 export const productionBatchInputs = pgTable('production_batch_inputs', {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
     batchId: text('batch_id').notNull().references(() => productionBatches.id, { onDelete: 'cascade' }),
-    materialBatchId: text('material_batch_id').references(() => rawMaterialBatches.id), // NEW: Link to specific batch
+    materialBatchId: text('material_batch_id'), // Now stores JSON array of roll IDs, not a foreign key
     rawMaterialId: text('raw_material_id').notNull().references(() => rawMaterials.id),
     quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
     createdAt: timestamp('created_at').defaultNow(),
@@ -474,7 +474,6 @@ export const productionBatchesRelations = relations(productionBatches, ({ one, m
 
 export const productionBatchInputsRelations = relations(productionBatchInputs, ({ one }) => ({
     batch: one(productionBatches, { fields: [productionBatchInputs.batchId], references: [productionBatches.id] }),
-    materialBatch: one(rawMaterialBatches, { fields: [productionBatchInputs.materialBatchId], references: [rawMaterialBatches.id] }),
     rawMaterial: one(rawMaterials, { fields: [productionBatchInputs.rawMaterialId], references: [rawMaterials.id] }),
 }));
 

@@ -263,6 +263,11 @@ export const productionApi = {
             method: 'POST',
             body: JSON.stringify(data),
         }),
+    updateBatch: (id: string, data: any) =>
+        fetchApi<any>(`/production/batches/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        }),
     completeBatch: (id: string, data: any) =>
         fetchApi<any>(`/production/batches/${id}/complete`, {
             method: 'POST',
@@ -358,6 +363,11 @@ export const inventoryApi = {
     getSummary: () => fetchApi<any>('/inventory/summary'),
     getAvailableBatches: (rawMaterialId: string) => fetchApi<any[]>(`/inventory/raw-materials/${rawMaterialId}/batches`),
     getRollsByMaterial: (rawMaterialId: string) => fetchApi<any[]>(`/inventory/raw-materials/${rawMaterialId}/rolls`),
+    adjustStock: (data: { itemType: 'raw_material' | 'finished_product', itemId: string, quantity: number, reason: string }) =>
+        fetchApi<any>('/inventory/adjust', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
 };
 
 // ==================== BELL INVENTORY API ====================

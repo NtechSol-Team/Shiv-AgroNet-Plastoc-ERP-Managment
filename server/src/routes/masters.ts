@@ -66,9 +66,12 @@ router.post('/raw-materials', async (req: Request, res: Response, next: NextFunc
         const { name, size, color, unit, hsnCode, gstPercent, reorderLevel } = req.body;
 
         // Generate code
-        const countResult = await db.select({ cnt: countFn() }).from(rawMaterials);
-        const count = Number(countResult[0]?.cnt || 0);
-        const code = `RM-${String(count + 1).padStart(3, '0')}`;
+        const lastItem = await db.query.rawMaterials.findFirst({
+            orderBy: (table, { desc }) => [desc(table.code)]
+        });
+        const lastCode = lastItem?.code || 'RM-000';
+        const lastNum = parseInt(lastCode.split('-')[1] || '0');
+        const code = `RM-${String(lastNum + 1).padStart(3, '0')}`;
 
         const [item] = await db.insert(rawMaterials).values({
             code,
@@ -168,9 +171,12 @@ router.post('/finished-products', async (req: Request, res: Response, next: Next
     try {
         const { name, length, width, gsm, unit, hsnCode, gstPercent, ratePerKg } = req.body;
 
-        const countResult = await db.select({ cnt: countFn() }).from(finishedProducts);
-        const count = Number(countResult[0]?.cnt || 0);
-        const code = `FP-${String(count + 1).padStart(3, '0')}`;
+        const lastItem = await db.query.finishedProducts.findFirst({
+            orderBy: (table, { desc }) => [desc(table.code)]
+        });
+        const lastCode = lastItem?.code || 'FP-000';
+        const lastNum = parseInt(lastCode.split('-')[1] || '0');
+        const code = `FP-${String(lastNum + 1).padStart(3, '0')}`;
 
         const [item] = await db.insert(finishedProducts).values({
             code, name, length, width, gsm,
@@ -352,9 +358,12 @@ router.post('/machines', async (req: Request, res: Response, next: NextFunction)
     try {
         const { name, type, capacity, status } = req.body;
 
-        const countResult = await db.select({ cnt: countFn() }).from(machines);
-        const count = Number(countResult[0]?.cnt || 0);
-        const code = `M-${String(count + 1).padStart(3, '0')}`;
+        const lastItem = await db.query.machines.findFirst({
+            orderBy: (table, { desc }) => [desc(table.code)]
+        });
+        const lastCode = lastItem?.code || 'M-000';
+        const lastNum = parseInt(lastCode.split('-')[1] || '0');
+        const code = `M-${String(lastNum + 1).padStart(3, '0')}`;
 
         const [item] = await db.insert(machines).values({
             code, name, type, capacity, status: status || 'Active',
@@ -415,9 +424,12 @@ router.post('/customers', async (req: Request, res: Response, next: NextFunction
     try {
         const { name, gstNo, stateCode, email, phone, address, outstanding } = req.body;
 
-        const countResult = await db.select({ cnt: countFn() }).from(customers);
-        const count = Number(countResult[0]?.cnt || 0);
-        const code = `C-${String(count + 1).padStart(3, '0')}`;
+        const lastItem = await db.query.customers.findFirst({
+            orderBy: (table, { desc }) => [desc(table.code)]
+        });
+        const lastCode = lastItem?.code || 'C-000';
+        const lastNum = parseInt(lastCode.split('-')[1] || '0');
+        const code = `C-${String(lastNum + 1).padStart(3, '0')}`;
 
         // Extract state code from GST number if not provided (first 2 digits)
         const inferredStateCode = stateCode || (gstNo ? gstNo.substring(0, 2) : '27');
@@ -493,9 +505,12 @@ router.post('/suppliers', async (req: Request, res: Response, next: NextFunction
     try {
         const { name, gstNo, stateCode, contact, address, outstanding } = req.body;
 
-        const countResult = await db.select({ cnt: countFn() }).from(suppliers);
-        const count = Number(countResult[0]?.cnt || 0);
-        const code = `S-${String(count + 1).padStart(3, '0')}`;
+        const lastItem = await db.query.suppliers.findFirst({
+            orderBy: (table, { desc }) => [desc(table.code)]
+        });
+        const lastCode = lastItem?.code || 'S-000';
+        const lastNum = parseInt(lastCode.split('-')[1] || '0');
+        const code = `S-${String(lastNum + 1).padStart(3, '0')}`;
 
         // Extract state code from GST number if not provided
         const inferredStateCode = stateCode || (gstNo ? gstNo.substring(0, 2) : '27');
@@ -571,9 +586,12 @@ router.post('/expense-heads', async (req: Request, res: Response, next: NextFunc
     try {
         const { name, category } = req.body;
 
-        const countResult = await db.select({ cnt: countFn() }).from(expenseHeads);
-        const count = Number(countResult[0]?.cnt || 0);
-        const code = `E-${String(count + 1).padStart(3, '0')}`;
+        const lastItem = await db.query.expenseHeads.findFirst({
+            orderBy: (table, { desc }) => [desc(table.code)]
+        });
+        const lastCode = lastItem?.code || 'E-000';
+        const lastNum = parseInt(lastCode.split('-')[1] || '0');
+        const code = `E-${String(lastNum + 1).padStart(3, '0')}`;
 
         const [item] = await db.insert(expenseHeads).values({
             code, name, category: category || 'Variable',
@@ -634,9 +652,12 @@ router.post('/accounts', async (req: Request, res: Response, next: NextFunction)
     try {
         const { name, accountNo, type, balance } = req.body;
 
-        const countResult = await db.select({ cnt: countFn() }).from(bankCashAccounts);
-        const count = Number(countResult[0]?.cnt || 0);
-        const code = `A-${String(count + 1).padStart(3, '0')}`;
+        const lastItem = await db.query.bankCashAccounts.findFirst({
+            orderBy: (table, { desc }) => [desc(table.code)]
+        });
+        const lastCode = lastItem?.code || 'A-000';
+        const lastNum = parseInt(lastCode.split('-')[1] || '0');
+        const code = `A-${String(lastNum + 1).padStart(3, '0')}`;
 
         const [item] = await db.insert(bankCashAccounts).values({
             code, name, accountNo, type: type || 'Bank',
@@ -693,9 +714,12 @@ router.post('/employees', async (req: Request, res: Response, next: NextFunction
     try {
         const { name, designation, contact, salary } = req.body;
 
-        const countResult = await db.select({ cnt: countFn() }).from(employees);
-        const count = Number(countResult[0]?.cnt || 0);
-        const code = `EMP-${String(count + 1).padStart(3, '0')}`;
+        const lastItem = await db.query.employees.findFirst({
+            orderBy: (table, { desc }) => [desc(table.code)]
+        });
+        const lastCode = lastItem?.code || 'EMP-000';
+        const lastNum = parseInt(lastCode.split('-')[1] || '0');
+        const code = `EMP-${String(lastNum + 1).padStart(3, '0')}`;
 
         const [item] = await db.insert(employees).values({
             code, name, designation, contact, salary: String(salary),
