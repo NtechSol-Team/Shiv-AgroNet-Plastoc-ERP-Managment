@@ -691,7 +691,9 @@ export const rawMaterialRolls = pgTable('raw_material_rolls', {
     purchaseBillId: text('purchase_bill_id').notNull().references(() => purchaseBills.id, { onDelete: 'cascade' }),
     rawMaterialId: text('raw_material_id').notNull().references(() => rawMaterials.id),
     rollCode: text('roll_code').notNull().unique(), // e.g. ROLL-PB101-001
-    netWeight: decimal('net_weight', { precision: 10, scale: 2 }).notNull(),
+    grossWeight: decimal('gross_weight', { precision: 10, scale: 2 }), // Total weight with pipe
+    pipeWeight: decimal('pipe_weight', { precision: 10, scale: 2 }), // Weight of pipe
+    netWeight: decimal('net_weight', { precision: 10, scale: 2 }).notNull(), // Material weight (grossWeight - pipeWeight)
     gsm: decimal('gsm', { precision: 10, scale: 2 }),
     length: decimal('length', { precision: 10, scale: 2 }), // Displayed as "Width" in UI
     status: text('status').default('In Stock'), // In Stock, Consumed, Returned

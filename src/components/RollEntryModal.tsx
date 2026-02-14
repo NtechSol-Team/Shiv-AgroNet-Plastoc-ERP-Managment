@@ -11,7 +11,9 @@ interface RollEntryModalProps {
 interface RollItem {
     id: string;
     rollCode: string;
-    netWeight: string;
+    grossWeight: string; // Total weight with pipe
+    pipeWeight: string;  // Weight of pipe
+    netWeight: string;   // Auto-calculated: grossWeight - pipeWeight
     gsm: string;
     width: string; // Changed from length to width
     rawMaterialId: string;
@@ -34,7 +36,7 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
 
     // Edit state for existing rolls
     const [editingRollId, setEditingRollId] = useState<string | null>(null);
-    const [editValues, setEditValues] = useState<{ netWeight: string; width: string }>({ netWeight: '', width: '' });
+    const [editValues, setEditValues] = useState<{ grossWeight: string; pipeWeight: string; netWeight: string; width: string }>({ grossWeight: '', pipeWeight: '', netWeight: '', width: '' });
 
     // Extract bill items with proper structure handling
     const billItems: BillItem[] = (bill.items || []).map((item: any) => ({
@@ -107,6 +109,14 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
         setLoading(false);
     };
 
+    // Auto-calculate net weight when gross or pipe weight changes
+    const calculateNetWeight = (grossWeight: string, pipeWeight: string): string => {
+        const gross = parseFloat(grossWeight) || 0;
+        const pipe = parseFloat(pipeWeight) || 0;
+        const net = gross - pipe;
+        return net > 0 ? net.toFixed(2) : '0';
+    };
+
     const handleAddRow = (materialId?: string) => {
         const defaultMaterialId = materialId || billItems[0]?.rawMaterialId || '';
 
@@ -118,20 +128,23 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
         // Generate Code: ROLL-{GlobalSeq}
         // Offset by current new rolls length to avoid duplicates in this session
         const currentSeq = nextSeq + rolls.length;
-        const rollCode = `ROLL-${String(currentSeq).padStart(4, '0')}`;
+        const newRollCode = `ROLL-${String(currentSeq).padStart(4, '0')}`;
 
-        console.log(`🎯 Generated Roll Code: ${rollCode} (nextSeq=${nextSeq}, offset=${rolls.length})`);
+        console.log(`🎯 Generated Roll Code: ${newRollCode} (nextSeq=${nextSeq}, offset=${rolls.length})`);
 
+        const newRoll: RollItem = {
+            id: `temp-${Date.now()}`,
+            rollCode: newRollCode,
+            grossWeight: '',
+            pipeWeight: '',
+            netWeight: '0',
+            gsm: '',
+            width: '',
+            rawMaterialId: materialId || (billItems.length === 1 ? billItems[0].rawMaterialId : ''),
+        };
         setRolls([
             ...rolls,
-            {
-                id: crypto.randomUUID(),
-                rollCode,
-                netWeight: '',
-                gsm: '',
-                width: '', // Changed from length to width
-                rawMaterialId: defaultMaterialId
-            }
+            newRoll
         ]);
     };
 
@@ -140,7 +153,20 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
     };
 
     const handleUpdateRow = (id: string, field: keyof RollItem, value: string) => {
-        setRolls(rolls.map(r => r.id === id ? { ...r, [field]: value } : r));
+        setRolls(rolls.map(r => {
+            if (r.id === id) {
+                const updated = { ...r, [field]: value };
+                // Auto-calculate netWeight if grossWeight or pipeWeight changed
+                if (field === 'grossWeight' || field === 'pipeWeight') {
+                    updated.netWeight = calculateNetWeight(
+                        field === 'grossWeight' ? value : r.grossWeight,
+                        field === 'pipeWeight' ? value : r.pipeWeight
+                    );
+                }
+                return updated;
+            }
+            return r;
+        }));
     };
 
     const handleDeleteExisting = async (rollId: string) => {
@@ -158,7 +184,11 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
 
     const handleEditExisting = (roll: any) => {
         setEditingRollId(roll.id);
+        // For existing rolls, we might not have grossWeight/pipeWeight stored
+        // So we'll just edit netWeight directly
         setEditValues({
+            grossWeight: roll.grossWeight || '',
+            pipeWeight: roll.pipeWeight || '',
             netWeight: roll.netWeight,
             width: roll.width || roll.length || ''
         });
@@ -166,7 +196,7 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
 
     const handleCancelEdit = () => {
         setEditingRollId(null);
-        setEditValues({ netWeight: '', width: '' });
+        setEditValues({ grossWeight: '', pipeWeight: '', netWeight: '', width: '' });
     };
 
     const handleSaveEdit = async (rollId: string) => {
@@ -454,7 +484,9 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                         {billItems.length > 1 && (
                                             <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase">Material</th>
                                         )}
-                                        <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase">Net Weight (kg) <span className="text-red-500">*</span></th>
+                                        <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase">Gross Weight (kg) <span className="text-red-500">*</span></th>
+                                        <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase">Pipe Weight (kg)</th>
+                                        <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase bg-blue-100">Net Weight (kg)</th>
                                         <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase w-24">Width (mm)</th>
                                         <th className="px-3 py-2 text-center text-xs font-bold text-blue-800 uppercase w-16">✕</th>
                                     </tr>
@@ -462,7 +494,7 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                 <tbody className="divide-y divide-gray-100">
                                     {rolls.length === 0 ? (
                                         <tr>
-                                            <td colSpan={billItems.length > 1 ? 5 : 4} className="px-4 py-8 text-center text-sm text-gray-400 italic">
+                                            <td colSpan={billItems.length > 1 ? 7 : 6} className="px-4 py-8 text-center text-sm text-gray-400 italic">
                                                 Press <kbd className="px-2 py-1 bg-gray-100 rounded border text-xs font-mono">Enter</kbd> or click "Add Roll" to start
                                             </td>
                                         </tr>
@@ -496,16 +528,39 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                                 )}
                                                 <td className="px-3 py-1.5">
                                                     <input
-                                                        id={`weight-${roll.id}`}
+                                                        id={`gross-${roll.id}`}
+                                                        type="number"
+                                                        step="0.01"
+                                                        value={roll.grossWeight}
+                                                        onChange={(e) => handleUpdateRow(roll.id, 'grossWeight', e.target.value)}
+                                                        onKeyDown={(e) => handleKeyDown(e, idx, 'grossWeight')}
+                                                        className="w-full text-sm border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 font-bold text-center"
+                                                        placeholder="0.00"
+                                                        tabIndex={idx * 5 + 3}
+                                                        autoFocus={idx === rolls.length - 1}
+                                                    />
+                                                </td>
+                                                <td className="px-3 py-1.5">
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        value={roll.pipeWeight}
+                                                        onChange={(e) => handleUpdateRow(roll.id, 'pipeWeight', e.target.value)}
+                                                        onKeyDown={(e) => handleKeyDown(e, idx, 'pipeWeight')}
+                                                        className="w-full text-sm border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 text-center"
+                                                        placeholder="0.00"
+                                                        tabIndex={idx * 5 + 4}
+                                                    />
+                                                </td>
+                                                <td className="px-3 py-1.5 bg-blue-50">
+                                                    <input
                                                         type="number"
                                                         step="0.01"
                                                         value={roll.netWeight}
-                                                        onChange={(e) => handleUpdateRow(roll.id, 'netWeight', e.target.value)}
-                                                        onKeyDown={(e) => handleKeyDown(e, idx, 'weight')}
-                                                        className="w-full text-sm border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 font-bold text-center"
-                                                        placeholder="0.00"
-                                                        tabIndex={idx * 4 + 3}
-                                                        autoFocus={idx === rolls.length - 1}
+                                                        className="w-full text-sm border-2 border-blue-300 rounded bg-blue-50 font-bold text-center text-blue-900 cursor-not-allowed"
+                                                        placeholder="Auto"
+                                                        disabled
+                                                        title="Auto-calculated: Gross Weight - Pipe Weight"
                                                     />
                                                 </td>
                                                 <td className="px-3 py-1.5">
