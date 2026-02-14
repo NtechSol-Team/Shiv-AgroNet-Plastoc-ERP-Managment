@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, AlertTriangle, CheckCircle, X, Loader2, Package, Trash2, ArrowRight, Settings2, Calendar, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, AlertTriangle, CheckCircle, X, Loader2, Package, Trash2, ArrowRight, Settings2, Calendar, ChevronDown, ChevronUp, Edit2, Pencil } from 'lucide-react';
 import { productionApi, mastersApi, inventoryApi } from '../lib/api';
 
 export function Production() {
@@ -773,20 +773,69 @@ export function Production() {
                             {new Date(batch.allocationDate).toLocaleDateString()}
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setCompletionForm({
-                                  batchId: batch.id,
-                                  outputQuantity: '',
-                                  outputQuantities: {}
-                                });
-                                setShowCompletionForm(true);
-                              }}
-                              className="px-3 py-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 rounded-md text-xs font-bold transition-colors"
-                            >
-                              Complete
-                            </button>
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // Set form to edit mode with existing batch data
+                                  setAllocationForm({
+                                    date: batch.allocationDate.split('T')[0],
+                                    machineId: batch.machineId || '',
+                                    inputs: batch.inputs?.map((inp: any) => ({
+                                      rawMaterialId: inp.rawMaterialId,
+                                      materialBatchId: inp.materialBatchId || '',
+                                      quantity: inp.quantity
+                                    })) || [{ rawMaterialId: '', materialBatchId: '', quantity: '' }],
+                                    outputs: batch.outputs?.map((out: any) => out.finishedProductId) ||
+                                      (batch.finishedProductId ? [batch.finishedProductId] : [''])
+                                  });
+                                  // Load batches for existing materials
+                                  batch.inputs?.forEach((inp: any) => {
+                                    if (inp.rawMaterialId) loadBatchesForMaterial(inp.rawMaterialId);
+                                  });
+                                  setShowAllocationForm(true);
+                                }}
+                                className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                title="Edit batch"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (confirm(`Are you sure you want to delete batch ${batch.code}? This action cannot be undone.`)) {
+                                    try {
+                                      const result = await productionApi.deleteBatch(batch.id);
+                                      if (result.error) {
+                                        setError(result.error);
+                                      } else {
+                                        fetchData(); // Refresh the list
+                                      }
+                                    } catch (err) {
+                                      setError('Failed to delete batch');
+                                    }
+                                  }
+                                }}
+                                className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
+                                title="Delete batch"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCompletionForm({
+                                    batchId: batch.id,
+                                    outputQuantity: '',
+                                    outputQuantities: {}
+                                  });
+                                  setShowCompletionForm(true);
+                                }}
+                                className="px-3 py-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 rounded-md text-xs font-bold transition-colors"
+                              >
+                                Complete
+                              </button>
+                            </div>
                           </td>
                         </tr>
                         {isExpanded && (batch.inputs?.length > 1 || batch.outputs?.length > 1) && (
@@ -795,11 +844,34 @@ export function Production() {
                               <div className="grid grid-cols-2 gap-8 ml-10">
                                 <div>
                                   <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Detailed Input Mix</h4>
-                                  <div className="space-y-1">
+                                  <div className="space-y-2">
                                     {batch.inputs?.map((input: any, i: number) => (
-                                      <div key={i} className="flex justify-between text-xs text-slate-600 border-b border-dashed border-slate-200 pb-1 last:border-0">
-                                        <span>{input.rawMaterial?.name}</span>
-                                        <span className="font-mono">{input.quantity} kg</span>
+                                      <div key={i} className="flex flex-col text-xs text-slate-600 border-b border-dashed border-slate-200 pb-2 last:border-0">
+                                        <div className="flex justify-between items-start mb-1">
+                                          <span className="font-semibold text-slate-700">
+                                            {input.rawMaterial?.name}
+                                            {input.rawMaterial?.color && (
+                                              <span className="ml-2 text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded border border-slate-200">
+                                                {input.rawMaterial.color}
+                                              </span>
+                                            )}
+                                          </span>
+                                          <span className="font-mono font-bold text-slate-800">{input.quantity} kg</span>
+                                        </div>
+                                        {input.roll && (
+                                          <div className="flex gap-3 text-[10px] text-slate-500 ml-1">
+                                            <span className="flex items-center">
+                                              <span className="font-semibold text-slate-400 mr-1">Roll:</span>
+                                              <span className="font-mono text-blue-600">{input.roll.rollCode}</span>
+                                            </span>
+                                            {input.purchaseBill && (
+                                              <span className="flex items-center">
+                                                <span className="font-semibold text-slate-400 mr-1">Bill:</span>
+                                                <span className="font-mono text-purple-600">{input.purchaseBill.code}</span>
+                                              </span>
+                                            )}
+                                          </div>
+                                        )}
                                       </div>
                                     ))}
                                   </div>

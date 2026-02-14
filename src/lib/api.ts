@@ -237,6 +237,11 @@ export const purchaseApi = {
         }),
     deleteRoll: (billId: string, rollId: string) =>
         fetchApi<any>(`/purchase/bills/${billId}/rolls/${rollId}`, { method: 'DELETE' }),
+    updateRoll: (billId: string, rollId: string, data: { netWeight: number; width: number }) =>
+        fetchApi<any>(`/purchase/bills/${billId}/rolls/${rollId}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        }),
     getNextRollSeq: () => fetchApi<any>('/purchase/next-roll-seq'),
 
     // Pending Quantity Management
@@ -268,6 +273,8 @@ export const productionApi = {
             method: 'POST',
             body: JSON.stringify(data),
         }),
+    deleteBatch: (id: string) =>
+        fetchApi<any>(`/production/batches/${id}`, { method: 'DELETE' }),
     getStats: () => fetchApi<any>('/production/stats'),
 };
 

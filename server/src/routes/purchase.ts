@@ -1434,4 +1434,89 @@ router.delete('/bills/:id/rolls/:rollId', async (req: Request, res: Response, ne
     }
 });
 
+/**
+ * PUT /purchase/bills/:id/rolls/:rollId
+ * Update roll weight and width
+ */
+router.put('/bills/:id/rolls/:rollId', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id, rollId } = req.params;
+        const { netWeight, width } = req.body;
+
+        // Get the roll
+        const [roll] = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.id, rollId));
+        if (!roll) throw createError('Roll not found', 404);
+
+        if (roll.status !== 'In Stock') {
+            throw createError('Cannot edit roll. It has already been consumed or returned.', 400);
+        }
+
+        const oldWeight = parseFloat(roll.netWeight || '0');
+        const newWeight = parseFloat(String(netWeight));
+        const weightDiff = newWeight - oldWeight;
+
+        // 1. Update Roll
+        await db.update(rawMaterialRolls)
+            .set({
+                netWeight: String(newWeight),
+                length: width ? String(width) : roll.length,
+            })
+            .where(eq(rawMaterialRolls.id, rollId));
+
+        // 2. Create Stock Movement to reflect the weight change
+        if (Math.abs(weightDiff) > 0.01) {
+            if (weightDiff > 0) {
+                // Weight increased - add stock
+                await createStockMovement({
+                    date: new Date(),
+                    movementType: 'RAW_IN',
+                    itemType: 'raw_material',
+                    rawMaterialId: roll.rawMaterialId,
+                    quantityIn: Math.abs(weightDiff),
+                    quantityOut: 0,
+                    referenceType: 'roll_adjustment',
+                    referenceCode: roll.rollCode,
+                    referenceId: rollId,
+                    reason: `Roll ${roll.rollCode} weight adjusted +${weightDiff.toFixed(2)}kg`
+                });
+            } else {
+                // Weight decreased - remove stock
+                await createStockMovement({
+                    date: new Date(),
+                    movementType: 'RAW_OUT',
+                    itemType: 'raw_material',
+                    rawMaterialId: roll.rawMaterialId,
+                    quantityIn: 0,
+                    quantityOut: Math.abs(weightDiff),
+                    referenceType: 'roll_adjustment',
+                    referenceCode: roll.rollCode,
+                    referenceId: rollId,
+                    reason: `Roll ${roll.rollCode} weight adjusted ${weightDiff.toFixed(2)}kg`
+                });
+            }
+        }
+
+        // 3. Update Bill Totals
+        const allRolls = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.purchaseBillId, id));
+        const totalWeight = allRolls.reduce((sum, r) => sum + parseFloat(r.netWeight || '0'), 0);
+
+        await db.update(purchaseBills)
+            .set({
+                totalRollWeight: String(totalWeight),
+                updatedAt: new Date()
+            })
+            .where(eq(purchaseBills.id, id));
+
+        res.json(successResponse({
+            message: 'Roll updated successfully',
+            totalRollWeight: totalWeight,
+            roll: { ...roll, netWeight: String(newWeight), length: width ? String(width) : roll.length }
+        }));
+
+    } catch (error) {
+        next(error);
+    }
+});
+
 export default router;
+

@@ -14,7 +14,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from '../db/index';
-import { productionBatches, machines, rawMaterials, finishedProducts, stockMovements, productionBatchInputs, productionBatchOutputs, rawMaterialBatches, rawMaterialRolls } from '../db/schema';
+import { productionBatches, machines, rawMaterials, finishedProducts, stockMovements, productionBatchInputs, productionBatchOutputs, rawMaterialBatches, rawMaterialRolls, purchaseBills } from '../db/schema';
 import { eq, desc, sql, count as countFn } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
@@ -41,7 +41,14 @@ router.get('/batches', async (req: Request, res: Response, next: NextFunction) =
                 rawMaterial: true,
                 finishedProduct: true,
                 inputs: {
-                    with: { rawMaterial: true }
+                    with: {
+                        rawMaterial: true,
+                        materialBatch: {
+                            with: {
+                                purchaseBill: true
+                            }
+                        }
+                    }
                 },
                 outputs: {
                     with: { finishedProduct: true }
@@ -50,13 +57,44 @@ router.get('/batches', async (req: Request, res: Response, next: NextFunction) =
             orderBy: (batches, { desc }) => [desc(batches.createdAt)],
         });
 
-        const formatted = batches.map(batch => ({
-            ...batch,
-            // Fallback for legacy frontend or unified access
-            rawMaterial: batch.rawMaterial || batch.inputs[0]?.rawMaterial,
-            finishedProduct: batch.finishedProduct || batch.outputs[0]?.finishedProduct,
-            inputs: batch.inputs,
-            outputs: batch.outputs,
+        // Fetch roll details for inputs where materialBatchId is a roll ID
+        const formatted = await Promise.all(batches.map(async batch => {
+            const enhancedInputs = await Promise.all(batch.inputs.map(async (input) => {
+                // Try to fetch roll if materialBatchId exists
+                let roll = null;
+                let purchaseBill = null;
+
+                if (input.materialBatchId) {
+                    // Check if this is a roll ID
+                    const [rollData] = await db.select()
+                        .from(rawMaterialRolls)
+                        .where(eq(rawMaterialRolls.id, input.materialBatchId));
+
+                    if (rollData) {
+                        roll = rollData;
+                        // Get purchase bill for this roll
+                        const [billData] = await db.select()
+                            .from(purchaseBills)
+                            .where(eq(purchaseBills.id, rollData.purchaseBillId));
+                        purchaseBill = billData;
+                    }
+                }
+
+                return {
+                    ...input,
+                    roll, // Roll details including rollCode
+                    purchaseBill, // Bill details including code
+                };
+            }));
+
+            return {
+                ...batch,
+                // Fallback for legacy frontend or unified access
+                rawMaterial: batch.rawMaterial || batch.inputs[0]?.rawMaterial,
+                finishedProduct: batch.finishedProduct || batch.outputs[0]?.finishedProduct,
+                inputs: enhancedInputs,
+                outputs: batch.outputs,
+            };
         }));
 
         res.json(successResponse(formatted));
@@ -433,84 +471,149 @@ router.post('/batches/:id/complete', async (req: Request, res: Response, next: N
 });
 
 // ============================================================
-// QUICK COMPLETE (Direct Production Entry)
+// QUICK COMPLETE (Direct Production Entry - Machine Level FIFO)
 // ============================================================
 
 /**
  * POST /production/quick-complete
  * Quick production entry from inventory
  * 
- * Allows creating finished goods directly from production batches
- * with automatic stock calculation including weight loss
+ * Machine-level FIFO consumption:
+ * - Accepts machineId instead of batchId
+ * - Uses percentage-based weight loss calculation
+ * - Consumes from all machine batches in FIFO order (oldest first)
+ * - Automatically manages batch status and completion
  */
 router.post('/quick-complete', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const {
-            batchId,
-            finishedProductId, // Selected from dropdown
+            machineId,
+            finishedProductId,
             outputWeight, // in kg
-            weightLossGrams // in grams
+            weightLossPercent // percentage (0-100)
         } = req.body;
 
         // Validate inputs
-        if (!batchId || !finishedProductId) {
-            throw createError('Batch ID and Product ID are required', 400);
+        if (!machineId || !finishedProductId) {
+            throw createError('Machine ID and Product ID are required', 400);
         }
         if (!outputWeight || parseFloat(outputWeight) <= 0) {
             throw createError('Output weight must be greater than 0', 400);
         }
-        if (weightLossGrams === undefined || parseFloat(weightLossGrams) < 0) {
-            throw createError('Weight loss must be 0 or greater', 400);
+        if (weightLossPercent === undefined || parseFloat(weightLossPercent) < 0 || parseFloat(weightLossPercent) >= 100) {
+            throw createError('Weight loss percentage must be between 0 and 100', 400);
         }
 
-        // Get batch
-        const batch = await db.query.productionBatches.findFirst({
-            where: eq(productionBatches.id, batchId),
-            with: { outputs: true }
+        const output = parseFloat(outputWeight);
+        const lossPercent = parseFloat(weightLossPercent);
+
+        // Calculate total consumption using percentage formula
+        // Formula: totalConsumption = output / (1 - lossPercent/100)
+        // Example: 100kg output with 5% loss = 100 / 0.95 = 105.26kg consumed
+        const totalConsumption = lossPercent >= 100 ? 0 : output / (1 - lossPercent / 100);
+        const actualLoss = totalConsumption - output;
+
+        // Fetch all in-progress and partially-completed batches for this machine in FIFO order
+        const machineBatches = await db.query.productionBatches.findMany({
+            where: (batches, { and, eq, or }) => and(
+                eq(batches.machineId, machineId),
+                or(
+                    eq(batches.status, 'in-progress'),
+                    eq(batches.status, 'partially-completed')
+                )
+            ),
+            with: {
+                machine: true,
+                outputs: true
+            },
+            orderBy: (batches, { asc }) => [asc(batches.allocationDate)] // FIFO
         });
 
-        if (!batch) throw createError('Batch not found', 404);
-        if (batch.status !== 'in-progress') {
-            throw createError('Batch is not in progress', 400);
+        if (machineBatches.length === 0) {
+            throw createError('No active batches found for this machine', 404);
         }
 
-        // Calculate total consumption
-        const output = parseFloat(outputWeight);
-        const loss = parseFloat(weightLossGrams) / 1000; // Convert grams to kg
-        const totalConsumption = output + loss;
-        const inputQty = parseFloat(batch.inputQuantity || '0');
+        // Calculate total available capacity
+        const totalAvailable = machineBatches.reduce((sum, batch) => {
+            const input = parseFloat(batch.inputQuantity || '0');
+            const consumed = parseFloat(batch.outputQuantity || '0');
+            return sum + (input - consumed);
+        }, 0);
 
-        // Validate consumption
-        if (totalConsumption > inputQty) {
+        // Validate total consumption doesn't exceed available
+        if (totalConsumption > totalAvailable) {
             throw createError(
-                `Total consumption (${totalConsumption.toFixed(2)}kg) exceeds batch input (${inputQty.toFixed(2)}kg)`,
+                `Total consumption (${totalConsumption.toFixed(2)}kg) exceeds available capacity (${totalAvailable.toFixed(2)}kg)`,
                 400
             );
         }
 
-        // Calculate remaining and determine status
-        const remaining = inputQty - totalConsumption;
-        const newStatus = remaining > 0.01 ? 'partially-completed' : 'completed'; // 0.01kg tolerance
+        // FIFO Consumption: Distribute consumption across batches
+        let remainingToConsume = totalConsumption;
+        const affectedBatches: any[] = [];
 
-        // Calculate loss percentage
-        const lossPercentage = inputQty > 0 ? (loss / inputQty) * 100 : 0;
-        const lossExceeded = lossPercentage > LOSS_THRESHOLD_PERCENT;
+        for (const batch of machineBatches) {
+            if (remainingToConsume <= 0.001) break; // Stop if fully consumed (0.001kg tolerance)
 
-        // Update or insert output record
-        const existing = batch.outputs.find(o => o.finishedProductId === finishedProductId);
-        if (existing) {
-            await db.update(productionBatchOutputs)
-                .set({ outputQuantity: String(output) })
-                .where(eq(productionBatchOutputs.id, existing.id));
-        } else {
-            await db.insert(productionBatchOutputs).values({
-                batchId: batch.id,
-                finishedProductId,
-                outputQuantity: String(output)
+            const inputQty = parseFloat(batch.inputQuantity || '0');
+            const currentOutput = parseFloat(batch.outputQuantity || '0');
+            const available = inputQty - currentOutput;
+
+            if (available <= 0) continue; // Skip fully consumed batches
+
+            // Determine how much to consume from this batch
+            const toConsume = Math.min(remainingToConsume, available);
+            const newOutputQty = currentOutput + toConsume;
+            const remaining = inputQty - newOutputQty;
+
+            // Calculate loss for this batch portion
+            const batchLoss = (toConsume / totalConsumption) * actualLoss;
+            const batchLossPercent = inputQty > 0 ? (batchLoss / inputQty) * 100 : 0;
+            const lossExceeded = batchLossPercent > LOSS_THRESHOLD_PERCENT;
+
+            // Determine new status
+            const newStatus = remaining > 0.01 ? 'partially-completed' : 'completed';
+
+            // Update batch
+            await db.update(productionBatches)
+                .set({
+                    outputQuantity: String(newOutputQty),
+                    completionDate: new Date(),
+                    lossQuantity: String(batchLoss),
+                    lossPercentage: String(batchLossPercent),
+                    lossExceeded,
+                    status: newStatus,
+                    updatedAt: new Date(),
+                })
+                .where(eq(productionBatches.id, batch.id));
+
+            // Update or insert output record for this batch
+            const existing = batch.outputs.find(o => o.finishedProductId === finishedProductId);
+            if (existing) {
+                const existingQty = parseFloat(existing.outputQuantity || '0');
+                await db.update(productionBatchOutputs)
+                    .set({ outputQuantity: String(existingQty + (toConsume - batchLoss)) })
+                    .where(eq(productionBatchOutputs.id, existing.id));
+            } else {
+                await db.insert(productionBatchOutputs).values({
+                    batchId: batch.id,
+                    finishedProductId,
+                    outputQuantity: String(toConsume - batchLoss)
+                });
+            }
+
+            affectedBatches.push({
+                batchCode: batch.code,
+                consumed: toConsume.toFixed(2),
+                remaining: remaining.toFixed(2),
+                status: newStatus
             });
+
+            remainingToConsume -= toConsume;
         }
 
-        // Create FG_IN stock movement
+        // Create single FG_IN stock movement for total output
+        const firstBatch = machineBatches[0];
         await db.insert(stockMovements).values({
             date: new Date(),
             movementType: 'FG_IN',
@@ -520,53 +623,36 @@ router.post('/quick-complete', async (req: Request, res: Response, next: NextFun
             quantityOut: '0',
             runningBalance: '0', // Calculated separately
             referenceType: 'production',
-            referenceCode: batch.code,
-            referenceId: batch.id,
-            reason: `Quick production entry from batch ${batch.code}`,
+            referenceCode: `${firstBatch.machine?.name || 'Machine'} Production`,
+            referenceId: firstBatch.id,
+            reason: `Quick production entry from ${firstBatch.machine?.name || 'machine'} (${affectedBatches.length} batch${affectedBatches.length > 1 ? 'es' : ''})`,
         });
 
-        // Update batch header
-        await db.update(productionBatches)
-            .set({
-                outputQuantity: String(output),
-                completionDate: new Date(),
-                lossQuantity: String(loss),
-                lossPercentage: String(lossPercentage),
-                lossExceeded,
-                status: newStatus, // Smart status based on remaining stock
-                updatedAt: new Date(),
-            })
-            .where(eq(productionBatches.id, batchId));
+        // Fetch product
+        const product = await db.query.finishedProducts.findFirst({
+            where: eq(finishedProducts.id, finishedProductId)
+        });
 
-        // Fetch updated batch and product
-        const [updatedBatch, product] = await Promise.all([
-            db.query.productionBatches.findFirst({
-                where: eq(productionBatches.id, batchId),
-                with: {
-                    machine: true,
-                    outputs: { with: { finishedProduct: true } }
-                }
-            }),
-            db.query.finishedProducts.findFirst({
-                where: eq(finishedProducts.id, finishedProductId)
-            })
-        ]);
+        // Calculate overall loss percentage
+        const overallLossPercent = lossPercent;
+        const lossExceeded = overallLossPercent > LOSS_THRESHOLD_PERCENT;
 
-        // Prepare response with warnings
+        // Prepare response
         const response: any = {
-            batch: updatedBatch,
+            success: true,
             product,
             consumption: {
                 output: output,
-                loss: loss,
-                total: totalConsumption,
-                remaining: remaining,
-                status: newStatus
-            }
+                lossPercent: lossPercent,
+                lossKg: actualLoss.toFixed(2),
+                totalConsumed: totalConsumption.toFixed(2),
+                remainingCapacity: (totalAvailable - totalConsumption).toFixed(2)
+            },
+            affectedBatches
         };
 
         if (lossExceeded) {
-            response.warning = `Production loss ${lossPercentage.toFixed(2)}% exceeds ${LOSS_THRESHOLD_PERCENT}% threshold`;
+            response.warning = `Production loss ${overallLossPercent.toFixed(2)}% exceeds ${LOSS_THRESHOLD_PERCENT}% threshold`;
         }
 
         res.json(successResponse(response));
@@ -606,4 +692,71 @@ router.get('/stats', async (req: Request, res: Response, next: NextFunction) => 
     }
 });
 
+// ============================================================
+// DELETE PRODUCTION BATCH
+// ============================================================
+
+/**
+ * DELETE /production/batches/:id
+ * Delete a production batch (only if in-progress)
+ */
+router.delete('/batches/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+
+        // Get the batch
+        const [batch] = await db.select().from(productionBatches).where(eq(productionBatches.id, id));
+        if (!batch) throw createError('Batch not found', 404);
+
+        // Only allow deletion of in-progress batches
+        if (batch.status !== 'in-progress') {
+            throw createError('Cannot delete completed or cancelled batches', 400);
+        }
+
+        // Get batch inputs to reverse stock movements
+        const batchInputs = await db.select().from(productionBatchInputs).where(eq(productionBatchInputs.batchId, id));
+
+        // Reverse stock movements (add back the consumed raw materials)
+        for (const input of batchInputs) {
+            await db.insert(stockMovements).values({
+                date: new Date(),
+                movementType: 'RAW_IN',
+                itemType: 'raw_material',
+                rawMaterialId: input.rawMaterialId,
+                quantityIn: input.quantity,
+                quantityOut: '0',
+                referenceType: 'batch_delete',
+                referenceCode: batch.code,
+                referenceId: id,
+                reason: `Batch ${batch.code} deleted - stock restored`
+            });
+
+            // Update roll status back to "In Stock" if it was consumed
+            if (input.materialBatchId) {
+                // Check if this is a roll ID
+                const [roll] = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.id, input.materialBatchId));
+                if (roll) {
+                    await db.update(rawMaterialRolls)
+                        .set({ status: 'In Stock' })
+                        .where(eq(rawMaterialRolls.id, input.materialBatchId));
+                }
+            }
+        }
+
+        // Delete batch outputs
+        await db.delete(productionBatchOutputs).where(eq(productionBatchOutputs.batchId, id));
+
+        // Delete batch inputs
+        await db.delete(productionBatchInputs).where(eq(productionBatchInputs.batchId, id));
+
+        // Delete the batch
+        await db.delete(productionBatches).where(eq(productionBatches.id, id));
+
+        res.json(successResponse({ message: 'Batch deleted successfully' }));
+    } catch (error) {
+        next(error);
+    }
+});
+
 export default router;
+

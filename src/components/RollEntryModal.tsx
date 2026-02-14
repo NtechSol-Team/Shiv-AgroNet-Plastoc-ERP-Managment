@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Save, X, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, Save, X, AlertTriangle, Edit2, Check } from 'lucide-react';
 import { purchaseApi } from '../lib/api';
 
 interface RollEntryModalProps {
@@ -31,6 +31,10 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const firstInputRef = useRef<HTMLInputElement>(null);
+
+    // Edit state for existing rolls
+    const [editingRollId, setEditingRollId] = useState<string | null>(null);
+    const [editValues, setEditValues] = useState<{ netWeight: string; width: string }>({ netWeight: '', width: '' });
 
     // Extract bill items with proper structure handling
     const billItems: BillItem[] = (bill.items || []).map((item: any) => ({
@@ -148,6 +152,36 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
             await fetchRolls();
         } catch (err: any) {
             setError(err.message);
+        }
+        setLoading(false);
+    };
+
+    const handleEditExisting = (roll: any) => {
+        setEditingRollId(roll.id);
+        setEditValues({
+            netWeight: roll.netWeight,
+            width: roll.width || roll.length || ''
+        });
+    };
+
+    const handleCancelEdit = () => {
+        setEditingRollId(null);
+        setEditValues({ netWeight: '', width: '' });
+    };
+
+    const handleSaveEdit = async (rollId: string) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const result = await purchaseApi.updateRoll(bill.id, rollId, {
+                netWeight: parseFloat(editValues.netWeight),
+                width: parseFloat(editValues.width) || 0
+            });
+            if (result.error) throw new Error(result.error);
+            await fetchRolls();
+            setEditingRollId(null);
+        } catch (err: any) {
+            setError(err.message || 'Failed to update roll');
         }
         setLoading(false);
     };
@@ -292,29 +326,91 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                         <tr>
                                             <th className="px-3 py-2 text-left text-xs font-bold text-green-800 uppercase">Code</th>
                                             <th className="px-3 py-2 text-left text-xs font-bold text-green-800 uppercase">Material</th>
-                                            <th className="px-3 py-2 text-right text-xs font-bold text-green-800 uppercase">Weight</th>
-                                            <th className="px-3 py-2 text-right text-xs font-bold text-green-800 uppercase">Shade</th>
-                                            <th className="px-3 py-2 text-right text-xs font-bold text-green-800 uppercase">Width</th>
-                                            <th className="px-3 py-2 text-center text-xs font-bold text-green-800 uppercase">Action</th>
+                                            <th className="px-3 py-2 text-right text-xs font-bold text-green-800 uppercase">Weight (kg)</th>
+                                            <th className="px-3 py-2 text-right text-xs font-bold text-green-800 uppercase">Width (mm)</th>
+                                            <th className="px-3 py-2 text-center text-xs font-bold text-green-800 uppercase">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-green-100">
-                                        {existingRolls.map((roll) => (
-                                            <tr key={roll.id}>
-                                                <td className="px-3 py-2 text-sm font-mono text-green-900">{roll.rollCode}</td>
-                                                <td className="px-3 py-2 text-sm text-green-800">{getMaterialName(roll.rawMaterialId)}</td>
-                                                <td className="px-3 py-2 text-sm text-right font-bold text-green-900">{roll.netWeight} kg</td>
-                                                <td className="px-3 py-2 text-sm text-right text-green-700">{roll.gsm || '-'}</td>
-                                                <td className="px-3 py-2 text-sm text-right text-green-700">{roll.width || roll.length || '-'}</td>
-                                                <td className="px-3 py-2 text-center">
-                                                    {roll.status === 'In Stock' && (
-                                                        <button onClick={() => handleDeleteExisting(roll.id)} className="text-red-400 hover:text-red-600">
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
-                                                    )}
-                                                </td>
-                                            </tr>
-                                        ))}
+                                        {existingRolls.map((roll) => {
+                                            const isEditing = editingRollId === roll.id;
+                                            return (
+                                                <tr key={roll.id} className={isEditing ? 'bg-blue-50' : ''}>
+                                                    <td className="px-3 py-2 text-sm font-mono text-green-900">{roll.rollCode}</td>
+                                                    <td className="px-3 py-2 text-sm text-green-800">{getMaterialName(roll.rawMaterialId)}</td>
+                                                    <td className="px-3 py-2 text-sm text-right font-bold text-green-900">
+                                                        {isEditing ? (
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                value={editValues.netWeight}
+                                                                onChange={(e) => setEditValues({ ...editValues, netWeight: e.target.value })}
+                                                                className="w-24 px-2 py-1 text-sm border-blue-300 rounded focus:ring-blue-500 focus:border-blue-500 font-bold text-center"
+                                                                autoFocus
+                                                            />
+                                                        ) : (
+                                                            `${roll.netWeight} kg`
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-sm text-right text-green-700">
+                                                        {isEditing ? (
+                                                            <input
+                                                                type="number"
+                                                                value={editValues.width}
+                                                                onChange={(e) => setEditValues({ ...editValues, width: e.target.value })}
+                                                                className="w-20 px-2 py-1 text-sm border-blue-300 rounded focus:ring-blue-500 focus:border-blue-500 text-center"
+                                                                placeholder="—"
+                                                            />
+                                                        ) : (
+                                                            roll.width || roll.length || '-'
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-center">
+                                                        <div className="flex items-center justify-center gap-1">
+                                                            {roll.status === 'In Stock' && (
+                                                                <>
+                                                                    {isEditing ? (
+                                                                        <>
+                                                                            <button
+                                                                                onClick={() => handleSaveEdit(roll.id)}
+                                                                                className="text-green-600 hover:text-green-700 p-1"
+                                                                                title="Save changes"
+                                                                            >
+                                                                                <Check className="w-4 h-4" />
+                                                                            </button>
+                                                                            <button
+                                                                                onClick={handleCancelEdit}
+                                                                                className="text-gray-400 hover:text-gray-600 p-1"
+                                                                                title="Cancel"
+                                                                            >
+                                                                                <X className="w-4 h-4" />
+                                                                            </button>
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <button
+                                                                                onClick={() => handleEditExisting(roll)}
+                                                                                className="text-blue-400 hover:text-blue-600 p-1"
+                                                                                title="Edit roll"
+                                                                            >
+                                                                                <Edit2 className="w-4 h-4" />
+                                                                            </button>
+                                                                            <button
+                                                                                onClick={() => handleDeleteExisting(roll.id)}
+                                                                                className="text-red-400 hover:text-red-600 p-1"
+                                                                                title="Delete roll"
+                                                                            >
+                                                                                <Trash2 className="w-4 h-4" />
+                                                                            </button>
+                                                                        </>
+                                                                    )}
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
@@ -359,7 +455,6 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                             <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase">Material</th>
                                         )}
                                         <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase">Net Weight (kg) <span className="text-red-500">*</span></th>
-                                        <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase w-24">Shade</th>
                                         <th className="px-3 py-2 text-left text-xs font-bold text-blue-800 uppercase w-24">Width (mm)</th>
                                         <th className="px-3 py-2 text-center text-xs font-bold text-blue-800 uppercase w-16">✕</th>
                                     </tr>
@@ -367,7 +462,7 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                 <tbody className="divide-y divide-gray-100">
                                     {rolls.length === 0 ? (
                                         <tr>
-                                            <td colSpan={billItems.length > 1 ? 6 : 5} className="px-4 py-8 text-center text-sm text-gray-400 italic">
+                                            <td colSpan={billItems.length > 1 ? 5 : 4} className="px-4 py-8 text-center text-sm text-gray-400 italic">
                                                 Press <kbd className="px-2 py-1 bg-gray-100 rounded border text-xs font-mono">Enter</kbd> or click "Add Roll" to start
                                             </td>
                                         </tr>
@@ -409,19 +504,8 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                                         onKeyDown={(e) => handleKeyDown(e, idx, 'weight')}
                                                         className="w-full text-sm border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 font-bold text-center"
                                                         placeholder="0.00"
-                                                        tabIndex={idx * 5 + 3}
+                                                        tabIndex={idx * 4 + 3}
                                                         autoFocus={idx === rolls.length - 1}
-                                                    />
-                                                </td>
-                                                <td className="px-3 py-1.5">
-                                                    <input
-                                                        type="number"
-                                                        value={roll.gsm}
-                                                        onChange={(e) => handleUpdateRow(roll.id, 'gsm', e.target.value)}
-                                                        onKeyDown={(e) => handleKeyDown(e, idx, 'gsm')}
-                                                        className="w-full text-sm border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 text-center"
-                                                        placeholder="—"
-                                                        tabIndex={idx * 5 + 4}
                                                     />
                                                 </td>
                                                 <td className="px-3 py-1.5">
@@ -432,7 +516,7 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                                         onKeyDown={(e) => handleKeyDown(e, idx, 'width')}
                                                         className="w-full text-sm border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 text-center"
                                                         placeholder="—"
-                                                        tabIndex={idx * 5 + 5}
+                                                        tabIndex={idx * 4 + 4}
                                                     />
                                                 </td>
                                                 <td className="px-3 py-1.5 text-center">
