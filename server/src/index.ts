@@ -128,9 +128,9 @@ app.listen(PORT, async () => {
         await db.execute(sql`SELECT 1`);
         console.log('✅ Database connected successfully');
 
-        // Warmup cache with master data
+        // Warmup cache with master data (background)
         const { cache } = await import('./services/cache.service');
-        await cache.warmup();
+        cache.warmup();
     } catch (err) {
         console.error('❌ Database connection failed:', err);
     }

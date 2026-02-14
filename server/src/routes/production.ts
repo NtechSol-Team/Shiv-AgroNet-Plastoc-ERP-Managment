@@ -52,58 +52,81 @@ router.get('/batches', async (req: Request, res: Response, next: NextFunction) =
             orderBy: (batches, { desc }) => [desc(batches.createdAt)],
         });
 
-        // Fetch roll details for inputs where materialBatchId is a roll ID
-        const formatted = await Promise.all(batches.map(async batch => {
-            const enhancedInputs = await Promise.all(batch.inputs.map(async (input) => {
-                // Try to fetch rolls if materialBatchId exists (now stores JSON array of roll IDs)
-                let rolls: any[] = [];
-                let purchaseBill = null;
+        // OPTIMIZATION: Fix N+1 Query Issue by valid bulk fetching
+        // 1. Collect all Roll IDs from all inputs across all batches
+        const allRollIds = new Set<string>();
 
+        batches.forEach(batch => {
+            batch.inputs.forEach(input => {
                 if (input.materialBatchId) {
                     try {
-                        // Parse JSON array of roll IDs
-                        const rollIds = JSON.parse(input.materialBatchId);
-                        if (Array.isArray(rollIds)) {
-                            for (const rollId of rollIds) {
-                                const [rollData] = await db.select()
-                                    .from(rawMaterialRolls)
-                                    .where(eq(rawMaterialRolls.id, rollId));
-
-                                if (rollData) {
-                                    rolls.push(rollData);
-                                    // Get purchase bill for the first roll (they should all be from same bill typically)
-                                    if (!purchaseBill) {
-                                        const [billData] = await db.select()
-                                            .from(purchaseBills)
-                                            .where(eq(purchaseBills.id, rollData.purchaseBillId));
-                                        purchaseBill = billData;
-                                    }
-                                }
-                            }
+                        const parsed = JSON.parse(input.materialBatchId);
+                        if (Array.isArray(parsed)) {
+                            parsed.forEach(id => allRollIds.add(id));
+                        } else {
+                            allRollIds.add(input.materialBatchId);
                         }
                     } catch (e) {
-                        // Fallback: try as single roll ID for backward compatibility
-                        const [rollData] = await db.select()
-                            .from(rawMaterialRolls)
-                            .where(eq(rawMaterialRolls.id, input.materialBatchId));
-
-                        if (rollData) {
-                            rolls.push(rollData);
-                            const [billData] = await db.select()
-                                .from(purchaseBills)
-                                .where(eq(purchaseBills.id, rollData.purchaseBillId));
-                            purchaseBill = billData;
-                        }
+                        allRollIds.add(input.materialBatchId);
                     }
+                }
+            });
+        });
+
+        // 2. Bulk Fetch Rolls
+        const rollMap = new Map();
+        const billIds = new Set<string>();
+
+        if (allRollIds.size > 0) {
+            // drizzle inArray requires non-empty array
+            const rolls = await db.select().from(rawMaterialRolls).where(sql`${rawMaterialRolls.id} IN ${Array.from(allRollIds)}`);
+            rolls.forEach(r => {
+                rollMap.set(r.id, r);
+                if (r.purchaseBillId) billIds.add(r.purchaseBillId);
+            });
+        }
+
+        // 3. Bulk Fetch Bills
+        const billMap = new Map();
+        if (billIds.size > 0) {
+            const bills = await db.select().from(purchaseBills).where(sql`${purchaseBills.id} IN ${Array.from(billIds)}`);
+            bills.forEach(b => billMap.set(b.id, b));
+        }
+
+        // 4. Map data back to structure in-memory
+        const formatted = batches.map(batch => {
+            const enhancedInputs = batch.inputs.map((input) => {
+                const rolls: any[] = [];
+                let purchaseBill: any = null;
+
+                if (input.materialBatchId) {
+                    let targetIds: string[] = [];
+                    try {
+                        const parsed = JSON.parse(input.materialBatchId);
+                        if (Array.isArray(parsed)) targetIds = parsed;
+                        else targetIds = [input.materialBatchId];
+                    } catch (e) {
+                        targetIds = [input.materialBatchId];
+                    }
+
+                    targetIds.forEach(id => {
+                        const roll = rollMap.get(id);
+                        if (roll) {
+                            rolls.push(roll);
+                            if (!purchaseBill && roll.purchaseBillId) {
+                                purchaseBill = billMap.get(roll.purchaseBillId);
+                            }
+                        }
+                    });
                 }
 
                 return {
                     ...input,
-                    rolls, // Array of roll details
-                    roll: rolls[0] || null, // Legacy: first roll for backward compatibility
-                    purchaseBill,
+                    roll: rolls.length > 0 ? rolls[0] : null, // Legacy support
+                    rolls, // Full support
+                    purchaseBill
                 };
-            }));
+            });
 
             // Calculate remaining capacity for partially-completed batches
             const inputQty = parseFloat(batch.inputQuantity || '0');
@@ -125,7 +148,7 @@ router.get('/batches', async (req: Request, res: Response, next: NextFunction) =
                 remainingCapacity: remainingCapacity > 0 ? remainingCapacity : 0, // Available material that can still be processed
                 isActive, // Helper for frontend filtering
             };
-        }));
+        });
 
         res.json(successResponse(formatted));
     } catch (error) {

@@ -139,6 +139,7 @@ export const purchaseBills = pgTable('purchase_bills', {
     supplierIdx: index('purchase_bills_supplier_idx').on(table.supplierId),
     dateIdx: index('purchase_bills_date_idx').on(table.date),
     statusIdx: index('purchase_bills_status_idx').on(table.status),
+    invoiceNoIdx: index('purchase_bills_invoice_no_idx').on(table.invoiceNumber),
 }));
 
 export const purchaseBillItems = pgTable('purchase_bill_items', {
@@ -201,6 +202,8 @@ export const productionBatches = pgTable('production_batches', {
 }, (table) => ({
     machineIdx: index('production_batches_machine_idx').on(table.machineId),
     statusIdx: index('production_batches_status_idx').on(table.status),
+    finishedProductIdx: index('production_batches_finished_product_idx').on(table.finishedProductId),
+    allocationDateIdx: index('production_batches_allocation_date_idx').on(table.allocationDate),
 }));
 
 export const productionBatchInputs = pgTable('production_batch_inputs', {
@@ -218,7 +221,10 @@ export const productionBatchOutputs = pgTable('production_batch_outputs', {
     finishedProductId: text('finished_product_id').notNull().references(() => finishedProducts.id),
     outputQuantity: decimal('output_quantity', { precision: 10, scale: 2 }), // Filled at completion
     createdAt: timestamp('created_at').defaultNow(),
-});
+}, (table) => ({
+    batchIdx: index('production_batch_outputs_batch_idx').on(table.batchId),
+    productIdx: index('production_batch_outputs_product_idx').on(table.finishedProductId),
+}));
 
 // ==================== SALES ====================
 
@@ -255,6 +261,8 @@ export const salesInvoices = pgTable('sales_invoices', {
     customerIdx: index('sales_invoices_customer_idx').on(table.customerId),
     invoiceDateIdx: index('sales_invoices_date_idx').on(table.invoiceDate),
     statusIdx: index('sales_invoices_status_idx').on(table.status),
+    invoiceNoIdx: index('sales_invoices_invoice_no_idx').on(table.invoiceNumber),
+    customerNameIdx: index('sales_invoices_customer_name_idx').on(table.customerName),
 }));
 
 
@@ -277,7 +285,10 @@ export const invoiceItems = pgTable('invoice_items', {
     totalAmount: decimal('total_amount', { precision: 12, scale: 2 }).notNull(),
     bellItemId: text('bell_item_id').references(() => bellItems.id),
     createdAt: timestamp('created_at').defaultNow(),
-});
+}, (table) => ({
+    invoiceIdx: index('invoice_items_invoice_idx').on(table.invoiceId),
+    productIdx: index('invoice_items_product_idx').on(table.finishedProductId),
+}));
 
 // ==================== PAYMENTS ====================
 
@@ -702,6 +713,7 @@ export const rawMaterialRolls = pgTable('raw_material_rolls', {
     billIdx: index('rm_rolls_bill_idx').on(table.purchaseBillId),
     materialIdx: index('rm_rolls_material_idx').on(table.rawMaterialId),
     statusIdx: index('rm_rolls_status_idx').on(table.status),
+    rollCodeIdx: index('rm_rolls_roll_code_idx').on(table.rollCode),
 }));
 
 export const rawMaterialRollsRelations = relations(rawMaterialRolls, ({ one }) => ({
