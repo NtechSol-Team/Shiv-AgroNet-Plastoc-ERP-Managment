@@ -192,6 +192,7 @@ interface InvoiceData {
     totalAmount?: number | string;
     amount?: number | string;
     pieceCount?: number | string;
+    batchCode?: string;
   }>;
   subtotal?: number | string;
   totalDiscount?: number | string;
@@ -257,7 +258,8 @@ export function printInvoice(invoice: InvoiceData): void {
       sgstAmt: calculatedSgst,
       igstAmt: calculatedIgst,
       totalAmt,
-      pieceCount: item.pieceCount // Pass through piece count
+      pieceCount: item.pieceCount,
+      batchCode: item.batchCode, // Pass through batch code
     };
   });
 
@@ -307,7 +309,7 @@ export function printInvoice(invoice: InvoiceData): void {
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
-    @page { size: A4; margin: 10mm; }
+    @page { size: A4; margin: 0; }
     
     * { box-sizing: border-box; }
     
@@ -317,8 +319,8 @@ export function printInvoice(invoice: InvoiceData): void {
       line-height: 1.3;
       color: #111;
       background: #fff;
-      margin: 0; padding: 0;
-      width: 190mm; height: 277mm;
+      margin: 0; padding: 10mm;
+      width: 210mm; height: 297mm;
       position: relative;
     }
 
@@ -340,7 +342,7 @@ export function printInvoice(invoice: InvoiceData): void {
     .small-text { font-size: 7.5pt; color: #444; }
     
     /* Header */
-    .header { padding: 12px; min-height: 100px; display: flex; align-items: flex-start; }
+    .header { padding: 8px 12px; min-height: 100px; display: flex; align-items: center; }
     .company-title { font-size: 18pt; font-weight: 800; letter-spacing: 0.5px; color: #000; margin-bottom: 5px; line-height: 1.1; }
     .invoice-badge { 
       border: 1px solid #000; padding: 4px 12px; font-weight: bold; 
@@ -402,13 +404,13 @@ export function printInvoice(invoice: InvoiceData): void {
       </div>
       
       <!-- Company Details -->
-      <div style="flex: 2; display: flex; flex-direction: column; justify-content: center;">
-         <div class="company-title uppercase" style="font-size: 16pt; margin-bottom: 2px;">${company.name}</div>
-         <div class="small-text" style="line-height: 1.3;">
+      <div style="flex: 2; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
+         <div class="company-title uppercase" style="font-size: 20pt; margin-bottom: 2px;">${company.name}</div>
+         <div style="line-height: 1.3; font-size: 9pt;">
            ${company.address1}, ${company.address2}<br>
            ${company.city} - ${company.pincode}, ${company.state}<br>
            GSTIN: <strong>${company.gstin}</strong> | Mobile: <strong>${company.mobile}</strong><br>
-           <div style="margin-bottom: 8px;">UDYAM No: <strong>${company.udyamRegistration}</strong></div>
+           <div>UDYAM No: <strong>${company.udyamRegistration}</strong></div>
          </div>
       </div>
 
@@ -452,9 +454,8 @@ export function printInvoice(invoice: InvoiceData): void {
             <th style="width: 30px;">Sr</th>
             <th style="text-align: left;">Item & Description</th>
             <th style="width: 60px;">HSN/SAC</th>
-            <th style="width: 50px;">Qty</th>
+            <th style="width: 50px;">Kg</th>
             <th style="width: 60px;">Rate</th>
-            <th style="width: 50px;">Disc</th>
             <th style="width: 70px;">Taxable</th>
             <th style="width: 70px;">Tax Amt</th>
             <th style="width: 80px;">Total</th>
@@ -464,11 +465,10 @@ export function printInvoice(invoice: InvoiceData): void {
           ${processedItems.map((item, idx) => `
             <tr>
               <td class="text-center">${idx + 1}</td>
-              <td><div class="text-bold">${item.productName || item.finishedProduct?.name || 'Item'}${item.pieceCount ? ` - ${Math.round(Number(item.pieceCount))} Pieces` : ''}</div></td>
+              <td><div class="text-bold">${item.batchCode ? `${item.batchCode} - ${item.finishedProduct?.name || 'Item'}` : (item.productName || item.finishedProduct?.name || 'Item')}${item.pieceCount ? ` - ${Math.round(Number(item.pieceCount))} Pieces` : ''}</div></td>
               <td class="text-center small-text">${item.hsnCode || '5608'}</td>
               <td class="text-right text-bold">${item.qty.toFixed(2)}</td>
               <td class="text-right">${formatCurrency(item.rate)}</td>
-              <td class="text-right text-center">${item.discountAmt > 0 ? formatCurrency(item.discountAmt) : '-'}</td>
               <td class="text-right">${formatCurrency(item.taxableAmt)}</td>
               <td class="text-right small-text">${formatCurrency(item.totalTaxAmt)}<br><span style="font-size:6pt">(${item.gstPct}%)</span></td>
               <td class="text-right text-bold">${formatCurrency(item.totalAmt)}</td>
@@ -476,11 +476,10 @@ export function printInvoice(invoice: InvoiceData): void {
           `).join('')}
           
           
-          <!-- Spacer Rows to Fill Page - Reduced to 14 to ensure single page with larger footer -->
-           ${Array(Math.max(0, 14 - processedItems.length)).fill(0).map(() => `
-            <tr style="height: 25px;">
+          <!-- Spacer Rows to Fill Page - Reduced to 10 to ensure single page -->
+           ${Array(Math.max(0, 10 - processedItems.length)).fill(0).map(() => `
+            <tr style="height: 20px;">
                <td style="border-right: 1px solid #000; border-left: 1px solid #000; border-top: none; border-bottom: none;">&nbsp;</td>
-               <td style="border-right: 1px solid #000; border-top: none; border-bottom: none;">&nbsp;</td>
                <td style="border-right: 1px solid #000; border-top: none; border-bottom: none;">&nbsp;</td>
                <td style="border-right: 1px solid #000; border-top: none; border-bottom: none;">&nbsp;</td>
                <td style="border-right: 1px solid #000; border-top: none; border-bottom: none;">&nbsp;</td>
@@ -492,7 +491,7 @@ export function printInvoice(invoice: InvoiceData): void {
           
           <!-- Final Bottom Border -->
           <tr style="height: 1px; line-height: 0;">
-             <td style="border-top: 1px solid #000; padding: 0;" colspan="9"></td>
+             <td style="border-top: 1px solid #000; padding: 0;" colspan="8"></td>
           </tr>
         </tbody>
       </table>
@@ -550,64 +549,63 @@ export function printInvoice(invoice: InvoiceData): void {
           </tbody>
         </table>
       </div>
-    </div>
+      <!-- Totals & Info (Now inside flex container) -->
+      <div class="totals-section" style="margin-top: -1px; border-top: 1px solid #000;">
+         <div class="terms-box">
+            <div class="info-label" style="font-size: 8pt; color: #666; margin-bottom: 4px; padding-top: 10px;">Total in Words</div>
+            <div class="text-bold uppercase" style="font-size: 10pt; margin-bottom: 15px; border-bottom: 1px solid #ddd; padding-bottom: 10px;">${formatAmountInWords(finalGrandTotal)}</div>
 
-    <!-- Totals & Info -->
-    <div class="totals-section">
-       <div class="terms-box">
-          <div class="info-label">Total in Words</div>
-          <div class="text-bold uppercase" style="font-size: 9pt; margin-bottom: 10px;">${formatAmountInWords(finalGrandTotal)}</div>
-
-          <div style="border: 2px solid #000; padding: 10px; margin-bottom: 10px; background: #f9f9f9;">
-            <div class="info-label" style="margin-bottom: 6px; border-bottom: 1px solid #000; padding-bottom: 4px; font-weight: bold; color: #000; font-size: 8pt;">BANK DETAILS</div>
-            <div style="font-size: 11pt; font-weight: 800; line-height: 1.4;">
-              Holder: ${company.bankDetails.accountHolder}<br>
-              Bank: ${company.bankDetails.bankName}<br>
-              A/c No: ${company.bankDetails.accountNumber}<br>
-              IFSC: ${company.bankDetails.ifscCode}<br>
-              Branch: ${company.bankDetails.branchName}
+            <div style="border: 2px solid #000; padding: 10px; margin-bottom: 10px; background: #f9f9f9;">
+              <div class="info-label" style="margin-bottom: 6px; border-bottom: 1px solid #000; padding-bottom: 4px; font-weight: bold; color: #000; font-size: 8pt;">BANK DETAILS</div>
+              <div style="font-size: 11pt; font-weight: 800; line-height: 1.4;">
+                Holder: ${company.bankDetails.accountHolder}<br>
+                Bank: ${company.bankDetails.bankName}<br>
+                A/c No: ${company.bankDetails.accountNumber}<br>
+                IFSC: ${company.bankDetails.ifscCode}<br>
+                Branch: ${company.bankDetails.branchName}
+              </div>
             </div>
-          </div>
-          
-          <div class="info-label" style="margin-top: 8px;">Terms & Conditions</div>
-          <div class="small-text" style="font-style: italic;">
-            <ol style="padding-left: 12px; margin: 2px 0;">
-              <li>Goods Once Sold Will Not Be Taken Back Or Exchanged.</li>
-              <li>Interest Rate @24% P.A. If Payment Is Not Received Within Due Days.</li>
-              <li>Our Responsibility Ceases Once Goods Leave Our Premises.</li>
-              <li>Material Checked And Dispatched Under Our Strict Supervision.</li>
-              <li>Subject to Mangrol Jurisdiction Only. E.&.O.E</li>
-            </ol>
-          </div>
-       </div>
-       <div class="totals-box">
-          <div class="total-row">
-            <span>Taxable Amount</span>
-            <span>${formatCurrency(totalTaxable)}</span>
-          </div>
-          <div class="total-row">
-            <span>Total Tax</span>
-            <span>${formatCurrency(totalTax)}</span>
-          </div>
-          ${totalDiscount > 0 ? `
-          <div class="total-row">
-            <span>Discount</span>
-            <span>-${formatCurrency(totalDiscount)}</span>
-          </div>` : ''}
-          <div class="total-row">
-            <span>Round Off</span>
-            <span>${roundOff > 0 ? '+' : ''}${roundOff.toFixed(2)}</span>
-          </div>
-          <div class="grand-total row" style="justify-content: space-between;">
-            <span>GRAND TOTAL</span>
-            <span>${formatCurrency(finalGrandTotal)}</span>
-          </div>
-          <div class="signatory-box">
-             <div class="small-text" style="font-size: 9pt; margin-bottom: auto;">For, <strong>${company.legalName}</strong></div>
-             <div style="font-weight: bold; font-size: 8pt;">Authorized Signatory</div>
-          </div>
-       </div>
-    </div>
+            
+            <div class="info-label" style="margin-top: 8px;">Terms & Conditions</div>
+            <div class="small-text" style="font-style: italic;">
+              <ol style="padding-left: 12px; margin: 2px 0;">
+                <li>Goods Once Sold Will Not Be Taken Back Or Exchanged.</li>
+                <li>Interest Rate @24% P.A. If Payment Is Not Received Within Due Days.</li>
+                <li>Our Responsibility Ceases Once Goods Leave Our Premises.</li>
+                <li>Material Checked And Dispatched Under Our Strict Supervision.</li>
+                <li>Subject to Mangrol Jurisdiction Only. E.&.O.E</li>
+              </ol>
+            </div>
+         </div>
+         <div class="totals-box">
+            <div class="total-row">
+              <span>Taxable Amount</span>
+              <span>${formatCurrency(totalTaxable)}</span>
+            </div>
+            <div class="total-row">
+              <span>Total Tax</span>
+              <span>${formatCurrency(totalTax)}</span>
+            </div>
+            ${totalDiscount > 0 ? `
+            <div class="total-row">
+              <span>Discount</span>
+              <span>-${formatCurrency(totalDiscount)}</span>
+            </div>` : ''}
+            <div class="total-row">
+              <span>Round Off</span>
+              <span>${roundOff > 0 ? '+' : ''}${roundOff.toFixed(2)}</span>
+            </div>
+            <div class="grand-total row" style="justify-content: space-between;">
+              <span>GRAND TOTAL</span>
+              <span>${formatCurrency(finalGrandTotal)}</span>
+            </div>
+            <div class="signatory-box">
+               <div class="small-text" style="font-size: 9pt; margin-bottom: auto;">For, <strong>${company.legalName}</strong></div>
+               <div style="font-weight: bold; font-size: 8pt;">Authorized Signatory</div>
+            </div>
+         </div>
+      </div>
+    </div> <!-- End of Middle Flex Div -->
     
   </div>
   

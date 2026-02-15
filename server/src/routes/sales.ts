@@ -17,7 +17,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from '../db/index';
-import { invoices, invoiceItems, customers, finishedProducts, stockMovements, paymentTransactions, invoicePaymentAllocations, bankCashAccounts, salesInvoices, generalLedger, bellItems } from '../db/schema';
+import { invoices, invoiceItems, customers, finishedProducts, stockMovements, paymentTransactions, invoicePaymentAllocations, bankCashAccounts, salesInvoices, generalLedger, bellItems, bellBatches } from '../db/schema';
 import { eq, desc, sql, count as countFn, and, inArray } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
@@ -98,6 +98,7 @@ router.get('/invoices', async (req: Request, res: Response, next: NextFunction) 
             .from(invoiceItems)
             .leftJoin(finishedProducts, eq(invoiceItems.finishedProductId, finishedProducts.id))
             .leftJoin(bellItems, eq(invoiceItems.bellItemId, bellItems.id))
+            .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id))
             .where(inArray(invoiceItems.invoiceId, invoiceIds));
 
         // Group items by invoiceId
@@ -109,6 +110,7 @@ router.get('/invoices', async (req: Request, res: Response, next: NextFunction) 
                 ...row.invoice_items,
                 finishedProduct: row.finished_products,
                 pieceCount: row.bell_items?.pieceCount,
+                batchCode: row.bell_batches?.code, // Added batchCode
             });
         });
 
@@ -255,8 +257,21 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
             // Start Update: Get Bell Name if applicable
             let productName = product?.name || 'Unknown Product';
             if (item.bellItemId) {
-                const [bell] = await db.select().from(bellItems).where(eq(bellItems.id, item.bellItemId));
-                if (bell) productName = `${bell.code} - ${productName}`;
+                // Modified to fetch Batch Code instead of Bell Item Code
+                const bellData = await db
+                    .select({
+                        code: bellItems.code,
+                        batchCode: bellBatches.code
+                    })
+                    .from(bellItems)
+                    .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id))
+                    .where(eq(bellItems.id, item.bellItemId));
+
+                if (bellData[0]) {
+                    // Use Batch Code if available (e.g. PB-008), fallback to Item Code (PB-008-001)
+                    const itemCode = bellData[0].batchCode || bellData[0].code;
+                    productName = `${itemCode} - ${productName}`;
+                }
             }
             // End Update
 
