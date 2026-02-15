@@ -97,6 +97,7 @@ router.get('/invoices', async (req: Request, res: Response, next: NextFunction) 
             .select()
             .from(invoiceItems)
             .leftJoin(finishedProducts, eq(invoiceItems.finishedProductId, finishedProducts.id))
+            .leftJoin(bellItems, eq(invoiceItems.bellItemId, bellItems.id))
             .where(inArray(invoiceItems.invoiceId, invoiceIds));
 
         // Group items by invoiceId
@@ -107,6 +108,7 @@ router.get('/invoices', async (req: Request, res: Response, next: NextFunction) 
             itemsMap.get(iId)?.push({
                 ...row.invoice_items,
                 finishedProduct: row.finished_products,
+                pieceCount: row.bell_items?.pieceCount,
             });
         });
 

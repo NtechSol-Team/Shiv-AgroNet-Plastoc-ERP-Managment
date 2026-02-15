@@ -754,7 +754,6 @@ export function Production() {
                 <tr>
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-12">#</th>
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Batch Code</th>
-                  <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Product</th>
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Input Material</th>
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Input / Remaining</th>
                   <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Machine</th>
@@ -779,24 +778,20 @@ export function Production() {
                         <tr className="hover:bg-blue-50 transition-colors cursor-pointer" onClick={() => toggleBatch(batch.id)}>
                           <td className="px-4 py-3 text-xs text-gray-500">{index + 1}</td>
                           <td className="px-4 py-3 text-sm font-mono font-bold text-blue-700">{batch.code}</td>
-                          <td className="px-4 py-3 text-sm text-gray-900">
-                            {batch.outputs?.length > 1 ? (
-                              <div className="flex items-center space-x-2">
-                                <span className="font-bold text-blue-800">{batch.outputs.length} Products</span>
-                                {isExpanded ? <ChevronUp className="w-3 h-3 text-slate-400" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
-                              </div>
-                            ) : (
-                              <span className="font-medium text-slate-900">{batch.finishedProduct?.name}</span>
-                            )}
-                          </td>
+
                           <td className="px-4 py-3 text-sm text-gray-600">
-                            {batch.inputs?.length > 1 ? (
-                              <div className="flex items-center space-x-2">
-                                <span className="text-slate-600">{batch.inputs.length} Materials</span>
-                              </div>
-                            ) : (
-                              batch.rawMaterial?.name
-                            )}
+                            <div className="flex flex-col">
+                              <span className="font-medium text-slate-700">
+                                {batch.inputs && batch.inputs.length > 0
+                                  ? batch.inputs[0].rawMaterial?.name || 'Unknown Material'
+                                  : batch.rawMaterial?.name}
+                              </span>
+                              {batch.inputs && batch.inputs.length > 1 && (
+                                <span className="text-xs text-slate-500 font-medium mt-0.5">
+                                  + {batch.inputs.length - 1} more items
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="text-xs font-bold text-gray-900">{inputQty.toFixed(2)} kg</div>
@@ -912,7 +907,7 @@ export function Production() {
                         </tr>
                         {isExpanded && (batch.inputs?.length > 1 || batch.outputs?.length > 1) && (
                           <tr className="bg-slate-50/50">
-                            <td colSpan={8} className="px-4 py-3 border-b border-slate-100 shadow-inner">
+                            <td colSpan={7} className="px-4 py-3 border-b border-slate-100 shadow-inner">
                               <div className="grid grid-cols-2 gap-8 ml-10">
                                 <div>
                                   <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Detailed Input Mix</h4>
@@ -951,12 +946,24 @@ export function Production() {
                                 <div>
                                   <h4 className="text-[10px] font-bold uppercase tracking-widest text-emerald-600/60 mb-2">Target Outputs</h4>
                                   <div className="space-y-1">
-                                    {batch.outputs?.map((output: any, i: number) => (
-                                      <div key={i} className="flex justify-between text-xs text-slate-700 border-b border-dashed border-slate-200 pb-1 last:border-0">
-                                        <span>{output.finishedProduct?.name}</span>
-                                        <span className="text-slate-400 italic">Pending Production</span>
-                                      </div>
-                                    ))}
+                                    {(batch.outputs && batch.outputs.length > 0) ? (
+                                      batch.outputs.map((output: any, i: number) => (
+                                        <div key={i} className="flex justify-between text-xs text-slate-700 border-b border-dashed border-slate-200 pb-1 last:border-0">
+                                          <span>{output.finishedProduct?.name || 'Unknown Product'} {output.finishedProduct?.gsm ? `(${output.finishedProduct.gsm})` : ''}</span>
+                                          <span className="text-slate-400 italic">Pending Production</span>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      /* Legacy Fallback */
+                                      batch.finishedProduct ? (
+                                        <div className="flex justify-between text-xs text-slate-700 border-b border-dashed border-slate-200 pb-1 last:border-0">
+                                          <span>{batch.finishedProduct.name}</span>
+                                          <span className="text-slate-400 italic">Pending Production</span>
+                                        </div>
+                                      ) : (
+                                        <div className="text-xs text-slate-400 italic">No target products specified</div>
+                                      )
+                                    )}
                                   </div>
                                 </div>
                               </div>

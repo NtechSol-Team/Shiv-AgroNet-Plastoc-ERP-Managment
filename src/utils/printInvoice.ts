@@ -191,6 +191,7 @@ interface InvoiceData {
     igst?: number | string;
     totalAmount?: number | string;
     amount?: number | string;
+    pieceCount?: number | string;
   }>;
   subtotal?: number | string;
   totalDiscount?: number | string;
@@ -255,7 +256,8 @@ export function printInvoice(invoice: InvoiceData): void {
       cgstAmt: calculatedCgst,
       sgstAmt: calculatedSgst,
       igstAmt: calculatedIgst,
-      totalAmt
+      totalAmt,
+      pieceCount: item.pieceCount // Pass through piece count
     };
   });
 
@@ -378,13 +380,13 @@ export function printInvoice(invoice: InvoiceData): void {
     /* Totals Section */
     .totals-section { display: flex; border-top: 1px solid #000; }
     .terms-box { flex: 1.5; padding: 10px; border-right: 1px solid #000; }
-    .totals-box { flex: 1; }
+    .totals-box { flex: 1; display: flex; flex-direction: column; }
     .total-row { display: flex; justify-content: space-between; padding: 4px 10px; }
-    .grand-total { background: #e8e8e8; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 8px 10px; font-weight: 800; font-size: 11pt; }
+    .grand-total { background: #e8e8e8; border: 2px solid #000; padding: 8px 10px; font-weight: 800; font-size: 11pt; }
 
     /* Footer */
     .footer { margin-top: auto; border-top: 1px solid #000; }
-    .signatory-box { height: 90px; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; padding: 10px; }
+    .signatory-box { flex: 1; min-height: 80px; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; padding: 10px; }
     
     @media print { body { -webkit-print-color-adjust: exact; } }
   </style>
@@ -462,7 +464,7 @@ export function printInvoice(invoice: InvoiceData): void {
           ${processedItems.map((item, idx) => `
             <tr>
               <td class="text-center">${idx + 1}</td>
-              <td><div class="text-bold">${item.productName || item.finishedProduct?.name || 'Item'}</div></td>
+              <td><div class="text-bold">${item.productName || item.finishedProduct?.name || 'Item'}${item.pieceCount ? ` - ${Math.round(Number(item.pieceCount))} Pieces` : ''}</div></td>
               <td class="text-center small-text">${item.hsnCode || '5608'}</td>
               <td class="text-right text-bold">${item.qty.toFixed(2)}</td>
               <td class="text-right">${formatCurrency(item.rate)}</td>
@@ -601,7 +603,7 @@ export function printInvoice(invoice: InvoiceData): void {
             <span>${formatCurrency(finalGrandTotal)}</span>
           </div>
           <div class="signatory-box">
-             <div class="small-text" style="font-size: 9pt;">For, <strong>${company.legalName}</strong></div>
+             <div class="small-text" style="font-size: 9pt; margin-bottom: auto;">For, <strong>${company.legalName}</strong></div>
              <div style="font-weight: bold; font-size: 8pt;">Authorized Signatory</div>
           </div>
        </div>
