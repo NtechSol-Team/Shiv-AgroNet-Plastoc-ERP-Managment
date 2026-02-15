@@ -397,43 +397,39 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                                     </td>
                                                     <td className="px-3 py-2 text-center">
                                                         <div className="flex items-center justify-center gap-1">
-                                                            {roll.status === 'In Stock' && (
+                                                            {isEditing ? (
                                                                 <>
-                                                                    {isEditing ? (
-                                                                        <>
-                                                                            <button
-                                                                                onClick={() => handleSaveEdit(roll.id)}
-                                                                                className="text-green-600 hover:text-green-700 p-1"
-                                                                                title="Save changes"
-                                                                            >
-                                                                                <Check className="w-4 h-4" />
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={handleCancelEdit}
-                                                                                className="text-gray-400 hover:text-gray-600 p-1"
-                                                                                title="Cancel"
-                                                                            >
-                                                                                <X className="w-4 h-4" />
-                                                                            </button>
-                                                                        </>
-                                                                    ) : (
-                                                                        <>
-                                                                            <button
-                                                                                onClick={() => handleEditExisting(roll)}
-                                                                                className="text-blue-400 hover:text-blue-600 p-1"
-                                                                                title="Edit roll"
-                                                                            >
-                                                                                <Edit2 className="w-4 h-4" />
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={() => handleDeleteExisting(roll.id)}
-                                                                                className="text-red-400 hover:text-red-600 p-1"
-                                                                                title="Delete roll"
-                                                                            >
-                                                                                <Trash2 className="w-4 h-4" />
-                                                                            </button>
-                                                                        </>
-                                                                    )}
+                                                                    <button
+                                                                        onClick={() => handleSaveEdit(roll.id)}
+                                                                        className="text-green-600 hover:text-green-700 p-1"
+                                                                        title="Save changes"
+                                                                    >
+                                                                        <Check className="w-4 h-4" />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={handleCancelEdit}
+                                                                        className="text-gray-400 hover:text-gray-600 p-1"
+                                                                        title="Cancel"
+                                                                    >
+                                                                        <X className="w-4 h-4" />
+                                                                    </button>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <button
+                                                                        onClick={() => handleEditExisting(roll)}
+                                                                        className="text-blue-400 hover:text-blue-600 p-1"
+                                                                        title="Edit roll"
+                                                                    >
+                                                                        <Edit2 className="w-4 h-4" />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleDeleteExisting(roll.id)}
+                                                                        className="text-red-400 hover:text-red-600 p-1"
+                                                                        title="Delete roll"
+                                                                    >
+                                                                        <Trash2 className="w-4 h-4" />
+                                                                    </button>
                                                                 </>
                                                             )}
                                                         </div>

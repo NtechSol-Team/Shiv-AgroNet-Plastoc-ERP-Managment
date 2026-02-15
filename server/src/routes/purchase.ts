@@ -1395,7 +1395,7 @@ router.delete('/bills/:id/rolls/:rollId', async (req: Request, res: Response, ne
         if (!roll) throw createError('Roll not found', 404);
 
         if (roll.status !== 'In Stock') {
-            throw createError('Cannot delete roll. It has already been consumed or returned.', 400);
+            throw createError(`Cannot delete this roll because it is currently ${roll.status}. Please reverse the production batch or return first.`, 400);
         }
 
         // 1. Reverse Stock Movement (RAW_OUT)
@@ -1447,13 +1447,18 @@ router.put('/bills/:id/rolls/:rollId', async (req: Request, res: Response, next:
         const [roll] = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.id, rollId));
         if (!roll) throw createError('Roll not found', 404);
 
-        if (roll.status !== 'In Stock') {
-            throw createError('Cannot edit roll. It has already been consumed or returned.', 400);
-        }
-
         const oldWeight = parseFloat(roll.netWeight || '0');
         const newWeight = parseFloat(String(netWeight));
         const weightDiff = newWeight - oldWeight;
+
+        // Validation: If roll is NOT In Stock, prevent weight changes
+        if (roll.status !== 'In Stock') {
+            if (Math.abs(weightDiff) > 0.01) {
+                // Weight changed on a consumed roll -> BLOCK
+                throw createError('Cannot change weight of a consumed/returned roll. Only width/other details can be updated.', 400);
+            }
+            // Weight is same, so it's a safe update (e.g. width correction) -> ALLOW
+        }
 
         // 1. Update Roll
         await db.update(rawMaterialRolls)
