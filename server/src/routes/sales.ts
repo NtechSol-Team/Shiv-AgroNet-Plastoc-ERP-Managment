@@ -21,7 +21,8 @@ import { invoices, invoiceItems, customers, finishedProducts, stockMovements, pa
 import { eq, desc, sql, count as countFn, and, inArray } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
-import { validateFinishedProductStock, getFinishedProductStock } from '../services/inventory.service';
+import { createStockMovement, validateFinishedProductStock, getFinishedProductStock } from '../services/inventory.service';
+import { cache as cacheService } from '../services/cache.service';
 
 const router = Router();
 
@@ -345,6 +346,8 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
             await db.update(customers)
                 .set({ outstanding: String(currentOutstanding + grandTotal) })
                 .where(eq(customers.id, customer.id));
+
+            cacheService.del('masters:customers');
         }
 
         res.json(successResponse({
@@ -426,6 +429,8 @@ router.post('/invoices/:id/payment', async (req: Request, res: Response, next: N
                 await db.update(customers)
                     .set({ outstanding: String(Math.max(0, newOutstanding)) })
                     .where(eq(customers.id, invoice.customerId));
+
+                cacheService.del('masters:customers');
             }
         }
 
@@ -507,6 +512,22 @@ router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFun
             throw createError('Cannot delete a paid invoice. Please reverse payments first.', 400);
         }
 
+        if (invoice.status === 'Confirmed' && invoice.paymentStatus !== 'Paid') {
+            const outstandingAmount = Number(invoice.balanceAmount || 0);
+
+            if (outstandingAmount > 0 && invoice.customerId) {
+                const [customer] = await db.select().from(customers).where(eq(customers.id, invoice.customerId));
+                if (customer) {
+                    const currentOutstanding = Number(customer.outstanding || 0);
+                    const newOutstanding = Math.max(0, currentOutstanding - outstandingAmount);
+
+                    await db.update(customers)
+                        .set({ outstanding: String(newOutstanding) })
+                        .where(eq(customers.id, invoice.customerId));
+                }
+            }
+        }
+
         await db.transaction(async (tx) => {
             // 1. Restore bell items to Available status
             for (const item of invoice.items || []) {
@@ -542,6 +563,9 @@ router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFun
             // 4. Delete the invoice
             await tx.delete(salesInvoices).where(eq(salesInvoices.id, id));
         });
+
+        // Invalidate dashboard cache
+        cacheService.del('dashboard:kpis');
 
         res.json(successResponse({ message: 'Invoice deleted successfully' }));
     } catch (error) {

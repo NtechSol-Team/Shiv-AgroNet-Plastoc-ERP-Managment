@@ -41,8 +41,11 @@ async function fetchApi<T>(
 
         try {
             const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                cache: 'no-store',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
                     ...options?.headers,
                 },
                 ...options,

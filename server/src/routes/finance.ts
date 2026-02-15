@@ -9,8 +9,13 @@ import {
     financialTransactions,
     financialTransactionLedger,
     bankCashAccounts,
-    generalLedger
+    generalLedger,
+    customers,
+    suppliers,
+    invoices,
+    purchaseBills
 } from '../db/schema';
+import { cache as cacheService } from '../services/cache.service';
 import { eq, desc, sql, count as countFn } from 'drizzle-orm';
 
 const router = Router();
@@ -374,3 +379,93 @@ router.post('/transactions', validateRequest(createTransactionSchema), async (re
 });
 
 export default router;
+
+// ============================================================
+// DATA CONSISTENCY TOOLS
+// ============================================================
+
+/**
+ * POST /finance/recalculate-ledgers
+ * Admin tool to fix 'Ghost Debt'
+ * Recalculates Customer and Supplier Outstanding from Invoices/Bills
+ */
+router.post('/recalculate-ledgers', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        console.log('🔄 Starting Ledger Recalculation...');
+        const results = {
+            customersUpdated: 0,
+            suppliersUpdated: 0
+        };
+
+        await db.transaction(async (tx) => {
+            // 1. Reset all Customers to 0
+            // await tx.update(customers).set({ outstanding: '0' }); // Optional: safer to just overwrite
+
+            // 2. Recalculate Customer Outstanding
+            // Sum of (GrandTotal - PaidAmount) for all Confirmed/Overdue invoices
+            // Note: We use balanceAmount which should be accurate, but let's recalculate from scratch if possible?
+            // Trusting balanceAmount for now as it's transactional.
+            // If balanceAmount is also wrong, we'd need to sum invoice items and payments.
+            // Assuming invoice.balanceAmount is correct but customer.outstanding is wrong.
+
+            const customerBalances = await tx
+                .select({
+                    customerId: invoices.customerId,
+                    totalOutstanding: sql<string>`SUM(CAST(${invoices.balanceAmount} AS DECIMAL))`
+                })
+                .from(invoices)
+                .where(
+                    sql`${invoices.status} = 'Confirmed' AND ${invoices.customerId} IS NOT NULL`
+                )
+                .groupBy(invoices.customerId);
+
+            // Update Customers
+            // First set all to 0 to clear ghosts
+            await tx.update(customers).set({ outstanding: '0' });
+
+            for (const balance of customerBalances) {
+                if (balance.customerId && balance.totalOutstanding) {
+                    await tx.update(customers)
+                        .set({ outstanding: String(balance.totalOutstanding) })
+                        .where(eq(customers.id, balance.customerId));
+                    results.customersUpdated++;
+                }
+            }
+
+            // 3. Recalculate Supplier Outstanding
+            const supplierBalances = await tx
+                .select({
+                    supplierId: purchaseBills.supplierId,
+                    totalOutstanding: sql<string>`SUM(CAST(${purchaseBills.balanceAmount} AS DECIMAL))`
+                })
+                .from(purchaseBills)
+                .where(
+                    sql`${purchaseBills.status} = 'Confirmed'`
+                )
+                .groupBy(purchaseBills.supplierId);
+
+            // Reset Suppliers
+            await tx.update(suppliers).set({ outstanding: '0' });
+
+            for (const balance of supplierBalances) {
+                if (balance.supplierId && balance.totalOutstanding) {
+                    await tx.update(suppliers)
+                        .set({ outstanding: String(balance.totalOutstanding) })
+                        .where(eq(suppliers.id, balance.supplierId));
+                    results.suppliersUpdated++;
+                }
+            }
+        });
+
+        // 4. Clear Cache
+        cacheService.del('masters:customers');
+        cacheService.del('masters:suppliers');
+        cacheService.del('dashboard:kpis');
+
+        console.log('✅ Ledger Recalculation Complete', results);
+        res.json(successResponse({ message: 'Ledgers recalculated successfully', results }));
+
+    } catch (error) {
+        next(error);
+    }
+});

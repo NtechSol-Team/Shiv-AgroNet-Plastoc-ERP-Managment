@@ -16,6 +16,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from '../db/index';
 import { createStockMovement, getPendingBillQuantity } from '../services/inventory.service';
+import { cache as cacheService } from '../services/cache.service';
 
 // ... (imports remain)
 import { purchaseBills, purchaseBillItems, suppliers, rawMaterials, paymentTransactions, billPaymentAllocations, bankCashAccounts, generalLedger, rawMaterialBatches, finishedProducts, expenseHeads, productionBatchInputs, rawMaterialRolls, purchaseBillAdjustments } from '../db/schema';
@@ -349,6 +350,8 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
             await db.update(suppliers)
                 .set({ outstanding: String(newOutstanding) })
                 .where(eq(suppliers.id, supplierId));
+
+            cacheService.del('masters:suppliers');
         }
 
         console.log('\n✅ POST /purchase/bills - SUCCESS');
@@ -852,8 +855,12 @@ router.delete('/bills/:id', async (req: Request, res: Response, next: NextFuncti
                 await db.update(suppliers)
                     .set({ outstanding: String(Math.max(0, newOutstanding)) })
                     .where(eq(suppliers.id, bill.supplierId));
+
+                cacheService.del('masters:suppliers');
             }
         }
+        // Invalidate dashboard cache
+        cacheService.del('dashboard:kpis');
 
         res.json(successResponse({ message: 'Bill deleted successfully' }));
     } catch (error) {

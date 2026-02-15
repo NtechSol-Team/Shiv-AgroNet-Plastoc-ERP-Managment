@@ -39,7 +39,7 @@ app.use(requestSizeLimiter(5 * 1024 * 1024));
 app.use(cors({
     origin: [...SERVER_CONFIG.security.corsOrigins],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'Pragma'],
     credentials: true,
 }));
 

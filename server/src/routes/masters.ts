@@ -414,6 +414,7 @@ router.get('/customers', async (req: Request, res: Response, next: NextFunction)
 
         const items = await db.select().from(customers).orderBy(customers.code);
         cache.set(cacheKey, items);
+        res.set('Cache-Control', 'no-store');
         res.json(successResponse(items));
     } catch (error) {
         next(error);
@@ -495,6 +496,7 @@ router.get('/suppliers', async (req: Request, res: Response, next: NextFunction)
 
         const items = await db.select().from(suppliers).orderBy(suppliers.code);
         cache.set(cacheKey, items);
+        res.set('Cache-Control', 'no-store');
         res.json(successResponse(items));
     } catch (error) {
         next(error);

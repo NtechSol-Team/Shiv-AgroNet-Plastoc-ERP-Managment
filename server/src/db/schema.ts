@@ -10,9 +10,9 @@ export const rawMaterials = pgTable('raw_materials', {
     size: text('size').default('Standard'),
     color: text('color').notNull(),
     unit: text('unit').default('kg'),
-    hsnCode: text('hsn_code').default('3901'),
+    hsnCode: text('hsn_code').default('39012000'),
     gstPercent: decimal('gst_percent', { precision: 5, scale: 2 }).default('18'),
-    reorderLevel: decimal('reorder_level', { precision: 10, scale: 2 }).default('100'),
+    reorderLevel: decimal('reorder_level', { precision: 10, scale: 2 }).default('0'),
     // NOTE: Price removed - comes from purchase bill only
     // NOTE: Stock removed - calculated from stock movements
     createdAt: timestamp('created_at').defaultNow(),
@@ -238,7 +238,7 @@ export const salesInvoices = pgTable('sales_invoices', {
     customerGST: text('customer_gst'),
     billingAddress: text('billing_address'),
     shippingAddress: text('shipping_address'),
-    placeOfSupply: text('place_of_supply').default('Maharashtra'),
+    placeOfSupply: text('place_of_supply').default('Gujarat'),
     invoiceType: text('invoice_type').default('B2B'), // B2B, B2C
     // Totals
     subtotal: decimal('subtotal', { precision: 12, scale: 2 }).default('0'),
