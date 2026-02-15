@@ -380,7 +380,7 @@ export function printInvoice(invoice: InvoiceData): void {
     .gst-table td { font-size: 8pt; border: 1px solid #000; }
 
     /* Totals Section */
-    .totals-section { display: flex; border-top: 1px solid #000; }
+    .totals-section { display: flex; border-top: 1px solid #000; flex: 1; }
     .terms-box { flex: 1.5; padding: 10px; border-right: 1px solid #000; }
     .totals-box { flex: 1; display: flex; flex-direction: column; }
     .total-row { display: flex; justify-content: space-between; padding: 4px 10px; }
