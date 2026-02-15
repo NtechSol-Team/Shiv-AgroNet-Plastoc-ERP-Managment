@@ -26,6 +26,8 @@ export const APP_CONFIG = {
     pan: 'AABCS1234A',
     /** CIN (if applicable) */
     cin: '',
+    /** Udyam Registration Number */
+    udyamRegistration: 'UDYAM-GJ-22-0510332',
     /** Address Line 1 */
     address1: '93, V.S. Krishna Industrial Park, Pipodara Road',
     /** Address Line 2 */
@@ -55,7 +57,8 @@ export const APP_CONFIG = {
     /** Bank Details for Payment */
     bankDetails: {
       bankName: 'Canara Bank',
-      branchName: 'Surat', // Assuming Surat based on address, but not strictly specified, keeping generic or empty if unsure. Let's use generic or omitted if not provided. Prompt didn't specify branch logic for config, but printInvoice will act as source of truth for the block. I will just put Canara details here.
+      branchName: 'Simada Naka, Sarthana, Surat',
+      accountHolder: 'SHIV AGRONET',
       accountNumber: '125009110096',
       accountType: 'Current Account',
       ifscCode: 'CNRB0007368',

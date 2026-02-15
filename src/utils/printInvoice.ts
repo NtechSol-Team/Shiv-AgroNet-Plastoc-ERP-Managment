@@ -405,7 +405,8 @@ export function printInvoice(invoice: InvoiceData): void {
          <div class="small-text" style="line-height: 1.3;">
            ${company.address1}, ${company.address2}<br>
            ${company.city} - ${company.pincode}, ${company.state}<br>
-           GSTIN: <strong>${company.gstin}</strong> | Mobile: <strong>${company.mobile}</strong>
+           GSTIN: <strong>${company.gstin}</strong> | Mobile: <strong>${company.mobile}</strong><br>
+           <div style="margin-bottom: 8px;">UDYAM No: <strong>${company.udyamRegistration}</strong></div>
          </div>
       </div>
 
@@ -472,8 +473,9 @@ export function printInvoice(invoice: InvoiceData): void {
             </tr>
           `).join('')}
           
-          <!-- Spacer Rows to Fill Page - Increased to 18 to fill vertical space -->
-           ${Array(Math.max(0, 18 - processedItems.length)).fill(0).map(() => `
+          
+          <!-- Spacer Rows to Fill Page - Reduced to 14 to ensure single page with larger footer -->
+           ${Array(Math.max(0, 14 - processedItems.length)).fill(0).map(() => `
             <tr style="height: 25px;">
                <td style="border-right: 1px solid #000; border-left: 1px solid #000; border-top: none; border-bottom: none;">&nbsp;</td>
                <td style="border-right: 1px solid #000; border-top: none; border-bottom: none;">&nbsp;</td>
@@ -554,12 +556,15 @@ export function printInvoice(invoice: InvoiceData): void {
           <div class="info-label">Total in Words</div>
           <div class="text-bold uppercase" style="font-size: 9pt; margin-bottom: 10px;">${formatAmountInWords(finalGrandTotal)}</div>
 
-          <div class="info-label">Bank Details</div>
-          <div class="small-text">
-            Bank: <strong>${company.bankDetails.bankName}</strong><br>
-            A/c No: <strong>${company.bankDetails.accountNumber}</strong><br>
-            IFSC: <strong>${company.bankDetails.ifscCode}</strong><br>
-            Branch: <strong>${company.bankDetails.branchName || 'Surat'}</strong>
+          <div style="border: 2px solid #000; padding: 10px; margin-bottom: 10px; background: #f9f9f9;">
+            <div class="info-label" style="margin-bottom: 6px; border-bottom: 1px solid #000; padding-bottom: 4px; font-weight: bold; color: #000; font-size: 8pt;">BANK DETAILS</div>
+            <div style="font-size: 11pt; font-weight: 800; line-height: 1.4;">
+              Holder: ${company.bankDetails.accountHolder}<br>
+              Bank: ${company.bankDetails.bankName}<br>
+              A/c No: ${company.bankDetails.accountNumber}<br>
+              IFSC: ${company.bankDetails.ifscCode}<br>
+              Branch: ${company.bankDetails.branchName}
+            </div>
           </div>
           
           <div class="info-label" style="margin-top: 8px;">Terms & Conditions</div>

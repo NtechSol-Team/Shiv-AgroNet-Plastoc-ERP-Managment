@@ -186,9 +186,39 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
         }
 
         // Generate invoice number
-        const countResult = await db.select({ cnt: countFn() }).from(invoices);
-        const invCount = Number(countResult[0]?.cnt || 0);
-        const invoiceNumber = `INV-${String(invCount + 1).padStart(4, '0')}`;
+        // Format: SA/25-26/001
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth(); // 0-11
+
+        // If month is Jan-Mar (0-2), financial year started previous calendar year
+        // FY 25-26 covers April 2025 to March 2026
+        let startYear = currentYear;
+        if (currentMonth < 3) {
+            startYear = currentYear - 1;
+        }
+
+        const fyString = `${String(startYear).slice(-2)}-${String(startYear + 1).slice(-2)}`;
+        const prefix = `SA/${fyString}/`;
+
+        // Find last invoice with this prefix
+        const lastInvoiceResult = await db.select({ invoiceNumber: invoices.invoiceNumber })
+            .from(invoices)
+            .where(sql`${invoices.invoiceNumber} LIKE ${prefix + '%'}`)
+            .orderBy(desc(invoices.createdAt))
+            .limit(1);
+
+        let sequence = 1;
+        if (lastInvoiceResult.length > 0) {
+            const lastNo = lastInvoiceResult[0].invoiceNumber;
+            const parts = lastNo.split('/');
+            const lastSeq = parseInt(parts[parts.length - 1]);
+            if (!isNaN(lastSeq)) {
+                sequence = lastSeq + 1;
+            }
+        }
+
+        const invoiceNumber = `${prefix}${String(sequence).padStart(3, '0')}`;
 
         // If confirming, validate all stock first
         if (status === 'Confirmed') {
