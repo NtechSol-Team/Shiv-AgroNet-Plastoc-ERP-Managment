@@ -27,8 +27,8 @@ export const finishedProducts = pgTable('finished_products', {
     width: text('width').notNull(),
     gsm: text('gsm').notNull(),
     unit: text('unit').default('kg'),
-    hsnCode: text('hsn_code').default('5608'),
-    gstPercent: decimal('gst_percent', { precision: 5, scale: 2 }).default('18'),
+    hsnCode: text('hsn_code').default('60059000'),
+    gstPercent: decimal('gst_percent', { precision: 5, scale: 2 }).default('5'),
     ratePerKg: decimal('rate_per_kg', { precision: 10, scale: 2 }).default('0'), // Selling rate
     // NOTE: Stock removed - calculated from stock movements
     createdAt: timestamp('created_at').defaultNow(),

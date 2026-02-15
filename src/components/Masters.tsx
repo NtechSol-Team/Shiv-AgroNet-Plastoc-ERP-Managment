@@ -92,7 +92,7 @@ export function Masters() {
       case 'raw-material':
         return { name: '', size: 'Standard', color: '', unit: 'kg', hsnCode: '3901', gstPercent: '18', reorderLevel: '100' };
       case 'finished-product':
-        return { name: '', length: '', width: '', gsm: '', unit: 'kg', hsnCode: '5608', gstPercent: '18', ratePerKg: '0' };
+        return { name: '', length: '', width: '', gsm: '', unit: 'kg', hsnCode: '60059000', gstPercent: '5', ratePerKg: '0' };
       case 'machine':
         return { name: '', type: 'Net Extrusion', capacity: '', status: 'Active' };
       case 'customer':
