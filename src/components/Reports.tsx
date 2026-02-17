@@ -3,7 +3,7 @@ import { Download, FileText, AlertTriangle, Filter, Loader2 } from 'lucide-react
 import { reportsApi, mastersApi } from '../lib/api';
 
 export function Reports() {
-  const [activeReport, setActiveReport] = useState<'production-loss' | 'sales-register' | 'purchase-register' | 'stock-valuation' | 'expense-summary'>('production-loss');
+  const [activeReport, setActiveReport] = useState<'production-loss' | 'sales-register' | 'purchase-register' | 'stock-valuation' | 'expense-summary' | 'cc-interest'>('production-loss');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -13,6 +13,7 @@ export function Reports() {
   const [purchaseData, setPurchaseData] = useState<any[]>([]);
   const [stockData, setStockData] = useState<any[]>([]);
   const [expenseData, setExpenseData] = useState<any[]>([]);
+  const [ccInterestData, setCCInterestData] = useState<any[]>([]);
 
   // Filters
   const [customers, setCustomers] = useState<any[]>([]);
@@ -97,6 +98,14 @@ export function Reports() {
             })));
           } else {
             setExpenseData([]);
+          }
+          break;
+        case 'cc-interest':
+          const ccResult = await mastersApi.getCCInterestLogs();
+          if (ccResult.data) {
+            setCCInterestData(ccResult.data);
+          } else {
+            setCCInterestData([]);
           }
           break;
       }
@@ -210,6 +219,15 @@ export function Reports() {
                 }`}
             >
               Expense Summary
+            </button>
+            <button
+              onClick={() => setActiveReport('cc-interest')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeReport === 'cc-interest'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+            >
+              CC Interest
             </button>
           </nav>
         </div>
@@ -623,6 +641,57 @@ export function Reports() {
                           </td>
                         </tr>
                       </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {/* CC Interest Report */}
+              {activeReport === 'cc-interest' && (
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-gray-900">CC Interest Statement</h2>
+                      <p className="text-sm text-gray-600">Monthly interest posted to Cash Credit accounts</p>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full border border-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 border-b">Date</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 border-b">Account</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 border-b">Month</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-700 border-b">Interest Amount (₹)</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 border-b">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white">
+                        {ccInterestData.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="px-4 py-12 text-center text-gray-500">
+                              <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                              <p>No interest logs found</p>
+                            </td>
+                          </tr>
+                        ) : (
+                          ccInterestData.map((log, index) => (
+                            <tr key={index} className="border-b border-gray-200 hover:bg-gray-50">
+                              <td className="px-4 py-3 text-sm text-gray-600">{new Date(log.createdAt).toLocaleDateString()}</td>
+                              <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                                {log.accountName} <span className="text-xs text-gray-500">({log.accountNo})</span>
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-600">{new Date(log.month).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</td>
+                              <td className="px-4 py-3 text-sm text-gray-900 text-right font-medium">₹{parseFloat(log.totalInterest).toFixed(2)}</td>
+                              <td className="px-4 py-3 text-sm">
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${log.isPosted ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                  {log.isPosted ? 'Posted' : 'Pending'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
                     </table>
                   </div>
                 </div>

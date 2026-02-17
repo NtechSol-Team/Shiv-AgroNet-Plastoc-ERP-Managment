@@ -11,6 +11,7 @@ import bellInventoryRouter from './bell-inventory';
 
 import financeRouter from './finance';
 import samplesRouter from './samples';
+import ccAccountsRouter from './cc-accounts';
 
 const router = Router();
 
@@ -19,6 +20,7 @@ router.use('/purchase', purchaseRouter);
 router.use('/production', productionRouter);
 router.use('/sales', salesRouter);
 router.use('/accounts', accountsRouter);
+router.use('/cc-accounts', ccAccountsRouter);
 router.use('/inventory', inventoryRouter);
 router.use('/bell-inventory', bellInventoryRouter);
 router.use('/reports', reportsRouter);

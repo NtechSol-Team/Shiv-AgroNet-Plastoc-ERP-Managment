@@ -208,12 +208,19 @@ router.post('/transactions', validateRequest(createTransactionSchema), async (re
         await db.transaction(async (tx) => {
             // 1. Validate Bank Account exists (if applicable) using TX to be safe, though ID check is enough usually
             if (paymentMode !== 'Cash' && accountId) {
-                // We use findFirst with where to verify existence. 
-                // We don't strictly need to lock it if we use atomic updates later, but let's just check existence.
                 const bankAccount = await tx.query.bankCashAccounts.findFirst({
                     where: eq(bankCashAccounts.id, accountId)
                 });
                 if (!bankAccount) throw createError('Invalid Bank Account', 400);
+
+                // CC VALIDATION: Check Limit/DP for Outgoing Transactions (CC Utilization)
+                if (bankAccount.type === 'CC' && ['LOAN_GIVEN', 'INVESTMENT_MADE', 'REPAYMENT'].includes(transactionType)) {
+                    const { validateCCTransaction } = await import('../services/cc-account.service');
+                    const validation = await validateCCTransaction(accountId, amt);
+                    if (!validation.allowed) {
+                        throw createError(validation.message || 'CC Logic Error', 400);
+                    }
+                }
             }
 
             // 2. Create Transaction Header

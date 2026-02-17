@@ -47,7 +47,7 @@ interface UseNotificationReturn {
  */
 export function useNotification(): UseNotificationReturn {
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const timeoutRefs = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const timeoutRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const addNotification = useCallback((
     type: NotificationType,

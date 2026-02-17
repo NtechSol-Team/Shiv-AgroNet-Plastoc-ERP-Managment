@@ -497,20 +497,16 @@ export function Sales() {
 
 
 
-  const handleReverseReceipt = async (receiptId: string) => {
-    const reason = prompt("Enter reason for reversal:");
-    if (!reason) return;
-
-    if (confirm("Are you sure you want to reverse this receipt? This will reopen allocated invoices.")) {
+  const handleDeleteReceipt = async (receiptId: string) => {
+    if (confirm("Are you sure you want to delete this receipt? This will revert all payments and reopen invoices.")) {
       setLoading(true);
       try {
-        const result = await salesApi.reverseReceipt(receiptId, reason);
+        const result = await salesApi.deleteReceipt(receiptId);
         if (result.error) throw new Error(result.error);
         fetchData();
       } catch (err: any) {
-        setError(err.message || "Failed to reverse receipt");
+        setError(err.message || "Failed to delete receipt");
       }
-      setLoading(false);
       setLoading(false);
     }
   };
@@ -1127,8 +1123,8 @@ export function Sales() {
                             <td className="px-4 py-1.5 text-sm font-mono font-bold text-gray-900 text-right">₹{parseFloat(receipt.amount).toLocaleString()}</td>
                             <td className="px-4 py-1.5 text-right text-xs text-blue-600 font-bold">
                               {receipt.status !== 'Reversed' && (
-                                <button onClick={() => handleReverseReceipt(receipt.id)} className="text-red-600 hover:text-red-800 flex items-center justify-end text-[10px] uppercase ml-auto" title="Reverse Receipt">
-                                  <RotateCcw className="w-3 h-3 mr-1" /> Reverse
+                                <button onClick={() => handleDeleteReceipt(receipt.id)} className="text-red-600 hover:text-red-800 flex items-center justify-end text-[10px] uppercase ml-auto" title="Delete Receipt">
+                                  <Trash2 className="w-3 h-3 mr-1" /> Delete
                                 </button>
                               )}
                             </td>

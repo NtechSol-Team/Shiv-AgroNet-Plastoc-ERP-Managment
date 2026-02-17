@@ -858,93 +858,71 @@ router.post('/receipts', async (req: Request, res: Response, next: NextFunction)
     }
 });
 
-// REVERSE RECEIPT
-router.post('/receipts/:id/reverse', async (req, res, next) => {
+// DELETE RECEIPT (Revert & Delete)
+router.delete('/receipts/:id', async (req, res, next) => {
     try {
         const { id } = req.params;
-        const { reason } = req.body;
 
+        // 1. Fetch Receipt
         const receipt = (await db.select().from(paymentTransactions).where(eq(paymentTransactions.id, id)))[0];
         if (!receipt) throw createError('Receipt not found', 404);
-        if (receipt.status === 'Reversed') throw createError('Receipt is already reversed', 400);
 
-        // 1. Mark as Reversed
-        await db.update(paymentTransactions)
-            .set({
-                status: 'Reversed',
-                remarks: (receipt.remarks || '') + ` | Reversed: ${reason || 'No reason provided'}`
-            })
-            .where(eq(paymentTransactions.id, id));
+        await db.transaction(async (tx) => {
+            // 2. Revert Invoices (Fetch & Delete Allocations)
+            const allocations = await tx.select().from(invoicePaymentAllocations).where(eq(invoicePaymentAllocations.paymentId, id));
 
-        // 2. Revert Invoices (Fetch allocations)
-        const allocations = await db.select().from(invoicePaymentAllocations).where(eq(invoicePaymentAllocations.paymentId, id));
+            for (const allocation of allocations) {
+                const invoice = (await tx.select().from(salesInvoices).where(eq(salesInvoices.id, allocation.invoiceId)))[0];
+                if (invoice) {
+                    const newPaid = parseFloat(invoice.paidAmount || '0') - parseFloat(allocation.amount);
+                    const newBalance = parseFloat(invoice.grandTotal || '0') - newPaid;
 
-        for (const allocation of allocations) {
-            const invoice = (await db.select().from(salesInvoices).where(eq(salesInvoices.id, allocation.invoiceId)))[0];
-            if (invoice) {
-                const newPaid = parseFloat(invoice.paidAmount || '0') - parseFloat(allocation.amount);
-                const newBalance = parseFloat(invoice.grandTotal || '0') - newPaid;
-
-                await db.update(salesInvoices)
-                    .set({
-                        paidAmount: newPaid.toString(),
-                        balanceAmount: newBalance.toString(),
-                        paymentStatus: newBalance >= parseFloat(invoice.grandTotal || '0') - 1 ? 'Unpaid' : (newBalance > 1 ? 'Partial' : 'Paid')
-                    })
-                    .where(eq(salesInvoices.id, allocation.invoiceId));
+                    await tx.update(salesInvoices)
+                        .set({
+                            paidAmount: newPaid.toString(),
+                            balanceAmount: newBalance.toString(),
+                            paymentStatus: newBalance >= parseFloat(invoice.grandTotal || '0') - 1 ? 'Unpaid' : (newBalance > 1 ? 'Partial' : 'Paid')
+                        })
+                        .where(eq(salesInvoices.id, allocation.invoiceId));
+                }
             }
-        }
+            // Delete allocations
+            await tx.delete(invoicePaymentAllocations).where(eq(invoicePaymentAllocations.paymentId, id));
 
-        // 3. Revert Customer Outstanding (Increase it back)
-        const customer = (await db.select().from(customers).where(eq(customers.id, receipt.partyId)))[0];
-        const newOutstanding = parseFloat(customer.outstanding || '0') + parseFloat(receipt.amount);
-        await db.update(customers)
-            .set({ outstanding: newOutstanding.toString() })
-            .where(eq(customers.id, receipt.partyId));
-
-        // 4. Revert Bank Balance (Decrease it)
-        if (receipt.accountId) {
-            const account = (await db.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, receipt.accountId)))[0];
-            if (account) {
-                const newBalance = parseFloat(account.balance || '0') - parseFloat(receipt.amount);
-                await db.update(bankCashAccounts)
-                    .set({ balance: newBalance.toString() })
-                    .where(eq(bankCashAccounts.id, receipt.accountId));
+            // 3. Revert Customer Outstanding (Increase it back)
+            if (receipt.partyId) {
+                const customer = (await tx.select().from(customers).where(eq(customers.id, receipt.partyId)))[0];
+                if (customer) {
+                    const newOutstanding = parseFloat(customer.outstanding || '0') + parseFloat(receipt.amount);
+                    await tx.update(customers)
+                        .set({ outstanding: newOutstanding.toString() })
+                        .where(eq(customers.id, receipt.partyId));
+                }
             }
-        }
 
-        // 5. Create Reversal GL Entries
-        const reversalCode = `REV-${Date.now()}`;
+            // 4. Revert Bank Balance (Decrease it) - IF logic matches original receipt
+            if (receipt.accountId) {
+                const account = (await tx.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, receipt.accountId)))[0];
+                if (account) {
+                    const newBalance = parseFloat(account.balance || '0') - parseFloat(receipt.amount);
+                    await tx.update(bankCashAccounts)
+                        .set({ balance: newBalance.toString() })
+                        .where(eq(bankCashAccounts.id, receipt.accountId));
+                }
+            }
 
-        // REVERSAL ENTRY 1: Credit Bank (Undo Debit) - IF it was debited
-        await db.insert(generalLedger).values({
-            transactionDate: new Date(),
-            voucherNumber: reversalCode,
-            voucherType: 'CONTRA',
-            ledgerId: receipt.accountId!,
-            ledgerType: receipt.mode === 'Cash' ? 'CASH' : 'BANK',
-            debitAmount: '0',
-            creditAmount: receipt.amount.toString(),
-            description: `Reversal of Receipt ${receipt.code}`,
-            referenceId: receipt.id, // Linking to original receipt
-            isReversal: true
+            // 5. Delete Ledger Entries
+            await tx.delete(generalLedger).where(eq(generalLedger.referenceId, id));
+
+            // 6. Delete Receipt Transaction
+            await tx.delete(paymentTransactions).where(eq(paymentTransactions.id, id));
         });
 
-        // REVERSAL ENTRY 2: Debit Customer (Undo Credit)
-        await db.insert(generalLedger).values({
-            transactionDate: new Date(),
-            voucherNumber: reversalCode,
-            voucherType: 'CONTRA',
-            ledgerId: receipt.partyId,
-            ledgerType: 'CUSTOMER',
-            debitAmount: receipt.amount.toString(),
-            creditAmount: '0',
-            description: `Reversal of Receipt ${receipt.code}`,
-            referenceId: receipt.id,
-            isReversal: true
-        });
+        // Invalidate caches
+        cacheService.del('dashboard:kpis');
+        cacheService.del('finance:transactions');
 
-        res.json(successResponse({ message: 'Receipt reversed successfully' }));
+        res.json(successResponse({ message: 'Receipt deleted and financial impact reverted successfully' }));
 
     } catch (error) {
         next(error);

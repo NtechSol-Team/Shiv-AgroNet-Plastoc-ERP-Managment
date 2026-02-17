@@ -15,7 +15,7 @@ import { TopBar } from './components/TopBar';
 import { MasterDataProvider } from './context/MasterDataContext';
 
 export default function App() {
-  const [activeModule, setActiveModule] = useState('inventory');
+  const [activeModule, setActiveModule] = useState('dashboard');
 
   const renderModule = () => {
     switch (activeModule) {

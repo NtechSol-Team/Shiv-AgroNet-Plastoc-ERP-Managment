@@ -27,7 +27,8 @@ import { db } from '../db/index';
 import {
     bankCashAccounts, paymentTransactions, expenses, expenseHeads,
     customers, suppliers, invoices, purchaseBills, paymentAdjustments,
-    financialTransactions, financialEntities, billPaymentAllocations, invoicePaymentAllocations
+    financialTransactions, financialEntities, billPaymentAllocations, invoicePaymentAllocations,
+    generalLedger
 } from '../db/schema';
 import { eq, desc, sql, and, count as countFn, inArray } from 'drizzle-orm';
 import { successResponse } from '../types/api';
@@ -84,23 +85,121 @@ router.get('/cash-ledger', async (req: Request, res: Response, next: NextFunctio
 
         const cashAccountIds = cashAccounts.map(a => a.id);
 
-        // Get transactions for cash accounts
-        const transactions = await db
+        if (cashAccountIds.length === 0) {
+            return res.json(successResponse({
+                accounts: [],
+                transactions: [],
+                summary: { totalBalance: '0.00', accountCount: 0 }
+            }));
+        }
+
+        // 1. Payment Transactions
+        const payments = await db
             .select()
             .from(paymentTransactions)
+            .where(sql`${paymentTransactions.accountId} IN (${sql.raw(cashAccountIds.map(id => `'${id}'`).join(','))})`);
+
+        // 2. Expenses
+        const expenseRecords = await db
+            .select({
+                id: expenses.id,
+                date: expenses.date,
+                amount: expenses.amount,
+                description: expenses.description,
+                accountId: expenses.accountId,
+                // Add discriminator fields
+                type: sql<string>`'EXPENSE'`,
+                partyName: sql<string>`'Expense'`, // Placeholder
+                mode: expenses.paymentMode,
+            })
+            .from(expenses)
+            .where(sql`${expenses.accountId} IN (${sql.raw(cashAccountIds.map(id => `'${id}'`).join(','))})`);
+
+        // 3. Financial Transactions (Loans, etc.)
+        const financeRecords = await db
+            .select({
+                id: financialTransactions.id,
+                date: financialTransactions.transactionDate,
+                amount: financialTransactions.amount,
+                description: financialTransactions.remarks,
+                accountId: financialTransactions.accountId,
+                type: financialTransactions.transactionType,
+                partyName: sql<string>`'Financial'`,
+                mode: financialTransactions.paymentMode,
+            })
+            .from(financialTransactions)
+            .where(sql`${financialTransactions.accountId} IN (${sql.raw(cashAccountIds.map(id => `'${id}'`).join(','))})`);
+
+        // 4. General Ledger (Interest, Adjustments)
+        const glRecords = await db
+            .select({
+                id: generalLedger.id,
+                date: generalLedger.transactionDate,
+                amount: sql<string>`CASE WHEN ${generalLedger.creditAmount} > 0 THEN ${generalLedger.creditAmount} ELSE ${generalLedger.debitAmount} END`,
+                description: generalLedger.description,
+                accountId: generalLedger.ledgerId,
+                type: sql<string>`CASE WHEN ${generalLedger.creditAmount} > 0 THEN 'PAYMENT' ELSE 'RECEIPT' END`, // Credit reduces asset (Payment-like), Debit increases (Receipt-like)
+                partyName: sql<string>`'System'`,
+                mode: sql<string>`'System'`,
+                voucherType: generalLedger.voucherType
+            })
+            .from(generalLedger)
             .where(
-                cashAccountIds.length > 0
-                    ? sql`${paymentTransactions.accountId} IN (${sql.raw(cashAccountIds.map(id => `'${id}'`).join(','))})`
-                    : sql`1=0`
-            )
-            .orderBy(desc(paymentTransactions.createdAt));
+                and(
+                    sql`${generalLedger.ledgerId} IN (${sql.raw(cashAccountIds.map(id => `'${id}'`).join(','))})`,
+                )
+            );
+
+        // Merge and Normalize
+        const allTransactions = [
+            ...payments.map(p => ({
+                id: p.id,
+                date: p.date,
+                amount: p.amount,
+                type: p.type, // RECEIPT/PAYMENT
+                description: p.remarks || `${p.type} - ${p.partyName}`,
+                partyName: p.partyName,
+                mode: p.mode,
+                category: 'Trade'
+            })),
+            ...expenseRecords.map(e => ({
+                id: e.id,
+                date: new Date(e.date),
+                amount: e.amount,
+                type: 'PAYMENT', // Expenses are payments
+                description: e.description || 'Expense',
+                partyName: e.partyName,
+                mode: e.mode,
+                category: 'Expense'
+            })),
+            ...financeRecords.map(f => ({
+                id: f.id,
+                date: new Date(f.date),
+                amount: f.amount,
+                type: ['LOAN_GIVEN', 'REPAYMENT_GIVEN', 'INVESTMENT_MADE'].includes(f.type) ? 'PAYMENT' : 'RECEIPT',
+                description: f.description || f.type,
+                partyName: f.partyName,
+                mode: f.mode,
+                category: 'Financial'
+            })),
+            ...glRecords.map(g => ({
+                id: g.id,
+                date: new Date(g.date),
+                amount: g.amount,
+                type: g.type,
+                description: g.description,
+                partyName: g.partyName,
+                mode: g.mode,
+                category: 'General'
+            }))
+        ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
         // Calculate totals
         const totalCashBalance = cashAccounts.reduce((sum, acc) => sum + parseFloat(acc.balance || '0'), 0);
 
         res.json(successResponse({
             accounts: cashAccounts,
-            transactions,
+            transactions: allTransactions,
             summary: {
                 totalBalance: totalCashBalance.toFixed(2),
                 accountCount: cashAccounts.length,
@@ -129,23 +228,120 @@ router.get('/bank-ledger', async (req: Request, res: Response, next: NextFunctio
 
         const bankAccountIds = bankAccounts.map(a => a.id);
 
-        // Get transactions for bank accounts
-        const transactions = await db
+        if (bankAccountIds.length === 0) {
+            return res.json(successResponse({
+                accounts: [],
+                transactions: [],
+                summary: { totalBalance: '0.00', accountCount: 0 }
+            }));
+        }
+
+        // 1. Payment Transactions
+        const payments = await db
             .select()
             .from(paymentTransactions)
+            .where(sql`${paymentTransactions.accountId} IN (${sql.raw(bankAccountIds.map(id => `'${id}'`).join(','))})`);
+
+        // 2. Expenses
+        const expenseRecords = await db
+            .select({
+                id: expenses.id,
+                date: expenses.date,
+                amount: expenses.amount,
+                description: expenses.description,
+                accountId: expenses.accountId,
+                type: sql<string>`'EXPENSE'`,
+                partyName: sql<string>`'Expense'`,
+                mode: expenses.paymentMode,
+            })
+            .from(expenses)
+            .where(sql`${expenses.accountId} IN (${sql.raw(bankAccountIds.map(id => `'${id}'`).join(','))})`);
+
+        // 3. Financial Transactions
+        const financeRecords = await db
+            .select({
+                id: financialTransactions.id,
+                date: financialTransactions.transactionDate,
+                amount: financialTransactions.amount,
+                description: financialTransactions.remarks,
+                accountId: financialTransactions.accountId,
+                type: financialTransactions.transactionType,
+                partyName: sql<string>`'Financial'`,
+                mode: financialTransactions.paymentMode,
+            })
+            .from(financialTransactions)
+            .where(sql`${financialTransactions.accountId} IN (${sql.raw(bankAccountIds.map(id => `'${id}'`).join(','))})`);
+
+        // 4. General Ledger (Interest, Adjustments)
+        const glRecords = await db
+            .select({
+                id: generalLedger.id,
+                date: generalLedger.transactionDate,
+                amount: sql<string>`CASE WHEN ${generalLedger.creditAmount} > 0 THEN ${generalLedger.creditAmount} ELSE ${generalLedger.debitAmount} END`,
+                description: generalLedger.description,
+                accountId: generalLedger.ledgerId,
+                type: sql<string>`CASE WHEN ${generalLedger.creditAmount} > 0 THEN 'PAYMENT' ELSE 'RECEIPT' END`, // Credit reduces asset
+                partyName: sql<string>`'System'`,
+                mode: sql<string>`'System'`,
+                voucherType: generalLedger.voucherType
+            })
+            .from(generalLedger)
             .where(
-                bankAccountIds.length > 0
-                    ? sql`${paymentTransactions.accountId} IN (${sql.raw(bankAccountIds.map(id => `'${id}'`).join(','))})`
-                    : sql`1=0`
-            )
-            .orderBy(desc(paymentTransactions.createdAt));
+                and(
+                    sql`${generalLedger.ledgerId} IN (${sql.raw(bankAccountIds.map(id => `'${id}'`).join(','))})`,
+                )
+            );
+
+        // Merge and Normalize
+        const allTransactions = [
+            ...payments.map(p => ({
+                id: p.id,
+                date: p.date,
+                amount: p.amount,
+                type: p.type,
+                description: p.remarks || `${p.type} - ${p.partyName}`,
+                partyName: p.partyName,
+                mode: p.mode,
+                category: 'Trade'
+            })),
+            ...expenseRecords.map(e => ({
+                id: e.id,
+                date: new Date(e.date),
+                amount: e.amount,
+                type: 'PAYMENT',
+                description: e.description || 'Expense',
+                partyName: e.partyName,
+                mode: e.mode,
+                category: 'Expense'
+            })),
+            ...financeRecords.map(f => ({
+                id: f.id,
+                date: new Date(f.date),
+                amount: f.amount,
+                type: ['LOAN_GIVEN', 'REPAYMENT_GIVEN', 'INVESTMENT_MADE'].includes(f.type) ? 'PAYMENT' : 'RECEIPT',
+                description: f.description || f.type,
+                partyName: f.partyName,
+                mode: f.mode,
+                category: 'Financial'
+            })),
+            ...glRecords.map(g => ({
+                id: g.id,
+                date: new Date(g.date),
+                amount: g.amount,
+                type: g.type,
+                description: g.description,
+                partyName: g.partyName,
+                mode: g.mode,
+                category: 'General'
+            }))
+        ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
         // Calculate totals
         const totalBankBalance = bankAccounts.reduce((sum, acc) => sum + parseFloat(acc.balance || '0'), 0);
 
         res.json(successResponse({
             accounts: bankAccounts,
-            transactions,
+            transactions: allTransactions,
             summary: {
                 totalBalance: totalBankBalance.toFixed(2),
                 accountCount: bankAccounts.length,
@@ -735,10 +931,25 @@ router.get('/transactions', async (req: Request, res: Response, next: NextFuncti
                 .limit(fetchLimit) as any;
         }
 
-        const [payments, expenseRecords, financeRecords] = await Promise.all([
+        // 4. Fetch General Ledger (Contra, Journal, Adjustments)
+        // Exclude RECEIPT/PAYMENT as they are already in paymentTransactions
+        let glQuery = db.select()
+            .from(generalLedger)
+            .leftJoin(bankCashAccounts, eq(generalLedger.ledgerId, bankCashAccounts.id))
+            .where(
+                and(
+                    inArray(generalLedger.voucherType, ['CONTRA', 'JOURNAL', 'ADJUSTMENT', 'SYSTEM']),
+                    accountId ? eq(generalLedger.ledgerId, accountId as string) : undefined
+                )
+            )
+            .orderBy(desc(generalLedger.transactionDate))
+            .limit(fetchLimit);
+
+        const [payments, expenseRecords, financeRecords, glRecords] = await Promise.all([
             paymentQuery,
             expenseQuery,
-            financeQuery
+            financeQuery,
+            glQuery
         ]);
 
         // FETCH ALLOCATIONS
@@ -840,6 +1051,32 @@ router.get('/transactions', async (req: Request, res: Response, next: NextFuncti
                     status: f.status,
                     accountName: acc?.name,
                     details: f
+                };
+            }),
+            ...glRecords.map(row => {
+                const g = row.general_ledger;
+                const acc = row.bank_cash_accounts;
+                const isCredit = Number(g.creditAmount) > 0;
+                return {
+                    id: g.id,
+                    date: g.transactionDate,
+                    type: g.voucherType, // CONTRA, JOURNAL
+                    category: 'General',
+                    partyName: 'System / Contra',
+                    description: g.description,
+                    amount: isCredit ? parseFloat(g.creditAmount || '0') : parseFloat(g.debitAmount || '0'),
+                    mode: 'System', // Usually internal
+                    status: 'Completed',
+                    accountName: acc?.name,
+                    details: g,
+                    // UI Helpers: Credit in Bank = Payment (Out), Debit = Receipt (In)
+                    // But for Contra, it depends.
+                    // If it's a Reversal:
+                    // Original Receipt: Debit Bank, Credit Customer.
+                    // Reversal: Credit Bank, Debit Customer.
+                    // So Credit Bank = Payment-like effect (Balance decreases).
+                    // We map it to standard types for UI color coding if needed.
+                    uiType: isCredit ? 'PAYMENT' : 'RECEIPT' // For color coding red/green
                 };
             })
         ];

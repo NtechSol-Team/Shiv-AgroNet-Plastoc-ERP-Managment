@@ -130,7 +130,7 @@ router.get('/purchases', async (req, res, next) => {
             supplierId: b.supplier?.id, // Added for filtering
             // Detailed items list
             items: b.items.map(i => ({
-                name: i.rawMaterial?.name || 'Unknown Material',
+                name: i.materialName || i.rawMaterial?.name || 'Unknown Material',
                 quantity: parseFloat(i.quantity).toFixed(2)
             })),
             quantity: b.items?.reduce((sum, i) => sum + parseFloat(i.quantity), 0) || 0,

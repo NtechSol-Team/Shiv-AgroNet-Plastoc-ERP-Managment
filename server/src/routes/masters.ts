@@ -21,7 +21,11 @@ import { db } from '../db/index';
 import {
     rawMaterials, finishedProducts, machines, customers,
     suppliers, expenseHeads, bankCashAccounts, employees,
-    productionBatches, stockMovements, bellItems
+    productionBatches, stockMovements, bellItems,
+    paymentTransactions, invoices, purchaseBills,
+    billPaymentAllocations, invoicePaymentAllocations,
+    expenses, financialTransactions, generalLedger,
+    ccAccountDetails,
 } from '../db/schema';
 import { eq, count as countFn } from 'drizzle-orm';
 import { successResponse } from '../types/api';
@@ -689,11 +693,120 @@ router.put('/accounts/:id', async (req: Request, res: Response, next: NextFuncti
     }
 });
 
+// Helper to Cascade Delete Account
+const deleteAccountWithCascade = async (accountId: string, isCC: boolean) => {
+    await db.transaction(async (tx) => {
+        // 1. Fetch all Payment Transactions linked to this account
+        const transactions = await tx.select().from(paymentTransactions).where(eq(paymentTransactions.accountId, accountId));
+
+        // 2. Revert Financial Impact for each transaction
+        for (const txn of transactions) {
+            // A. Revert Invoices/Bills (if linked)
+            if (txn.type === 'RECEIPT') {
+                const allocations = await tx.query.invoicePaymentAllocations.findMany({
+                    where: eq(invoicePaymentAllocations.paymentId, txn.id),
+                    with: { invoice: true }
+                });
+
+                for (const allocation of allocations) {
+                    if (allocation.invoice) {
+                        const newPaid = parseFloat(allocation.invoice.paidAmount || '0') - parseFloat(allocation.amount);
+                        const newBalance = parseFloat(allocation.invoice.grandTotal || '0') - newPaid;
+
+                        await tx.update(invoices)
+                            .set({
+                                paidAmount: newPaid.toString(),
+                                balanceAmount: newBalance.toString(),
+                                paymentStatus: newBalance >= parseFloat(allocation.invoice.grandTotal || '0') - 1 ? 'Unpaid' : (newBalance > 1 ? 'Partial' : 'Paid'),
+                                updatedAt: new Date()
+                            })
+                            .where(eq(invoices.id, allocation.invoice.id));
+                    }
+                }
+                // Delete allocations
+                await tx.delete(invoicePaymentAllocations).where(eq(invoicePaymentAllocations.paymentId, txn.id));
+
+                // Revert Customer Outstanding
+                if (txn.partyId && txn.partyType === 'customer') {
+                    const [customer] = await tx.select().from(customers).where(eq(customers.id, txn.partyId));
+                    if (customer) {
+                        const newOutstanding = parseFloat(customer.outstanding || '0') + parseFloat(txn.amount);
+                        await tx.update(customers)
+                            .set({ outstanding: newOutstanding.toString(), updatedAt: new Date() })
+                            .where(eq(customers.id, customer.id));
+                    }
+                }
+
+            } else if (txn.type === 'PAYMENT') {
+                const allocations = await tx.query.billPaymentAllocations.findMany({
+                    where: eq(billPaymentAllocations.paymentId, txn.id),
+                    with: { bill: true }
+                });
+
+                for (const allocation of allocations) {
+                    if (allocation.bill) {
+                        const newPaid = parseFloat(allocation.bill.paidAmount || '0') - parseFloat(allocation.amount);
+                        const newBalance = parseFloat(allocation.bill.grandTotal || '0') - newPaid;
+
+                        await tx.update(purchaseBills)
+                            .set({
+                                paidAmount: newPaid.toString(),
+                                balanceAmount: newBalance.toString(),
+                                paymentStatus: newBalance >= parseFloat(allocation.bill.grandTotal || '0') - 1 ? 'Unpaid' : (newBalance > 1 ? 'Partial' : 'Paid'),
+                                updatedAt: new Date()
+                            })
+                            .where(eq(purchaseBills.id, allocation.bill.id));
+                    }
+                }
+                // Delete allocations
+                await tx.delete(billPaymentAllocations).where(eq(billPaymentAllocations.paymentId, txn.id));
+
+                // Revert Supplier Outstanding
+                if (txn.partyId && txn.partyType === 'supplier') {
+                    const [supplier] = await tx.select().from(suppliers).where(eq(suppliers.id, txn.partyId));
+                    if (supplier) {
+                        const newOutstanding = parseFloat(supplier.outstanding || '0') + parseFloat(txn.amount);
+                        await tx.update(suppliers)
+                            .set({ outstanding: newOutstanding.toString(), updatedAt: new Date() })
+                            .where(eq(suppliers.id, supplier.id));
+                    }
+                }
+            }
+        }
+
+        // 3. Delete Transactions (Payments, Expenses, Financial)
+        await tx.delete(paymentTransactions).where(eq(paymentTransactions.accountId, accountId));
+        await tx.delete(expenses).where(eq(expenses.accountId, accountId));
+        await tx.delete(financialTransactions).where(eq(financialTransactions.accountId, accountId));
+
+        // 4. Delete Ledger Entries
+        await tx.delete(generalLedger).where(eq(generalLedger.ledgerId, accountId));
+
+        // 5. Delete Account Specifics
+        if (isCC) {
+            await tx.delete(ccAccountDetails).where(eq(ccAccountDetails.accountId, accountId));
+        }
+
+        // 6. Delete the Account
+        await tx.delete(bankCashAccounts).where(eq(bankCashAccounts.id, accountId));
+    });
+};
+
 router.delete('/accounts/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        await db.delete(bankCashAccounts).where(eq(bankCashAccounts.id, req.params.id));
+        await deleteAccountWithCascade(req.params.id, false);
         cache.del('masters:accounts');
-        res.json(successResponse({ deleted: true }));
+        res.json(successResponse({ deleted: true, message: 'Account and associated transactions deleted successfully' }));
+    } catch (error) {
+        next(error);
+    }
+});
+
+router.delete('/cc-accounts/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        await deleteAccountWithCascade(req.params.id, true);
+        cache.del('masters:cc-accounts');
+        res.json(successResponse({ deleted: true, message: 'CC Account and associated transactions deleted successfully' }));
     } catch (error) {
         next(error);
     }

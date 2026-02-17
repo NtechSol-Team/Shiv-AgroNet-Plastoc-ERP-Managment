@@ -11,6 +11,7 @@ import {
   ArrowUpRight, ArrowDownRight, CreditCard, Wallet, Users, Truck, CheckCircle
 } from 'lucide-react';
 import { dashboardApi } from '../lib/api';
+import { CCDashboardWidget } from './CCDashboardWidget';
 
 // ============================================================
 // TYPE DEFINITIONS
@@ -270,6 +271,9 @@ export function Dashboard() {
         <h1 className="text-xl font-bold text-gray-800 uppercase tracking-tight">Executive Dashboard</h1>
         <span className="text-xs text-gray-500 font-mono">Last Updated: {new Date().toLocaleTimeString()}</span>
       </div>
+
+      {/* CC Account Widget */}
+      <CCDashboardWidget />
 
       {/* KPI Grid - High Density */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">

@@ -12,7 +12,7 @@ import { accountsApi, mastersApi } from '../lib/api';
 interface Account {
   id: string;
   name: string;
-  type: 'Bank' | 'Cash';
+  type: 'Bank' | 'Cash' | 'CC';
   balance: string;
 }
 
@@ -360,8 +360,8 @@ export function Accounts() {
                       }`}
                   >
                     <div className="flex items-center space-x-3">
-                      <div className={`p-2 rounded-lg ${acc.type === 'Cash' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}`}>
-                        {acc.type === 'Cash' ? <Wallet className="w-5 h-5" /> : <CreditCard className="w-5 h-5" />}
+                      <div className={`p-2 rounded-lg ${acc.type === 'Cash' ? 'bg-green-100 text-green-600' : acc.type === 'CC' ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'}`}>
+                        {acc.type === 'Cash' ? <Wallet className="w-5 h-5" /> : acc.type === 'CC' ? <CreditCard className="w-5 h-5" /> : <CreditCard className="w-5 h-5" />}
                       </div>
                       <div>
                         <p className={`font-bold ${selectedAccountId === acc.id ? 'text-blue-800' : 'text-gray-900'}`}>{acc.name}</p>

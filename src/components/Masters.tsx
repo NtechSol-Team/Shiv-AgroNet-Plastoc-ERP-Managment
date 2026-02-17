@@ -2,7 +2,25 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, X, Loader2, Package, Trash2 } from 'lucide-react';
 import { mastersApi } from '../lib/api';
 
-type MasterType = 'raw-material' | 'finished-product' | 'machine' | 'customer' | 'supplier' | 'expense' | 'accounts' | 'employee';
+const ActionButton = ({ onClick }: { onClick: () => void }) => (
+  <button
+    onClick={onClick}
+    className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+  >
+    <Edit2 className="w-4 h-4" />
+  </button>
+);
+
+const DeleteButton = ({ onClick }: { onClick: () => void }) => (
+  <button
+    onClick={onClick}
+    className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+  >
+    <Trash2 className="w-4 h-4" />
+  </button>
+);
+
+type MasterType = 'raw-material' | 'finished-product' | 'machine' | 'customer' | 'supplier' | 'expense' | 'accounts' | 'employee' | 'cc-account';
 
 // Indian States for Dropdown
 const INDIAN_STATES = [
@@ -30,6 +48,7 @@ export function Masters() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [expenseHeads, setExpenseHeads] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [ccAccounts, setCCAccounts] = useState<any[]>([]); // New State
   const [employees, setEmployees] = useState<any[]>([]);
 
   const [formData, setFormData] = useState<any>({});
@@ -74,6 +93,10 @@ export function Masters() {
           result = await mastersApi.getAccounts();
           if (result.data) setAccounts(result.data);
           break;
+        case 'cc-account':
+          result = await mastersApi.getCCAccounts();
+          if (result.data) setCCAccounts(result.data);
+          break;
         case 'employee':
           result = await mastersApi.getEmployees();
           if (result.data) setEmployees(result.data);
@@ -103,6 +126,18 @@ export function Masters() {
         return { name: '', category: 'Variable' };
       case 'accounts':
         return { name: '', accountNo: '', type: 'Bank', balance: '' };
+      case 'cc-account':
+        return {
+          name: '',
+          accountNo: '',
+          sanctionedLimit: '',
+          interestRate: '',
+          drawingPowerMode: 'Automatic',
+          stockMargin: '25',
+          receivablesMargin: '40',
+          securityType: 'Hypothecation',
+          validityPeriod: ''
+        };
       case 'employee':
         return { name: '', designation: '', contact: '', salary: '' };
       default:
@@ -163,6 +198,23 @@ export function Masters() {
           result = editingItem
             ? await mastersApi.updateAccount(editingItem.id, formData)
             : await mastersApi.createAccount(formData);
+          break;
+        case 'cc-account':
+          // Only Create is supported properly via specialized route?
+          // Actually createCCAccount route exists. Update not explicit in `api.ts` or `cc-accounts.ts`.
+          // I'll assume only Create for now or use generic update logic if I added it.
+          // I didn't add updateCCAccount.
+          // So if editingItem, I might fail or need to add it.
+          // Let's support Create only for now, or fallback to error.
+          // "CC Account Setup" usually implies Create. updates normally done by admin directly or I need to add PUT.
+          if (editingItem) {
+            // Fallback to error or simple account update?
+            // CC Details are complex.
+            setError('Update not implemented for CC Accounts yet.');
+            setSaving(false);
+            return;
+          }
+          result = await mastersApi.createCCAccount(formData);
           break;
         case 'employee':
           result = editingItem
@@ -457,6 +509,68 @@ export function Masters() {
           </div>
         );
 
+      case 'cc-account':
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="md:col-span-2 bg-blue-50 p-3 rounded-lg text-sm text-blue-700 border border-blue-100 flex items-start">
+              <div className="mr-2 mt-0.5">ℹ️</div>
+              <div>
+                <strong>Cash Credit (Working Capital) Account</strong><br />
+                Funds utilized from this account are treated as a Liability. Interest is calculated daily on the outstanding amount.
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Account Name (Alias) *</label>
+              <input type="text" value={formData.name || ''} onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="e.g. HDFC CC A/c" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Account Number *</label>
+              <input type="text" value={formData.accountNo || ''} onChange={(e) => setFormData({ ...formData, accountNo: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Sanctioned Limit (₹) *</label>
+              <input type="number" value={formData.sanctionedLimit || ''} onChange={(e) => setFormData({ ...formData, sanctionedLimit: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Interest Rate (% p.a.) *</label>
+              <input type="number" step="0.01" value={formData.interestRate || ''} onChange={(e) => setFormData({ ...formData, interestRate: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Drawing Power Mode</label>
+              <select value={formData.drawingPowerMode || 'Automatic'} onChange={(e) => setFormData({ ...formData, drawingPowerMode: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                <option value="Automatic">Automatic (Stock + Debtors)</option>
+                <option value="Manual">Manual (Limit Based)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Validity Period</label>
+              <input type="date" value={formData.validityPeriod ? new Date(formData.validityPeriod).toISOString().split('T')[0] : ''}
+                onChange={(e) => setFormData({ ...formData, validityPeriod: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+            </div>
+
+            {formData.drawingPowerMode === 'Automatic' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Stock Margin (%)</label>
+                  <input type="number" value={formData.stockMargin || ''} onChange={(e) => setFormData({ ...formData, stockMargin: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="Default 25%" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Receivables Margin (%)</label>
+                  <input type="number" value={formData.receivablesMargin || ''} onChange={(e) => setFormData({ ...formData, receivablesMargin: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="Default 40%" />
+                </div>
+              </>
+            )}
+          </div>
+        );
+
       case 'employee':
         return (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -497,6 +611,7 @@ export function Masters() {
       'supplier': 'Supplier',
       'expense': 'Expense Head',
       'accounts': 'Bank/Cash Account',
+      'cc-account': 'Cash Credit Account',
       'employee': 'Employee'
     };
     return `${editingItem ? 'Edit' : 'Add New'} ${titles[activeTab]}`;
@@ -542,6 +657,7 @@ export function Masters() {
         case 'expense': return expenseHeads;
         case 'accounts': return accounts;
         case 'employee': return employees;
+        case 'cc-account': return ccAccounts;
         default: return [];
       }
     };
@@ -559,6 +675,57 @@ export function Masters() {
         </div>
       );
     }
+
+    const handleDelete = async (type: MasterType, id: string) => {
+      if (!confirm('Are you sure you want to delete this item?')) return;
+
+      setLoading(true);
+      try {
+        let result;
+        switch (type) {
+          case 'raw-material':
+            result = await mastersApi.deleteRawMaterial(id);
+            break;
+          case 'finished-product':
+            result = await mastersApi.deleteFinishedProduct(id);
+            break;
+          case 'machine':
+            result = await mastersApi.deleteMachine(id);
+            break;
+          case 'customer':
+            result = await mastersApi.deleteCustomer(id);
+            break;
+          case 'supplier':
+            result = await mastersApi.deleteSupplier(id);
+            break;
+          case 'accounts':
+            if (confirm('Warning: Deleting this account will also revert/delete all associated transactions (payments, receipts, expenses). This action cannot be undone. \n\nAre you absolutely sure?')) {
+              result = await mastersApi.deleteAccount(id);
+            } else {
+              setLoading(false);
+              return;
+            }
+            break;
+          case 'cc-account':
+            if (confirm('Warning: Deleting this CC account will also revert/delete all associated transactions. This action cannot be undone. \n\nAre you absolutely sure?')) {
+              result = await mastersApi.deleteCCAccount(id);
+            } else {
+              setLoading(false);
+              return;
+            }
+            break;
+        }
+
+        if (result?.error) {
+          setError(result.error);
+        } else {
+          await fetchData();
+        }
+      } catch (err) {
+        setError('Failed to delete item');
+      }
+      setLoading(false);
+    };
 
     switch (activeTab) {
       case 'raw-material':
@@ -585,7 +752,12 @@ export function Masters() {
                     </div>
                   </Td>
                   <Td className="font-medium text-slate-900">{rm.stock} kg</Td>
-                  <Td><ActionButton onClick={() => handleEdit(rm)} /></Td>
+                  <Td>
+                    <div className="flex items-center gap-2">
+                      <ActionButton onClick={() => handleEdit(rm)} />
+                      <DeleteButton onClick={() => handleDelete('raw-material', rm.id)} />
+                    </div>
+                  </Td>
                 </tr>
               ))}
             </tbody>
@@ -616,13 +788,7 @@ export function Masters() {
                   <Td>
                     <div className="flex items-center space-x-1">
                       <ActionButton onClick={() => handleEdit(fp)} />
-                      <button
-                        onClick={() => handleDelete(fp.id, 'finished-product')}
-                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                        title="Delete Product"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <DeleteButton onClick={() => handleDelete('finished-product', fp.id)} />
                     </div>
                   </Td>
                 </tr>
@@ -655,7 +821,12 @@ export function Masters() {
                       {machine.status}
                     </span>
                   </Td>
-                  <Td><ActionButton onClick={() => handleEdit(machine)} /></Td>
+                  <Td>
+                    <div className="flex items-center gap-2">
+                      <ActionButton onClick={() => handleEdit(machine)} />
+                      <DeleteButton onClick={() => handleDelete('machine', machine.id)} />
+                    </div>
+                  </Td>
                 </tr>
               ))}
             </tbody>
@@ -695,7 +866,12 @@ export function Masters() {
                       <span className="text-slate-400">₹0</span>
                     )}
                   </Td>
-                  <Td><ActionButton onClick={() => handleEdit(customer)} /></Td>
+                  <Td>
+                    <div className="flex items-center gap-2">
+                      <ActionButton onClick={() => handleEdit(customer)} />
+                      <DeleteButton onClick={() => handleDelete('customer', customer.id)} />
+                    </div>
+                  </Td>
                 </tr>
               ))}
             </tbody>
@@ -729,7 +905,12 @@ export function Masters() {
                       <span className="text-slate-400">₹0</span>
                     )}
                   </Td>
-                  <Td><ActionButton onClick={() => handleEdit(supplier)} /></Td>
+                  <Td>
+                    <div className="flex items-center gap-2">
+                      <ActionButton onClick={() => handleEdit(supplier)} />
+                      <DeleteButton onClick={() => handleDelete('supplier', supplier.id)} />
+                    </div>
+                  </Td>
                 </tr>
               ))}
             </tbody>
@@ -755,7 +936,12 @@ export function Masters() {
                       {expense.category}
                     </span>
                   </Td>
-                  <Td><ActionButton onClick={() => handleEdit(expense)} /></Td>
+                  <Td>
+                    <div className="flex items-center gap-2">
+                      <ActionButton onClick={() => handleEdit(expense)} />
+                      <DeleteButton onClick={() => handleDelete('expense', expense.id)} />
+                    </div>
+                  </Td>
                 </tr>
               ))}
             </tbody>
@@ -787,7 +973,58 @@ export function Masters() {
                   <Td className="font-medium text-slate-900">
                     ₹{parseFloat(account.balance || 0).toLocaleString()}
                   </Td>
-                  <Td><ActionButton onClick={() => handleEdit(account)} /></Td>
+                  <Td>
+                    <div className="flex items-center gap-2">
+                      <ActionButton onClick={() => handleEdit(account)} />
+                      <DeleteButton onClick={() => handleDelete('accounts', account.id)} />
+                    </div>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        );
+
+      case 'cc-account':
+        return (
+          <table className="w-full text-left border-collapse">
+            <TableHeader>
+              <Th>ID</Th>
+              <Th>Account Info</Th>
+              <Th>Limit & DP</Th>
+              <Th>Outstanding</Th>
+              <Th>Actions</Th>
+            </TableHeader>
+            <tbody className="bg-white">
+              {ccAccounts.map((cc) => (
+                <tr key={cc.accountId || cc.id} className="hover:bg-slate-50/80 transition-colors group">
+                  <Td className="font-mono text-slate-400 text-xs">{cc.code}</Td>
+                  <Td>
+                    <div className="font-medium text-slate-900">{cc.name}</div>
+                    <div className="text-xs text-slate-500">{cc.accountNo}</div>
+                    <div className="text-xs text-blue-600 mt-0.5">{cc.interestRate}% Int. Rate</div>
+                  </Td>
+                  <Td>
+                    <div className="text-xs text-slate-500">Limit: <span className="font-medium text-slate-900">₹{parseFloat(cc.sanctionedLimit || '0').toLocaleString()}</span></div>
+                    {cc.drawingPowerMode === 'Automatic' && (
+                      <div className="text-xs text-emerald-600 mt-0.5">DP: Auto (Stock-Margin)</div>
+                    )}
+                    {cc.drawingPowerMode === 'Manual' && (
+                      <div className="text-xs text-amber-600 mt-0.5">DP: Manual (Limit)</div>
+                    )}
+                  </Td>
+                  <Td>
+                    <div className="font-medium text-red-600">
+                      ₹{Math.abs(parseFloat(cc.balance || '0')).toLocaleString()}
+                    </div>
+                    <div className="text-xs text-slate-400">Utilized</div>
+                  </Td>
+                  <Td>
+                    <div className="flex items-center gap-2">
+                      <ActionButton onClick={() => handleEdit(cc)} />
+                      <DeleteButton onClick={() => handleDelete('cc-account', cc.accountId || cc.id)} />
+                    </div>
+                  </Td>
                 </tr>
               ))}
             </tbody>
@@ -841,6 +1078,7 @@ export function Masters() {
             { id: 'supplier', label: 'Suppliers' },
             { id: 'expense', label: 'Expenses' },
             { id: 'accounts', label: 'Accounts' },
+            { id: 'cc-account', label: 'CC Accounts' },
             { id: 'employee', label: 'Employees' },
           ].map((tab) => (
             <button

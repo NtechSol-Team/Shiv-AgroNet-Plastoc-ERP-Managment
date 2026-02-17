@@ -673,21 +673,27 @@ export function Purchase() {
     }
   }, [allocations, paymentForm.useAdvancePayment]);
 
-  const handleReversePayment = async (paymentId: string) => {
-    const reason = prompt("Enter reason for reversal:");
-    if (!reason) return;
+  const [deletePaymentConfirmation, setDeletePaymentConfirmation] = useState<{ isOpen: boolean; id: string | null; error?: string }>({ isOpen: false, id: null });
 
-    if (confirm("Are you sure you want to reverse this payment? This will reopen allocated purchase bills.")) {
-      setLoading(true);
-      try {
-        const result = await purchaseApi.reversePayment(paymentId, reason);
-        if (result.error) throw new Error(result.error);
-        fetchData();
-        setSuccess('Payment reversed successfully');
-        setTimeout(() => setSuccess(null), 3000);
-      } catch (err: any) {
-        setError(err.message || "Failed to reverse payment");
-      }
+  const handleDeletePayment = async (paymentId: string) => {
+    setDeletePaymentConfirmation({ isOpen: true, id: paymentId });
+  };
+
+  const confirmDeletePayment = async () => {
+    if (!deletePaymentConfirmation.id) return;
+
+    setLoading(true);
+    try {
+      const result = await purchaseApi.deletePayment(deletePaymentConfirmation.id);
+      if (result.error) throw new Error(result.error);
+      fetchData();
+      setSuccess('Payment deleted successfully');
+      setTimeout(() => setSuccess(null), 3000);
+      setDeletePaymentConfirmation({ isOpen: false, id: null });
+    } catch (err: any) {
+      setError(err.message || "Failed to delete payment");
+      setDeletePaymentConfirmation({ isOpen: true, id: deletePaymentConfirmation.id, error: err.message || "Failed to delete payment" });
+    } finally {
       setLoading(false);
     }
   };
@@ -1490,8 +1496,8 @@ export function Purchase() {
                           <td className="px-4 py-1.5 text-sm font-mono font-bold text-gray-900 text-right">₹{parseFloat(payment.amount).toLocaleString()}</td>
                           <td className="px-4 py-1.5 text-right text-xs text-blue-600 font-bold">
                             {payment.status !== 'Reversed' && (
-                              <button onClick={() => handleReversePayment(payment.id)} className="text-red-600 hover:text-red-800 flex items-center justify-end text-[10px] uppercase ml-auto" title="Reverse Payment">
-                                <RotateCcw className="w-3 h-3 mr-1" /> Reverse
+                              <button onClick={() => handleDeletePayment(payment.id)} className="text-gray-400 hover:text-red-600 transition-colors p-1" title="Delete Payment">
+                                <Trash2 className="w-4 h-4" />
                               </button>
                             )}
                           </td>
@@ -1906,6 +1912,39 @@ export function Purchase() {
               >
                 {loading && <Loader2 className="w-3 h-3 animate-spin mr-2" />}
                 Delete Bill
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Payment Confirmation Modal */}
+      {deletePaymentConfirmation.isOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">Delete Payment?</h3>
+            <p className="text-sm text-gray-600 mb-6">
+              Are you sure you want to delete this payment?
+              <br /><br />
+              <span className="font-bold text-red-600">Warning:</span> This will reverse the payment effect on all allocated bills (marking them as Unpaid/Partial) and increase the Supplier's outstanding balance.
+              <br /><br />
+              This action cannot be undone.
+            </p>
+            {deletePaymentConfirmation.error && (
+              <p className="text-xs text-red-600 mb-4">{deletePaymentConfirmation.error}</p>
+            )}
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setDeletePaymentConfirmation({ isOpen: false, id: null })}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeletePayment}
+                className="px-4 py-2 text-white bg-red-600 rounded hover:bg-red-700 font-bold"
+              >
+                Delete Payment
               </button>
             </div>
           </div>

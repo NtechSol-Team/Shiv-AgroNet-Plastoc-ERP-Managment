@@ -544,7 +544,7 @@ router.get('/summary', async (req: Request, res: Response, next: NextFunction) =
 router.post('/bills/:id/payment', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
-        const { amount, paymentMode = 'Bank', reference } = req.body;
+        const { amount, paymentMode = 'Bank', reference, accountId } = req.body;
 
         if (!amount || amount <= 0) {
             throw createError('Valid payment amount required', 400);
@@ -554,62 +554,91 @@ router.post('/bills/:id/payment', async (req: Request, res: Response, next: Next
         const [bill] = await db.select().from(purchaseBills).where(eq(purchaseBills.id, id));
         if (!bill) throw createError('Bill not found', 404);
 
-        const currentPaid = parseFloat(bill.paidAmount || '0');
-        const grandTotal = parseFloat(bill.grandTotal || '0');
-        const newPaid = currentPaid + parseFloat(amount);
-        const newBalance = grandTotal - newPaid;
+        const result = await db.transaction(async (tx) => {
+            // 1. Bank Account & CC Validation
+            if (paymentMode !== 'Cash' && accountId) {
+                const bankAccount = await tx.query.bankCashAccounts.findFirst({
+                    where: eq(bankCashAccounts.id, accountId)
+                });
+                if (!bankAccount) throw createError('Invalid Bank Account', 400);
 
-        // Determine payment status
-        let paymentStatus = 'Unpaid';
-        if (newPaid >= grandTotal) paymentStatus = 'Paid';
-        else if (newPaid > 0) paymentStatus = 'Partial';
+                // CC VALIDATION
+                if (bankAccount.type === 'CC') {
+                    const { validateCCTransaction } = await import('../services/cc-account.service');
+                    const validation = await validateCCTransaction(accountId, parseFloat(amount));
+                    if (!validation.allowed) {
+                        throw createError(validation.message || 'CC Logic Error', 400);
+                    }
+                }
 
-        // Update bill
-        await db.update(purchaseBills)
-            .set({
-                paidAmount: String(newPaid),
-                balanceAmount: String(newBalance),
-                paymentStatus,
-                updatedAt: new Date(),
-            })
-            .where(eq(purchaseBills.id, id));
+                // Update Bank Balance (Credit Bank -> Decrease Balance)
+                await tx.update(bankCashAccounts)
+                    .set({
+                        balance: sql`${bankCashAccounts.balance} - ${amount}`,
+                        updatedAt: new Date()
+                    })
+                    .where(eq(bankCashAccounts.id, accountId));
+            }
 
-        // Get supplier info for payment transaction
-        const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, bill.supplierId));
-        if (!supplier) {
-            throw createError('Supplier not found', 404);
-        }
+            const currentPaid = parseFloat(bill.paidAmount || '0');
+            const grandTotal = parseFloat(bill.grandTotal || '0');
+            const newPaid = currentPaid + parseFloat(amount);
+            const newBalance = grandTotal - newPaid;
 
-        // Record payment transaction
-        const paymentCode = `PAY-${String(Date.now()).slice(-6)}`;
-        await db.insert(paymentTransactions).values({
-            code: paymentCode,
-            date: new Date(),
-            type: 'PAYMENT',
-            referenceType: 'purchase',
-            referenceId: id,
-            referenceCode: bill.code,
-            partyType: 'supplier',
-            partyId: bill.supplierId,
-            partyName: supplier.name,
-            mode: paymentMode,
-            accountId: null,
-            amount: String(amount),
-            bankReference: reference || null,
-            remarks: null,
+            // Determine payment status
+            let paymentStatus = 'Unpaid';
+            if (newPaid >= grandTotal) paymentStatus = 'Paid';
+            else if (newPaid > 0) paymentStatus = 'Partial';
+
+            // Update bill
+            await tx.update(purchaseBills)
+                .set({
+                    paidAmount: String(newPaid),
+                    balanceAmount: String(newBalance),
+                    paymentStatus,
+                    updatedAt: new Date(),
+                })
+                .where(eq(purchaseBills.id, id));
+
+            // Get supplier info for payment transaction
+            const [supplier] = await tx.select().from(suppliers).where(eq(suppliers.id, bill.supplierId));
+            if (!supplier) {
+                throw createError('Supplier not found', 404);
+            }
+
+            // Record payment transaction
+            const paymentCode = `PAY-${String(Date.now()).slice(-6)}`;
+            await tx.insert(paymentTransactions).values({
+                code: paymentCode,
+                date: new Date(),
+                type: 'PAYMENT',
+                referenceType: 'purchase',
+                referenceId: id,
+                referenceCode: bill.code,
+                partyType: 'supplier',
+                partyId: bill.supplierId,
+                partyName: supplier.name,
+                mode: paymentMode,
+                accountId: accountId || null,
+                amount: String(amount),
+                bankReference: reference || null,
+                remarks: null,
+            });
+
+            // Update supplier outstanding
+            const newOutstanding = parseFloat(supplier.outstanding || '0') - parseFloat(amount);
+            await tx.update(suppliers)
+                .set({ outstanding: String(Math.max(0, newOutstanding)) })
+                .where(eq(suppliers.id, bill.supplierId));
+
+            return { newPaid, newBalance, paymentStatus };
         });
-
-        // Update supplier outstanding
-        const newOutstanding = parseFloat(supplier.outstanding || '0') - parseFloat(amount);
-        await db.update(suppliers)
-            .set({ outstanding: String(Math.max(0, newOutstanding)) })
-            .where(eq(suppliers.id, bill.supplierId));
 
         res.json(successResponse({
             message: 'Payment recorded',
-            paidAmount: newPaid,
-            balanceAmount: newBalance,
-            paymentStatus,
+            paidAmount: result.newPaid,
+            balanceAmount: result.newBalance,
+            paymentStatus: result.paymentStatus,
         }));
     } catch (error) {
         next(error);
@@ -733,6 +762,11 @@ router.put('/bills/:id', async (req: Request, res: Response, next: NextFunction)
                         materialName = head.name;
                         expenseHeadId = item.expenseHeadId;
                     }
+                }
+
+                // Fallback to provided name
+                if (!materialName && (item.expenseHeadName || item.materialName)) {
+                    materialName = item.expenseHeadName || item.materialName;
                 }
             }
 
@@ -1100,24 +1134,15 @@ router.post('/payments', async (req: Request, res: Response, next: NextFunction)
 });
 
 // REVERSE PAYMENT
-router.post('/payments/:id/reverse', async (req, res, next) => {
+// DELETE PAYMENT
+router.delete('/payments/:id', async (req, res, next) => {
     try {
         const { id } = req.params;
-        const { reason } = req.body;
 
         const payment = (await db.select().from(paymentTransactions).where(eq(paymentTransactions.id, id)))[0];
         if (!payment) throw createError('Payment not found', 404);
-        if (payment.status === 'Reversed') throw createError('Payment is already reversed', 400);
 
-        // 1. Mark as Reversed
-        await db.update(paymentTransactions)
-            .set({
-                status: 'Reversed',
-                remarks: (payment.remarks || '') + ` | Reversed: ${reason || 'No reason provided'}`
-            })
-            .where(eq(paymentTransactions.id, id));
-
-        // 2. Revert Bills (Fetch allocations)
+        // 1. Revert Bills (Fetch allocations)
         const allocations = await db.select().from(billPaymentAllocations).where(eq(billPaymentAllocations.paymentId, id));
 
         for (const allocation of allocations) {
@@ -1136,14 +1161,18 @@ router.post('/payments/:id/reverse', async (req, res, next) => {
             }
         }
 
-        // 3. Revert Supplier Outstanding (INCREASE it back)
-        const supplier = (await db.select().from(suppliers).where(eq(suppliers.id, payment.partyId)))[0];
-        const newOutstanding = parseFloat(supplier.outstanding || '0') + parseFloat(payment.amount);
-        await db.update(suppliers)
-            .set({ outstanding: newOutstanding.toString() })
-            .where(eq(suppliers.id, payment.partyId));
+        // 2. Revert Supplier Outstanding (INCREASE it back)
+        if (payment.partyId && payment.partyType === 'supplier') {
+            const supplier = (await db.select().from(suppliers).where(eq(suppliers.id, payment.partyId)))[0];
+            if (supplier) {
+                const newOutstanding = parseFloat(supplier.outstanding || '0') + parseFloat(payment.amount);
+                await db.update(suppliers)
+                    .set({ outstanding: newOutstanding.toString() })
+                    .where(eq(suppliers.id, payment.partyId));
+            }
+        }
 
-        // 4. Revert Bank Balance (INCREASE it back - Money In)
+        // 3. Revert Bank Balance (INCREASE it back - Money In)
         if (payment.accountId) {
             const account = (await db.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, payment.accountId)))[0];
             if (account) {
@@ -1154,38 +1183,21 @@ router.post('/payments/:id/reverse', async (req, res, next) => {
             }
         }
 
-        // 5. Create Reversal GL Entries
-        const reversalCode = `REV-PAY-${Date.now()}`;
+        // 4. Delete Allocations
+        await db.delete(billPaymentAllocations).where(eq(billPaymentAllocations.paymentId, id));
 
-        // REVERSAL ENTRY 1: Debit Bank (Undo Credit)
-        await db.insert(generalLedger).values({
-            transactionDate: new Date(),
-            voucherNumber: reversalCode,
-            voucherType: 'CONTRA',
-            ledgerId: payment.accountId!,
-            ledgerType: payment.mode === 'Cash' ? 'CASH' : 'BANK',
-            debitAmount: payment.amount.toString(),
-            creditAmount: '0',
-            description: `Reversal of Payment ${payment.code}`,
-            referenceId: payment.id,
-            isReversal: true
-        });
+        // 5. Delete Ledger Entries
+        await db.delete(generalLedger).where(eq(generalLedger.referenceId, id));
 
-        // REVERSAL ENTRY 2: Credit Supplier (Undo Debit)
-        await db.insert(generalLedger).values({
-            transactionDate: new Date(),
-            voucherNumber: reversalCode,
-            voucherType: 'CONTRA',
-            ledgerId: payment.partyId,
-            ledgerType: 'SUPPLIER',
-            debitAmount: '0',
-            creditAmount: payment.amount.toString(),
-            description: `Reversal of Payment ${payment.code}`,
-            referenceId: payment.id,
-            isReversal: true
-        });
+        // 6. Delete Payment Transaction
+        await db.delete(paymentTransactions).where(eq(paymentTransactions.id, id));
 
-        res.json(successResponse({ message: 'Payment reversed successfully' }));
+        // Invalidate cache
+        cacheService.del('dashboard:kpis');
+        cacheService.del('masters:suppliers');
+        cacheService.del('masters:accounts');
+
+        res.json(successResponse({ message: 'Payment deleted physically' }));
 
     } catch (error) {
         next(error);

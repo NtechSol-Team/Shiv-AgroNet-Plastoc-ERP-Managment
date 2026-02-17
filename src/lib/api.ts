@@ -187,6 +187,27 @@ export const mastersApi = {
     deleteAccount: (id: string) =>
         fetchApi<any>(`/masters/accounts/${id}`, { method: 'DELETE' }),
 
+    // CC Accounts
+    getCCAccounts: () => fetchApi<any[]>('/cc-accounts'),
+    createCCAccount: (data: any) =>
+        fetchApi<any>('/cc-accounts', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
+    updateCCAccount: (id: string, data: any) =>
+        fetchApi<any>(`/cc-accounts/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        }),
+    deleteCCAccount: (id: string) =>
+        fetchApi<any>(`/masters/cc-accounts/${id}`, { method: 'DELETE' }),
+    getCCAccountStatus: (id: string) => fetchApi<any>(`/cc-accounts/${id}/status`),
+    postCCInterest: (id: string, month: string) => fetchApi<any>(`/cc-accounts/${id}/interest/post`, {
+        method: 'POST',
+        body: JSON.stringify({ month }),
+    }),
+    getCCInterestLogs: () => fetchApi<any[]>('/cc-accounts/interest-logs'),
+
     // Employees
     getEmployees: () => fetchApi<any[]>('/masters/employees'),
     createEmployee: (data: any) =>
@@ -217,17 +238,14 @@ export const purchaseApi = {
             body: JSON.stringify(data),
         }),
     getSummary: () => fetchApi<any>('/purchase/summary'),
-    getOutstandingBills: (supplierId: string) => fetchApi<any[]>(`/purchase/outstanding/${supplierId}`),
+    getOutstandingBills: (supplierId: string) => fetchApi<any[]>(`/purchase/outstanding/${supplierId}`),    // Payments
     createPayment: (data: any) =>
         fetchApi<any>('/purchase/payments', {
             method: 'POST',
             body: JSON.stringify(data),
         }),
-    reversePayment: (id: string, reason: string) =>
-        fetchApi<any>(`/purchase/payments/${id}/reverse`, {
-            method: 'POST',
-            body: JSON.stringify({ reason }),
-        }),
+    deletePayment: (id: string) =>
+        fetchApi<any>(`/purchase/payments/${id}`, { method: 'DELETE' }),
     deleteBill: (id: string) =>
         fetchApi<any>(`/purchase/bills/${id}`, { method: 'DELETE' }),
 
@@ -308,11 +326,8 @@ export const salesApi = {
             method: 'POST',
             body: JSON.stringify(data),
         }),
-    reverseReceipt: (id: string, reason: string) =>
-        fetchApi<any>(`/sales/receipts/${id}/reverse`, {
-            method: 'POST',
-            body: JSON.stringify({ reason }),
-        }),
+    deleteReceipt: (id: string) =>
+        fetchApi<any>(`/sales/receipts/${id}`, { method: 'DELETE' }),
     getAvailableBells: () => fetchApi<any[]>('/sales/available-bells'),
     deleteInvoice: (id: string) =>
         fetchApi<any>(`/sales/invoices/${id}`, { method: 'DELETE' }),

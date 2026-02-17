@@ -741,3 +741,59 @@ export const purchaseBillAdjustmentsRelations = relations(purchaseBillAdjustment
     targetBill: one(purchaseBills, { fields: [purchaseBillAdjustments.targetBillId], references: [purchaseBills.id], relationName: 'adjustmentsTarget' }),
     rawMaterial: one(rawMaterials, { fields: [purchaseBillAdjustments.rawMaterialId], references: [rawMaterials.id] }),
 }));
+// ==================== CASH CREDIT (CC) MASTERS & LEDGERS ====================
+
+export const ccAccountDetails = pgTable('cc_account_details', {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    accountId: text('account_id').notNull().references(() => bankCashAccounts.id, { onDelete: 'cascade' }),
+    sanctionedLimit: decimal('sanctioned_limit', { precision: 12, scale: 2 }).notNull(),
+    interestRate: decimal('interest_rate', { precision: 5, scale: 2 }).notNull(), // % p.a.
+    interestCalculationMethod: text('interest_calculation_method').default('Daily Outstanding'),
+    drawingPowerMode: text('drawing_power_mode').default('Automatic'), // Manual, Automatic
+    stockMargin: decimal('stock_margin', { precision: 5, scale: 2 }).default('25'), // % margin on stock
+    receivablesMargin: decimal('receivables_margin', { precision: 5, scale: 2 }).default('40'), // % margin on receivables
+    validityPeriod: timestamp('validity_period'),
+    securityType: text('security_type'),
+    lastInterestCalculatedDate: timestamp('last_interest_calculated_date'),
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => ({
+    accountIdx: index('cc_details_account_idx').on(table.accountId),
+}));
+
+export const ccDailyBalances = pgTable('cc_daily_balances', {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    accountId: text('account_id').notNull().references(() => bankCashAccounts.id, { onDelete: 'cascade' }),
+    date: timestamp('date').notNull(),
+    outstandingAmount: decimal('outstanding_amount', { precision: 12, scale: 2 }).notNull(), // Liability amount
+    drawingPower: decimal('drawing_power', { precision: 12, scale: 2 }).notNull(), // Snapshot of DP
+    interestAccrued: decimal('interest_accrued', { precision: 12, scale: 2 }).default('0'),
+    createdAt: timestamp('created_at').defaultNow(),
+}, (table) => ({
+    accountDateIdx: index('cc_daily_balances_acc_date_idx').on(table.accountId, table.date),
+}));
+
+export const ccInterestLogs = pgTable('cc_interest_logs', {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    accountId: text('account_id').notNull().references(() => bankCashAccounts.id, { onDelete: 'cascade' }),
+    month: timestamp('month').notNull(), // First day of the month
+    totalInterest: decimal('total_interest', { precision: 12, scale: 2 }).notNull(),
+    isPosted: boolean('is_posted').default(false),
+    ledgerEntryId: text('ledger_entry_id').references(() => generalLedger.id), // Link to accounting
+    createdAt: timestamp('created_at').defaultNow(),
+}, (table) => ({
+    accountMonthIdx: index('cc_interest_logs_acc_month_idx').on(table.accountId, table.month),
+}));
+
+export const ccAccountDetailsRelations = relations(ccAccountDetails, ({ one }) => ({
+    account: one(bankCashAccounts, { fields: [ccAccountDetails.accountId], references: [bankCashAccounts.id] }),
+}));
+
+export const ccDailyBalancesRelations = relations(ccDailyBalances, ({ one }) => ({
+    account: one(bankCashAccounts, { fields: [ccDailyBalances.accountId], references: [bankCashAccounts.id] }),
+}));
+
+export const ccInterestLogsRelations = relations(ccInterestLogs, ({ one }) => ({
+    account: one(bankCashAccounts, { fields: [ccInterestLogs.accountId], references: [bankCashAccounts.id] }),
+    ledgerEntry: one(generalLedger, { fields: [ccInterestLogs.ledgerEntryId], references: [generalLedger.id] }),
+}));
