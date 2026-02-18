@@ -13,6 +13,7 @@ import bellInventoryRouter from './bell-inventory';
 import financeRouter from './finance';
 import samplesRouter from './samples';
 import ccAccountsRouter from './cc-accounts';
+import maintenanceRouter from './maintenance';
 
 const router = Router();
 
@@ -29,5 +30,6 @@ router.use('/reports', reportsRouter);
 router.use('/dashboard', dashboardRouter);
 router.use('/finance', financeRouter);
 router.use('/samples', samplesRouter);
+router.use('/maintenance', maintenanceRouter);
 
 export default router;

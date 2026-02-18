@@ -67,21 +67,17 @@ export interface StockValidationResult {
 export async function getRawMaterialStock(rawMaterialId: string, tx: any = db): Promise<number> {
     const result = await tx
         .select({
-            totalIn: sql<string>`COALESCE(SUM(${stockMovements.quantityIn}), 0)`,
-            totalOut: sql<string>`COALESCE(SUM(${stockMovements.quantityOut}), 0)`,
+            totalWeight: sql<string>`COALESCE(SUM(${rawMaterialRolls.netWeight}), 0)`,
         })
-        .from(stockMovements)
+        .from(rawMaterialRolls)
         .where(
             and(
-                eq(stockMovements.itemType, 'raw_material'),
-                eq(stockMovements.rawMaterialId, rawMaterialId)
+                eq(rawMaterialRolls.rawMaterialId, rawMaterialId),
+                eq(rawMaterialRolls.status, 'In Stock')
             )
         );
 
-    const totalIn = parseFloat(result[0]?.totalIn || '0');
-    const totalOut = parseFloat(result[0]?.totalOut || '0');
-
-    return totalIn - totalOut;
+    return parseFloat(result[0]?.totalWeight || '0');
 }
 
 /**

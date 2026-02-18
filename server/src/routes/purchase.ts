@@ -904,6 +904,25 @@ router.delete('/bills/:id', async (req: Request, res: Response, next: NextFuncti
         await db.delete(purchaseBillAdjustments).where(eq(purchaseBillAdjustments.sourceBillId, id));
         await db.delete(purchaseBillAdjustments).where(eq(purchaseBillAdjustments.targetBillId, id));
 
+        // Get rolls linked to this bill for stock reversal
+        const billRolls = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.purchaseBillId, id));
+
+        // Reverse stock movements for each roll before deletion
+        for (const roll of billRolls) {
+            await createStockMovement({
+                date: new Date(),
+                movementType: 'RAW_OUT',
+                itemType: 'raw_material',
+                rawMaterialId: roll.rawMaterialId,
+                quantityOut: parseFloat(roll.netWeight || '0'),
+                referenceType: 'purchase_roll_delete',
+                referenceCode: roll.rollCode,
+                referenceId: roll.id,
+                reason: `Reversed: Roll ${roll.rollCode} deleted (Bill ${bill.code} removed)`
+            });
+            console.log(`✓ Reversed stock for roll ${roll.rollCode}: -${roll.netWeight}kg`);
+        }
+
         // Delete rolls linked to this bill
         await db.delete(rawMaterialRolls).where(eq(rawMaterialRolls.purchaseBillId, id));
 
@@ -917,19 +936,7 @@ router.delete('/bills/:id', async (req: Request, res: Response, next: NextFuncti
         if (bill.status === 'Confirmed') {
             // Reverse stock for each item
             for (const item of billItems) {
-                if (bill.type === 'RAW_MATERIAL' && item.rawMaterialId) {
-                    await createStockMovement({
-                        date: new Date(),
-                        movementType: 'RAW_OUT',
-                        itemType: 'raw_material',
-                        rawMaterialId: item.rawMaterialId,
-                        quantityOut: parseFloat(item.quantity || '0'),
-                        referenceType: 'purchase_delete',
-                        referenceCode: bill.code,
-                        referenceId: id,
-                        reason: `Reversed: Bill ${bill.code} deleted`
-                    });
-                } else if (bill.type === 'FINISHED_GOODS' && item.finishedProductId) {
+                if (bill.type === 'FINISHED_GOODS' && item.finishedProductId) {
                     await createStockMovement({
                         date: new Date(),
                         movementType: 'FG_OUT',
