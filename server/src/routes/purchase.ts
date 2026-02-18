@@ -203,10 +203,17 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
         console.log(`✓ Supplier found: ${supplier.name} (${supplier.code})`);
         const isInterState = (supplier.stateCode || '27') !== COMPANY_STATE_CODE;
 
-        // Generate bill code
-        const countResult = await db.select({ cnt: countFn() }).from(purchaseBills);
-        const billCount = Number(countResult[0]?.cnt || 0);
-        const billCode = `PB-${String(billCount + 1).padStart(3, '0')}`;
+        // Generate bill code by finding the maximum existing code
+        const allBills = await db.select({ code: purchaseBills.code }).from(purchaseBills);
+        let maxSeq = 0;
+        for (const b of allBills) {
+            const match = b.code.match(/PB-(\d+)/);
+            if (match) {
+                const seq = parseInt(match[1], 10);
+                if (seq > maxSeq) maxSeq = seq;
+            }
+        }
+        const billCode = `PB-${String(maxSeq + 1).padStart(3, '0')}`;
 
         // Calculate totals from items
         let subtotal = 0;

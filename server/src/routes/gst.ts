@@ -82,7 +82,7 @@ router.get('/search', async (req: Request, res: Response, next: Function) => {
 
         // Map to our internal format
         const mappedData = {
-            name: details.legal_name || details.trade_name,
+            name: details.trade_name || details.legal_name,
             gstin: data.gstin,
             stateCode: details.state_info?.code,
             address: `${details.pradr.addr}, ${details.pradr.street}, ${details.pradr.loc}, ${details.pradr.pincode}`,

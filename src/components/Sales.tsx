@@ -20,14 +20,45 @@ interface InvoiceItem {
 }
 
 // Indian states for Place of Supply
-const INDIAN_STATES = [
-  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh',
-  'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka',
-  'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram',
-  'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu',
-  'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal',
-  'Andaman and Nicobar Islands', 'Chandigarh', 'Dadra and Nagar Haveli',
-  'Daman and Diu', 'Delhi', 'Jammu and Kashmir', 'Ladakh', 'Lakshadweep', 'Puducherry'
+// GST State Codes for Mapping
+const GST_STATES = [
+  { code: '01', name: 'Jammu and Kashmir' },
+  { code: '02', name: 'Himachal Pradesh' },
+  { code: '03', name: 'Punjab' },
+  { code: '04', name: 'Chandigarh' },
+  { code: '05', name: 'Uttarakhand' },
+  { code: '06', name: 'Haryana' },
+  { code: '07', name: 'Delhi' },
+  { code: '08', name: 'Rajasthan' },
+  { code: '09', name: 'Uttar Pradesh' },
+  { code: '10', name: 'Bihar' },
+  { code: '11', name: 'Sikkim' },
+  { code: '12', name: 'Arunachal Pradesh' },
+  { code: '13', name: 'Nagaland' },
+  { code: '14', name: 'Manipur' },
+  { code: '15', name: 'Mizoram' },
+  { code: '16', name: 'Tripura' },
+  { code: '17', name: 'Meghalaya' },
+  { code: '18', name: 'Assam' },
+  { code: '19', name: 'West Bengal' },
+  { code: '20', name: 'Jharkhand' },
+  { code: '21', name: 'Odisha' },
+  { code: '22', name: 'Chhattisgarh' },
+  { code: '23', name: 'Madhya Pradesh' },
+  { code: '24', name: 'Gujarat' },
+  { code: '25', name: 'Daman & Diu' },
+  { code: '26', name: 'Dadra & Nagar Haveli' },
+  { code: '27', name: 'Maharashtra' },
+  { code: '29', name: 'Karnataka' },
+  { code: '30', name: 'Goa' },
+  { code: '31', name: 'Lakshadweep' },
+  { code: '32', name: 'Kerala' },
+  { code: '33', name: 'Tamil Nadu' },
+  { code: '34', name: 'Puducherry' },
+  { code: '35', name: 'Andaman & Nicobar Islands' },
+  { code: '36', name: 'Telangana' },
+  { code: '37', name: 'Andhra Pradesh' },
+  { code: '38', name: 'Ladakh' }
 ];
 
 export function Sales() {
@@ -158,8 +189,8 @@ export function Sales() {
   };
 
   const saveQuickCustomer = async () => {
-    if (!quickAddCustomerForm.name || !quickAddCustomerForm.phone) {
-      setError('Customer name and phone are required.');
+    if (!quickAddCustomerForm.name) {
+      setError('Customer name is required.');
       return;
     }
 
@@ -361,7 +392,7 @@ export function Sales() {
     const taxableAmount = subtotal - totalDiscount;
     const totalTax = invoiceItems.reduce((sum, item) => (item.taxableAmount * item.taxPercent) / 100, 0);
 
-    const isInterstate = invoiceForm.placeOfSupply !== 'Maharashtra';
+    const isInterstate = invoiceForm.placeOfSupply !== '27'; // Use company state code (MH)
     const cgst = isInterstate ? 0 : totalTax / 2;
     const sgst = isInterstate ? 0 : totalTax / 2;
     const igst = isInterstate ? totalTax : 0;
@@ -613,7 +644,7 @@ export function Sales() {
       dueDate: invoice.dueDate?.split('T')[0] || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       customerId: invoice.customerId || '',
       invoiceType: invoice.invoiceType || 'B2B',
-      placeOfSupply: invoice.placeOfSupply || 'Maharashtra',
+      placeOfSupply: invoice.placeOfSupply || '27',
       billingAddress: invoice.billingAddress || '',
       shippingAddress: invoice.shippingAddress || '',
       sameAsBilling: true,
@@ -965,7 +996,7 @@ export function Sales() {
                     <div>
                       <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Place of Supply</label>
                       <select value={invoiceForm.placeOfSupply} onChange={e => setInvoiceForm({ ...invoiceForm, placeOfSupply: e.target.value })} className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-medium bg-white">
-                        {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                        {GST_STATES.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
                       </select>
                     </div>
                   </div>
@@ -1570,10 +1601,9 @@ export function Sales() {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase">Phone *</label>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase">Phone</label>
                   <input
                     type="text"
-                    required
                     value={quickAddCustomerForm.phone}
                     onChange={e => setQuickAddCustomerForm({ ...quickAddCustomerForm, phone: e.target.value })}
                     className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500"
@@ -1587,8 +1617,8 @@ export function Sales() {
                     onChange={e => setQuickAddCustomerForm({ ...quickAddCustomerForm, stateCode: e.target.value })}
                     className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 bg-white"
                   >
-                    {INDIAN_STATES.map((state, index) => (
-                      <option key={index} value={String(index + 1).padStart(2, '0')}>{state}</option>
+                    {GST_STATES.map((state) => (
+                      <option key={state.code} value={state.code}>{state.name}</option>
                     ))}
                   </select>
                 </div>
