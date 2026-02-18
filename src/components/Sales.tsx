@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Printer, Search, X, Trash2, Loader2, Building2, MapPin, FileText, Download, Receipt, ArrowRight, RotateCcw, History, Info, MessageCircle, Link, Edit2 } from 'lucide-react';
-import { salesApi, mastersApi, accountsApi } from '../lib/api';
+import { salesApi, mastersApi, accountsApi, gstApi } from '../lib/api';
 import { printInvoice } from '../utils/printInvoice';
 
 /* Updated Invoice Item Interface matching Backend */
@@ -110,12 +110,84 @@ export function Sales() {
 
   const [expandedInvoice, setExpandedInvoice] = useState<string | null>(null);
 
-  // Adjust Advance State REMOVED
+  // Quick Add Party State
+  const [showQuickAddCustomer, setShowQuickAddCustomer] = useState(false);
+  const [quickAddGstLoading, setQuickAddGstLoading] = useState(false);
+  const [quickAddGstSuccess, setQuickAddGstSuccess] = useState<string | null>(null);
+  const [quickAddCustomerForm, setQuickAddCustomerForm] = useState({
+    name: '',
+    gstNo: '',
+    phone: '',
+    email: '',
+    stateCode: '27',
+    address: ''
+  });
+
   const [availableAdvances, setAvailableAdvances] = useState<any[]>([]);
 
   useEffect(() => {
     fetchData();
   }, [page, limit]);
+
+  const handleQuickGstSearch = async () => {
+    const gstin = quickAddCustomerForm.gstNo;
+    if (!gstin || gstin.length !== 15) return;
+
+    setQuickAddGstLoading(true);
+    setError(null);
+    setQuickAddGstSuccess(null);
+
+    try {
+      const result = await gstApi.search(gstin);
+      if (result.data) {
+        setQuickAddCustomerForm(prev => ({
+          ...prev,
+          name: result.data.name,
+          stateCode: result.data.stateCode,
+          address: result.data.address
+        }));
+        setQuickAddGstSuccess('GST details fetched successfully.');
+        setTimeout(() => setQuickAddGstSuccess(null), 3000);
+      } else {
+        setError(result.error || 'Unable to fetch GST details.');
+      }
+    } catch (err) {
+      setError('Failed to fetch GST details.');
+    }
+    setQuickAddGstLoading(false);
+  };
+
+  const saveQuickCustomer = async () => {
+    if (!quickAddCustomerForm.name || !quickAddCustomerForm.phone) {
+      setError('Customer name and phone are required.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const result = await mastersApi.createCustomer(quickAddCustomerForm);
+      if (result.data) {
+        setCustomers(prev => [...prev, result.data]);
+        handleCustomerSelect(result.data.id);
+        setShowQuickAddCustomer(false);
+        setQuickAddCustomerForm({
+          name: '',
+          gstNo: '',
+          phone: '',
+          email: '',
+          stateCode: '27',
+          address: ''
+        });
+        setSuccess('Customer added and selected.');
+        setTimeout(() => setSuccess(null), 3000);
+      } else {
+        setError(result.error || 'Failed to add customer.');
+      }
+    } catch (err) {
+      setError('Failed to save customer.');
+    }
+    setSaving(false);
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -902,10 +974,20 @@ export function Sales() {
                   <div className="col-span-1 lg:col-span-8 grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="block text-[10px] font-bold text-gray-500 uppercase">Bill To Parent</label>
-                      <select value={invoiceForm.customerId} onChange={e => handleCustomerSelect(e.target.value)} className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-bold bg-white">
-                        <option value="">Select Customer Account...</option>
-                        {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
+                      <div className="flex space-x-2">
+                        <select value={invoiceForm.customerId} onChange={e => handleCustomerSelect(e.target.value)} className="flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-bold bg-white">
+                          <option value="">Select Customer Account...</option>
+                          {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => setShowQuickAddCustomer(true)}
+                          className="px-2 py-1.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-sm hover:bg-blue-100 transition-colors"
+                          title="Quick Add Customer"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
                       {selectedCustomer && (
                         <div className="text-xs text-gray-600 bg-gray-50 p-2 border border-gray-200 rounded-sm">
                           <p className="font-bold">{selectedCustomer.name}</p>
@@ -1437,6 +1519,109 @@ export function Sales() {
         )
       }
 
+
+      {showQuickAddCustomer && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg overflow-hidden border border-gray-200">
+            <div className="bg-blue-600 px-4 py-3 flex justify-between items-center text-white">
+              <h3 className="font-bold flex items-center">
+                <Plus className="w-4 h-4 mr-2" />
+                Quick Add Customer
+              </h3>
+              <button onClick={() => setShowQuickAddCustomer(false)} className="hover:bg-blue-700 p-1 rounded transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4 max-h-[80vh] overflow-y-auto">
+              {error && <div className="p-2 text-xs font-bold text-red-600 bg-red-50 border border-red-200 rounded-sm mb-2">{error}</div>}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase">GST Number (Optional)</label>
+                  <div className="flex space-x-2 mt-1">
+                    <input
+                      type="text"
+                      maxLength={15}
+                      value={quickAddCustomerForm.gstNo}
+                      onChange={e => setQuickAddCustomerForm({ ...quickAddCustomerForm, gstNo: e.target.value.toUpperCase() })}
+                      className="flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 uppercase font-mono"
+                      placeholder="Enter GSTIN..."
+                    />
+                    <button
+                      type="button"
+                      onClick={handleQuickGstSearch}
+                      disabled={quickAddGstLoading || quickAddCustomerForm.gstNo.length !== 15}
+                      className="px-3 py-1.5 bg-gray-100 text-gray-700 border border-gray-300 rounded-sm hover:bg-gray-200 disabled:opacity-50 text-xs font-bold"
+                    >
+                      {quickAddGstLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'FETCH'}
+                    </button>
+                  </div>
+                  {quickAddGstSuccess && <p className="text-[10px] text-green-600 font-bold mt-1">{quickAddGstSuccess}</p>}
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase">Customer Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={quickAddCustomerForm.name}
+                    onChange={e => setQuickAddCustomerForm({ ...quickAddCustomerForm, name: e.target.value })}
+                    className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase">Phone *</label>
+                  <input
+                    type="text"
+                    required
+                    value={quickAddCustomerForm.phone}
+                    onChange={e => setQuickAddCustomerForm({ ...quickAddCustomerForm, phone: e.target.value })}
+                    className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase">State *</label>
+                  <select
+                    value={quickAddCustomerForm.stateCode}
+                    onChange={e => setQuickAddCustomerForm({ ...quickAddCustomerForm, stateCode: e.target.value })}
+                    className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 bg-white"
+                  >
+                    {INDIAN_STATES.map((state, index) => (
+                      <option key={index} value={String(index + 1).padStart(2, '0')}>{state}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase">Billing Address</label>
+                  <textarea
+                    rows={2}
+                    value={quickAddCustomerForm.address}
+                    onChange={e => setQuickAddCustomerForm({ ...quickAddCustomerForm, address: e.target.value })}
+                    className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="bg-gray-50 px-4 py-3 flex justify-end space-x-3 border-t border-gray-200">
+              <button
+                onClick={() => setShowQuickAddCustomer(false)}
+                className="px-4 py-1.5 text-sm font-bold text-gray-600 hover:bg-gray-100 rounded-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveQuickCustomer}
+                disabled={saving}
+                className="px-6 py-1.5 text-sm font-bold bg-blue-600 text-white rounded-sm hover:bg-blue-700 disabled:opacity-50 flex items-center"
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : 'Save & Select'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div >
   );

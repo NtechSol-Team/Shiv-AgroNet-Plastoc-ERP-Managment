@@ -246,3 +246,54 @@ export async function createCCAccount(data: any) {
         return account;
     });
 }
+
+/**
+ * Update existing CC Account (Transactionally)
+ */
+export async function updateCCAccount(id: string, data: any) {
+    return await db.transaction(async (tx) => {
+        // 1. Update Base Bank Account
+        await tx.update(bankCashAccounts)
+            .set({
+                name: data.name,
+                accountNo: data.accountNo,
+            })
+            .where(eq(bankCashAccounts.id, id));
+
+        // 2. Update CC Details
+        // Check if details exist (should exist for CC, but safety check)
+        const existingDetails = await tx.query.ccAccountDetails.findFirst({
+            where: eq(ccAccountDetails.accountId, id)
+        });
+
+        if (existingDetails) {
+            await tx.update(ccAccountDetails)
+                .set({
+                    sanctionedLimit: String(data.sanctionedLimit),
+                    interestRate: String(data.interestRate),
+                    interestCalculationMethod: data.interestCalculationMethod || 'Daily Outstanding',
+                    drawingPowerMode: data.drawingPowerMode || 'Automatic',
+                    stockMargin: String(data.stockMargin || 25),
+                    receivablesMargin: String(data.receivablesMargin || 40),
+                    securityType: data.securityType,
+                    validityPeriod: data.validityPeriod ? new Date(data.validityPeriod) : null
+                })
+                .where(eq(ccAccountDetails.accountId, id));
+        } else {
+            // If for some reason details don't exist, create them
+            await tx.insert(ccAccountDetails).values({
+                accountId: id,
+                sanctionedLimit: String(data.sanctionedLimit),
+                interestRate: String(data.interestRate),
+                interestCalculationMethod: data.interestCalculationMethod || 'Daily Outstanding',
+                drawingPowerMode: data.drawingPowerMode || 'Automatic',
+                stockMargin: String(data.stockMargin || 25),
+                receivablesMargin: String(data.receivablesMargin || 40),
+                securityType: data.securityType,
+                validityPeriod: data.validityPeriod ? new Date(data.validityPeriod) : null
+            });
+        }
+
+        return { id, message: 'CC Account updated successfully' };
+    });
+}

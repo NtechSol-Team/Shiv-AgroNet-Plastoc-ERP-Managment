@@ -20,13 +20,11 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
                 // finishedProduct: true, // Removed from Batch
                 items: {
                     orderBy: [desc(bellItems.createdAt)],
-                    where: ne(bellItems.status, 'Deleted'),
                     with: {
                         finishedProduct: true // Product is now item-level
                     }
                 }
-            },
-            where: ne(bellBatches.status, 'Deleted')
+            }
         });
 
         res.json(successResponse(batches));
@@ -41,10 +39,22 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
  */
 router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { items } = req.body;
+        const { items, batchCode } = req.body;
+
+        if (!batchCode) {
+            throw createError('Batch Code is required', 400);
+        }
 
         if (!Array.isArray(items) || items.length === 0) {
             throw createError('At least one Item is required', 400);
+        }
+
+        // Check for existing batch code
+        const existingBatch = await db.query.bellBatches.findFirst({
+            where: eq(bellBatches.code, batchCode)
+        });
+        if (existingBatch) {
+            throw createError(`Batch Code ${batchCode} already exists`, 400);
         }
 
         // 1. Group Items by Product to Validate Stock and Calculate Totals
@@ -60,24 +70,18 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
             if (!item.finishedProductId) throw createError('Product ID is required for all items', 400);
             if (!item.gsm || !item.size) throw createError('GSM and Size are required for all items', 400);
 
-            const grossWeight = parseFloat(item.grossWeight);
-            if (isNaN(grossWeight) || grossWeight <= 0) throw createError('All items must have valid positive Gross Weight', 400);
-
-            const weightLoss = parseFloat(item.weightLoss || '0'); // Weight loss in grams
-            if (isNaN(weightLoss) || weightLoss < 0) throw createError('Weight Loss must be a non-negative number (in grams)', 400);
-
-            // Calculate net weight: grossWeight - (weightLoss in grams / 1000)
+            const grossWeight = parseFloat(item.grossWeight) || 0;
+            const weightLoss = parseFloat(item.weightLoss) || 0; // in grams
             const netWeight = grossWeight - (weightLoss / 1000);
-            if (netWeight <= 0) throw createError(`Net Weight must be positive. Gross: ${grossWeight}kg, Loss: ${weightLoss}g = Net: ${netWeight.toFixed(2)}kg`, 400);
 
-            grandTotalGrossWeight += grossWeight;
+            if (netWeight <= 0) throw createError('Net weight must be positive', 400);
 
-            // Accumulate totals per product
             const currentNetTotal = productNetTotals.get(item.finishedProductId) || 0;
-            productNetTotals.set(item.finishedProductId, currentNetTotal + netWeight);
-
             const currentGrossTotal = productGrossTotals.get(item.finishedProductId) || 0;
+
+            productNetTotals.set(item.finishedProductId, currentNetTotal + netWeight);
             productGrossTotals.set(item.finishedProductId, currentGrossTotal + grossWeight);
+            grandTotalGrossWeight += grossWeight;
 
             return {
                 ...item,
@@ -96,8 +100,6 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
             productValidations.set(pid, stockCheck);
         }
 
-        const batchCode = `BB-${Date.now().toString().slice(-6)}`;
-
         await db.transaction(async (tx) => {
             // A. Insert Batch (total weight = gross weight for display purposes)
             const [newBatch] = await tx.insert(bellBatches).values({
@@ -109,7 +111,7 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
             // B. Insert Items with grossWeight, weightLoss, and calculated netWeight
             for (let i = 0; i < processedItems.length; i++) {
                 const item = processedItems[i];
-                const itemCode = `BEL-${batchCode.split('-')[1]}-${(i + 1).toString().padStart(3, '0')}`;
+                const itemCode = `BEL-${batchCode}-${(i + 1).toString().padStart(3, '0')}`;
 
                 await tx.insert(bellItems).values({
                     code: itemCode,
@@ -137,7 +139,7 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
                     referenceCode: batchCode,
                     referenceId: newBatch.id,
                     reason: `Bell Batch Creation (${processedItems.filter((i: any) => i.finishedProductId === pid).length} items)`
-                });
+                }, tx);
             }
 
             res.json(successResponse(newBatch));
@@ -260,6 +262,56 @@ router.put('/:id', async (req: Request, res: Response, next: NextFunction) => {
 });
 
 /**
+ * DELETE /bell-inventory/items/:id
+ * Delete an individual bale from a batch
+ */
+router.delete('/items/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+
+        await db.transaction(async (tx) => {
+            // 1. Get Item
+            const item = await tx.query.bellItems.findFirst({
+                where: eq(bellItems.id, id)
+            });
+            if (!item) throw createError('Bale not found', 404);
+
+            // 2. Refund Stock (FG_IN)
+            await createStockMovement({
+                date: new Date(),
+                movementType: 'FG_IN',
+                itemType: 'finished_product',
+                finishedProductId: item.finishedProductId,
+                quantityIn: parseFloat(item.netWeight),
+                referenceType: 'Bale Delete',
+                referenceCode: item.code,
+                referenceId: item.id,
+                reason: `Bale Delete: ${item.code}`
+            }, tx);
+
+            // 3. Update Batch Total Weight
+            const batch = await tx.query.bellBatches.findFirst({
+                where: eq(bellBatches.id, item.batchId)
+            });
+            if (batch) {
+                const newTotalWeight = parseFloat(batch.totalWeight) - parseFloat(item.grossWeight);
+                await tx.update(bellBatches)
+                    .set({ totalWeight: String(newTotalWeight), updatedAt: new Date() })
+                    .where(eq(bellBatches.id, item.batchId));
+            }
+
+            // 4. Hard Delete Item
+            await tx.delete(bellItems)
+                .where(eq(bellItems.id, id));
+        });
+
+        res.json(successResponse({ message: 'Bale deleted successfully' }));
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
  * DELETE /bell-inventory/:id
  * Delete a Bell Batch (Soft Delete) and Refund Stock
  */
@@ -271,14 +323,11 @@ router.delete('/:id', async (req: Request, res: Response, next: NextFunction) =>
         const batch = await db.query.bellBatches.findFirst({
             where: eq(bellBatches.id, id),
             with: {
-                items: {
-                    where: ne(bellItems.status, 'Deleted')
-                }
+                items: true
             }
         });
 
         if (!batch) throw createError('Batch not found', 404);
-        if (batch.status === 'Deleted') throw createError('Batch already deleted', 400);
 
         // Check if any items are Issued?
         // If an item is Issued, we usually shouldn't delete the Batch easily.
@@ -295,15 +344,13 @@ router.delete('/:id', async (req: Request, res: Response, next: NextFunction) =>
         }
 
         await db.transaction(async (tx) => {
-            // A. Mark Batch as Deleted
-            await tx.update(bellBatches)
-                .set({ status: 'Deleted', updatedAt: new Date() })
-                .where(eq(bellBatches.id, id));
-
-            // B. Mark Items as Deleted
-            await tx.update(bellItems)
-                .set({ status: 'Deleted', updatedAt: new Date() })
+            // A. Delete Items first (handled by cascade, but good to be explicit or if we did manual refund)
+            await tx.delete(bellItems)
                 .where(eq(bellItems.batchId, id));
+
+            // B. Delete Batch
+            await tx.delete(bellBatches)
+                .where(eq(bellBatches.id, id));
 
             // C. Refund Stock (FG_IN) per Product
             for (const [pid, totalW] of productRefunds.entries()) {
@@ -317,7 +364,7 @@ router.delete('/:id', async (req: Request, res: Response, next: NextFunction) =>
                     referenceCode: batch.code,
                     referenceId: batch.id,
                     reason: 'Batch Deleted / Restored to Stock'
-                });
+                }, tx);
             }
 
             res.json(successResponse({ message: 'Bell Batch deleted and stock restored' }));

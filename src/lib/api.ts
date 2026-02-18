@@ -80,6 +80,11 @@ async function fetchApi<T>(
     return promise;
 }
 
+// ==================== GST API ====================
+export const gstApi = {
+    search: (gstin: string) => fetchApi<any>(`/gst/search?gstin=${gstin}`),
+};
+
 // ==================== MASTERS API ====================
 export const mastersApi = {
     // Raw Materials
@@ -222,11 +227,29 @@ export const mastersApi = {
         }),
     deleteEmployee: (id: string) =>
         fetchApi<any>(`/masters/employees/${id}`, { method: 'DELETE' }),
+
+    // General Items
+    getGeneralItems: () => fetchApi<any[]>('/masters/general-items'),
+    createGeneralItem: (data: any) =>
+        fetchApi<any>('/masters/general-items', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
+    updateGeneralItem: (id: string, data: any) =>
+        fetchApi<any>(`/masters/general-items/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        }),
+    deleteGeneralItem: (id: string) =>
+        fetchApi<any>(`/masters/general-items/${id}`, { method: 'DELETE' }),
 };
 
 // ==================== PURCHASE API ====================
 export const purchaseApi = {
-    getBills: (page = 1, limit = 20) => fetchApi<any>(`/purchase/bills?page=${page}&limit=${limit}`),
+    getBills: (page = 1, limit = 20, params?: any) => {
+        const query = new URLSearchParams({ page: String(page), limit: String(limit), ...params }).toString();
+        return fetchApi<any>(`/purchase/bills?${query}`);
+    },
     createBill: (data: any) =>
         fetchApi<any>('/purchase/bills', {
             method: 'POST',
@@ -403,6 +426,8 @@ export const bellInventoryApi = {
         }),
     deleteBell: (id: string) =>
         fetchApi<any>(`/bell-inventory/${id}`, { method: 'DELETE' }),
+    deleteBaleItem: (id: string) =>
+        fetchApi<any>(`/bell-inventory/items/${id}`, { method: 'DELETE' }),
 };
 
 // ==================== REPORTS API ====================
@@ -429,6 +454,12 @@ export const financeApi = {
             method: 'POST',
             body: JSON.stringify(data),
         }),
+    updateEntity: (id: string, data: any) =>
+        fetchApi<any>(`/finance/entities/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        }),
+    deleteEntity: (id: string) => fetchApi<any>(`/finance/entities/${id}`, { method: 'DELETE' }),
     getPartyStats: (id: string) => fetchApi<any>(`/finance/entities/${id}/stats`),
     getTransactions: (page = 1, limit = 20) => fetchApi<any>(`/finance/transactions?page=${page}&limit=${limit}`),
     createTransaction: (data: any) =>
@@ -436,7 +467,9 @@ export const financeApi = {
             method: 'POST',
             body: JSON.stringify(data),
         }),
+    deleteTransaction: (id: string) => fetchApi<any>(`/finance/transactions/${id}`, { method: 'DELETE' }),
     getDashboardStats: () => fetchApi<any>('/finance/dashboard-stats'),
+    recalculateLedgers: () => fetchApi<any>('/finance/recalculate-ledgers', { method: 'POST' }),
 };
 
 // ==================== SAMPLES API ====================

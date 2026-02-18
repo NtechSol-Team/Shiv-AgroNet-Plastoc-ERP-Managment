@@ -11,7 +11,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Minus, Search, Loader2, Building2, Package, Trash2, CheckCircle, XCircle, RotateCcw, Link, Edit2 } from 'lucide-react';
-import { purchaseApi, mastersApi, accountsApi } from '../lib/api';
+import { purchaseApi, mastersApi, accountsApi, gstApi } from '../lib/api';
 import RollEntryModal from './RollEntryModal';
 
 // ============================================================
@@ -54,10 +54,18 @@ interface ExpenseHead {
   name: string;
 }
 
+interface GeneralItem {
+  id: string;
+  name: string;
+  defaultExpenseHeadId?: string;
+  defaultExpenseHead?: ExpenseHead;
+}
+
 interface PurchaseItem {
   id: string;
   rawMaterialId?: string;
   finishedProductId?: string;
+  generalItemId?: string;
   expenseHeadId?: string;
   materialName: string;
   hsnCode: string;
@@ -96,6 +104,17 @@ interface PurchaseBill {
 // Company state code (Maharashtra)
 const COMPANY_STATE_CODE = '27';
 
+// Indian states for Place of Supply
+const INDIAN_STATES = [
+  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh',
+  'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka',
+  'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram',
+  'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu',
+  'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal',
+  'Andaman and Nicobar Islands', 'Chandigarh', 'Dadra and Nagar Haveli',
+  'Daman and Diu', 'Delhi', 'Jammu and Kashmir', 'Ladakh', 'Lakshadweep', 'Puducherry'
+];
+
 // ============================================================
 // MAIN COMPONENT
 // ============================================================
@@ -114,6 +133,7 @@ export function Purchase() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [finishedProducts, setFinishedProducts] = useState<FinishedProduct[]>([]);
+  const [generalItems, setGeneralItems] = useState<GeneralItem[]>([]);
   const [expenseHeads, setExpenseHeads] = useState<ExpenseHead[]>([]);
   const [summary, setSummary] = useState<any>(null);
 
@@ -131,6 +151,11 @@ export function Purchase() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [limit] = useState(20);
+  const [filters, setFilters] = useState({
+    sortBy: 'createdAt',
+    sortOrder: 'desc',
+    type: ''
+  });
 
   // Payment State
   const [activeTab, setActiveTab] = useState<'bills' | 'payments' | 'advances'>('bills');
@@ -139,9 +164,80 @@ export function Purchase() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [outstandingBills, setOutstandingBills] = useState<any[]>([]);
   const [allocations, setAllocations] = useState<{ [key: string]: number }>({});
+
+  // Quick Add Party State
+  const [showQuickAddSupplier, setShowQuickAddSupplier] = useState(false);
+  const [quickAddGstLoading, setQuickAddGstLoading] = useState(false);
+  const [quickAddGstSuccess, setQuickAddGstSuccess] = useState<string | null>(null);
+  const [quickAddSupplierForm, setQuickAddSupplierForm] = useState({
+    name: '',
+    gstNo: '',
+    contact: '', // Suppliers use 'contact' instead of 'phone' in some parts of this codebase's masters, let's verify
+    address: '',
+    stateCode: '27'
+  });
   const [deleteConfirmation, setDeleteConfirmation] = useState<{ isOpen: boolean; id: string | null; error?: string }>({ isOpen: false, id: null });
   const [showRollModal, setShowRollModal] = useState(false);
   const [selectedBillForRolls, setSelectedBillForRolls] = useState<any>(null);
+
+  const handleQuickSupplierGstSearch = async () => {
+    const gstin = quickAddSupplierForm.gstNo;
+    if (!gstin || gstin.length !== 15) return;
+
+    setQuickAddGstLoading(true);
+    setError(null);
+    setQuickAddGstSuccess(null);
+
+    try {
+      const result = await gstApi.search(gstin);
+      if (result.data) {
+        setQuickAddSupplierForm(prev => ({
+          ...prev,
+          name: result.data.name,
+          stateCode: result.data.stateCode,
+          address: result.data.address
+        }));
+        setQuickAddGstSuccess('GST details fetched successfully.');
+        setTimeout(() => setQuickAddGstSuccess(null), 3000);
+      } else {
+        setError(result.error || 'Unable to fetch GST details.');
+      }
+    } catch (err) {
+      setError('Failed to fetch GST details.');
+    }
+    setQuickAddGstLoading(false);
+  };
+
+  const saveQuickSupplier = async () => {
+    if (!quickAddSupplierForm.name || !quickAddSupplierForm.contact) {
+      setError('Supplier name and contact are required.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const result = await mastersApi.createSupplier(quickAddSupplierForm);
+      if (result.data) {
+        setSuppliers(prev => [...prev, result.data]);
+        handleSupplierSelect(result.data.id);
+        setShowQuickAddSupplier(false);
+        setQuickAddSupplierForm({
+          name: '',
+          gstNo: '',
+          contact: '',
+          address: '',
+          stateCode: '27'
+        });
+        setSuccess('Supplier added and selected.');
+        setTimeout(() => setSuccess(null), 3000);
+      } else {
+        setError(result.error || 'Failed to add supplier.');
+      }
+    } catch (err) {
+      setError('Failed to save supplier.');
+    }
+    setSaving(false);
+  };
   const [availableAdvances, setAvailableAdvances] = useState<any[]>([]); // For integrated adjustment
 
   const [paymentForm, setPaymentForm] = useState({
@@ -161,17 +257,18 @@ export function Purchase() {
   // DATA FETCHING
   // ============================================================
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (p = page, currentFilters = filters) => {
     console.log('\n📊 FRONTEND: fetchData - START');
     setLoading(true);
     setError(null);
     try {
-      const [billsRes, suppliersRes, materialsRes, finishedRes, expensesRes, summaryRes, accountsRes, paymentsRes] = await Promise.all([
-        purchaseApi.getBills(page, limit),
+      const [billsRes, suppliersRes, materialsRes, finishedRes, expensesRes, generalRes, summaryRes, accountsRes, paymentsRes] = await Promise.all([
+        purchaseApi.getBills(p, limit, currentFilters),
         mastersApi.getSuppliers(),
         mastersApi.getRawMaterials(),
         mastersApi.getFinishedProducts(),
         mastersApi.getExpenseHeads(),
+        mastersApi.getGeneralItems(),
         purchaseApi.getSummary(),
         mastersApi.getAccounts(),
         accountsApi.getTransactions({ type: 'PAYMENT', partyType: 'supplier' }), // Fetch payments for suppliers only
@@ -189,6 +286,7 @@ export function Purchase() {
       if (materialsRes.data) setRawMaterials(materialsRes.data);
       if (finishedRes.data) setFinishedProducts(finishedRes.data);
       if (expensesRes.data) setExpenseHeads(expensesRes.data);
+      if (generalRes.data) setGeneralItems(generalRes.data);
       if (summaryRes.data) setSummary(summaryRes.data);
       if (accountsRes.data) setAccounts(accountsRes.data);
       if (paymentsRes.data) {
@@ -314,9 +412,21 @@ export function Purchase() {
       } else if (field === 'expenseHeadId') {
         const head = expenseHeads.find(h => h.id === value);
         if (head) {
-          updatedItem.materialName = head.name;
-          updatedItem.hsnCode = '';
-          updatedItem.gstPercent = '0'; // Expenses often 0 or 18. Let user edit.
+          updatedItem.expenseHeadId = head.id;
+          // Don't overwrite materialName if it's already set (e.g. from general item)
+          if (!updatedItem.materialName) {
+            updatedItem.materialName = head.name;
+          }
+        }
+      } else if (field === 'generalItemId') {
+        const item = generalItems.find(i => i.id === value);
+        if (item) {
+          updatedItem.materialName = item.name;
+          updatedItem.generalItemId = item.id;
+          if (item.defaultExpenseHeadId) {
+            updatedItem.expenseHeadId = item.defaultExpenseHeadId;
+          }
+          updatedItem.gstPercent = '18';
         }
       }
 
@@ -343,29 +453,28 @@ export function Purchase() {
     }));
   };
 
-  const updateItemExpenseHead = (itemId: string, value: string) => {
-    // Check if selected value matches an existing ID
-    const existingHead = expenseHeads.find(h => h.name === value || h.id === value);
+  const updateItemGeneralItem = (itemId: string, value: string) => {
+    // Check if selected value matches an existing General Item
+    const existingItem = generalItems.find(i => i.name === value || i.id === value);
 
     setItems(items.map(item => {
       if (item.id !== itemId) return item;
 
-      if (existingHead) {
+      if (existingItem) {
         return {
           ...item,
-          expenseHeadId: existingHead.id,
-          materialName: existingHead.name,
-          hsnCode: '',
-          gstPercent: '0'
+          generalItemId: existingItem.id,
+          materialName: existingItem.name,
+          expenseHeadId: existingItem.defaultExpenseHeadId || item.expenseHeadId,
+          gstPercent: '18'
         };
       } else {
-        // New Expense Head
+        // New General Item
         return {
           ...item,
-          expenseHeadId: undefined, // Clear ID to indicate new
-          materialName: value, // Store the typed name
-          hsnCode: '',
-          gstPercent: '0'
+          generalItemId: undefined,
+          materialName: value,
+          gstPercent: '18'
         };
       }
     }));
@@ -458,13 +567,14 @@ export function Purchase() {
         discountAmount: discountAmount || '0',  // Added discount
         invoiceNumber: invoiceNumber, // Added invoice number
         items: items
-          .filter(item => (purchaseType === 'RAW_MATERIAL' && item.rawMaterialId) || (purchaseType === 'FINISHED_GOODS' && item.finishedProductId) || (purchaseType === 'GENERAL' && (item.expenseHeadId || item.materialName)))
+          .filter(item => (purchaseType === 'RAW_MATERIAL' && item.rawMaterialId) || (purchaseType === 'FINISHED_GOODS' && item.finishedProductId) || (purchaseType === 'GENERAL' && (item.expenseHeadId || item.generalItemId || item.materialName)))
           .map(item => ({
             rawMaterialId: purchaseType === 'RAW_MATERIAL' ? item.rawMaterialId : undefined,
             finishedProductId: purchaseType === 'FINISHED_GOODS' ? item.finishedProductId : undefined,
+            generalItemId: purchaseType === 'GENERAL' ? item.generalItemId : undefined,
+            generalItemName: (purchaseType === 'GENERAL' && !item.generalItemId) ? item.materialName : undefined,
             expenseHeadId: purchaseType === 'GENERAL' ? item.expenseHeadId : undefined,
-            expenseHeadName: (purchaseType === 'GENERAL' && !item.expenseHeadId) ? item.materialName : undefined, // Send name for new heads
-            quantity: parseFloat(item.quantity) || 1, // Default to 1 for expenses if left empty
+            quantity: parseFloat(item.quantity) || 1,
             rate: parseFloat(item.rate),
             gstPercent: parseFloat(item.gstPercent),
           })),
@@ -941,6 +1051,62 @@ export function Purchase() {
 
       {/* ==================== BILLS VIEW ==================== */}
       {activeTab === 'bills' && (
+        <div className="mb-4 flex flex-wrap items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Filter By Type:</span>
+            <select
+              className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              value={filters.type}
+              onChange={(e) => {
+                const newFilters = { ...filters, type: e.target.value };
+                setFilters(newFilters);
+                setPage(1);
+                fetchData(1, newFilters);
+              }}
+            >
+              <option value="">All Types</option>
+              <option value="RAW_MATERIAL">Raw Material</option>
+              <option value="FINISHED_GOODS">Trading Purchase</option>
+              <option value="GENERAL">General Expense</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sort By:</span>
+            <select
+              className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              value={filters.sortBy}
+              onChange={(e) => {
+                const newFilters = { ...filters, sortBy: e.target.value };
+                setFilters(newFilters);
+                fetchData(page, newFilters);
+              }}
+            >
+              <option value="createdAt">Entry Date</option>
+              <option value="date">Bill Date</option>
+              <option value="code">Bill Number</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Order:</span>
+            <select
+              className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              value={filters.sortOrder}
+              onChange={(e) => {
+                const newFilters = { ...filters, sortOrder: e.target.value };
+                setFilters(newFilters);
+                fetchData(page, newFilters);
+              }}
+            >
+              <option value="desc">Newest First</option>
+              <option value="asc">Oldest First</option>
+            </select>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'bills' && (
         <>
           {!showForm ? (
             /* Purchase List Table - Dense */
@@ -1159,10 +1325,20 @@ export function Purchase() {
                     <label htmlFor="supplierSelect" className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
                       {purchaseType === 'GENERAL' ? 'Party / Vendor' : 'Supplier Account'}
                     </label>
-                    <select id="supplierSelect" value={selectedSupplier?.id || ''} onChange={e => handleSupplierSelect(e.target.value)} className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-bold bg-white">
-                      <option value="">Select Accounts...</option>
-                      {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} - {s.gstNo}</option>)}
-                    </select>
+                    <div className="flex space-x-2">
+                      <select id="supplierSelect" value={selectedSupplier?.id || ''} onChange={e => handleSupplierSelect(e.target.value)} className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-bold bg-white">
+                        <option value="">Select Accounts...</option>
+                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} - {s.gstNo}</option>)}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setShowQuickAddSupplier(true)}
+                        className="px-2 py-1 bg-blue-50 text-blue-600 border border-blue-200 rounded-sm hover:bg-blue-100 transition-colors"
+                        title="Quick Add Supplier"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                   <div>
                     <label htmlFor="billStatus" className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Record Status</label>
@@ -1194,8 +1370,9 @@ export function Purchase() {
                         <tr>
                           <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-8">#</th>
                           <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                            {purchaseType === 'RAW_MATERIAL' ? 'Raw Material' : purchaseType === 'FINISHED_GOODS' ? 'Finished Product' : 'Expense Head'}
+                            {purchaseType === 'RAW_MATERIAL' ? 'Raw Material' : purchaseType === 'FINISHED_GOODS' ? 'Finished Product' : 'Item Name'}
                           </th>
+                          {purchaseType === 'GENERAL' && <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-40">Expense Head</th>}
                           {purchaseType !== 'GENERAL' && <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24">HSN</th>}
                           <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24 text-right">Qty</th>
                           <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-28 text-right">Rate</th>
@@ -1240,20 +1417,34 @@ export function Purchase() {
                               {purchaseType === 'GENERAL' && (
                                 <>
                                   <input
-                                    list={`expense-heads-${item.id}`}
+                                    list={`general-items-${item.id}`}
                                     value={item.materialName} // Display name (either from existing or typed)
-                                    onChange={(e) => updateItemExpenseHead(item.id, e.target.value)}
+                                    onChange={(e) => updateItemGeneralItem(item.id, e.target.value)}
                                     className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all font-medium"
-                                    placeholder="Type or select Expense Head..."
+                                    placeholder="Type or select Item Name..."
                                   />
-                                  <datalist id={`expense-heads-${item.id}`}>
-                                    {expenseHeads.map(eh => (
-                                      <option key={eh.id} value={eh.name} />
+                                  <datalist id={`general-items-${item.id}`}>
+                                    {generalItems.map(gi => (
+                                      <option key={gi.id} value={gi.name} />
                                     ))}
                                   </datalist>
                                 </>
                               )}
                             </td>
+                            {purchaseType === 'GENERAL' && (
+                              <td className="px-3 py-2">
+                                <select
+                                  value={item.expenseHeadId || ''}
+                                  onChange={(e) => updateItem(item.id, 'expenseHeadId', e.target.value)}
+                                  className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all font-medium bg-slate-50"
+                                >
+                                  <option value="">Select Ledger...</option>
+                                  {expenseHeads.map(eh => (
+                                    <option key={eh.id} value={eh.id}>{eh.name}</option>
+                                  ))}
+                                </select>
+                              </td>
+                            )}
                             {purchaseType !== 'GENERAL' && (
                               <td className="px-3 py-2">
                                 <input
@@ -1945,6 +2136,109 @@ export function Purchase() {
                 className="px-4 py-2 text-white bg-red-600 rounded hover:bg-red-700 font-bold"
               >
                 Delete Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showQuickAddSupplier && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg overflow-hidden border border-gray-200">
+            <div className="bg-blue-600 px-4 py-3 flex justify-between items-center text-white">
+              <h3 className="font-bold flex items-center">
+                <Plus className="w-4 h-4 mr-2" />
+                Quick Add Supplier
+              </h3>
+              <button onClick={() => setShowQuickAddSupplier(false)} className="hover:bg-blue-700 p-1 rounded transition-colors">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4 max-h-[80vh] overflow-y-auto">
+              {error && <div className="p-2 text-xs font-bold text-red-600 bg-red-50 border border-red-200 rounded-sm mb-2">{error}</div>}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase">GST Number (Optional)</label>
+                  <div className="flex space-x-2 mt-1">
+                    <input
+                      type="text"
+                      maxLength={15}
+                      value={quickAddSupplierForm.gstNo}
+                      onChange={e => setQuickAddSupplierForm({ ...quickAddSupplierForm, gstNo: e.target.value.toUpperCase() })}
+                      className="flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 uppercase font-mono"
+                      placeholder="Enter GSTIN..."
+                    />
+                    <button
+                      type="button"
+                      onClick={handleQuickSupplierGstSearch}
+                      disabled={quickAddGstLoading || quickAddSupplierForm.gstNo.length !== 15}
+                      className="px-3 py-1.5 bg-gray-100 text-gray-700 border border-gray-300 rounded-sm hover:bg-gray-200 disabled:opacity-50 text-xs font-bold"
+                    >
+                      {quickAddGstLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'FETCH'}
+                    </button>
+                  </div>
+                  {quickAddGstSuccess && <p className="text-[10px] text-green-600 font-bold mt-1">{quickAddGstSuccess}</p>}
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase">Supplier Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={quickAddSupplierForm.name}
+                    onChange={e => setQuickAddSupplierForm({ ...quickAddSupplierForm, name: e.target.value })}
+                    className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase">Contact *</label>
+                  <input
+                    type="text"
+                    required
+                    value={quickAddSupplierForm.contact}
+                    onChange={e => setQuickAddSupplierForm({ ...quickAddSupplierForm, contact: e.target.value })}
+                    className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase">State *</label>
+                  <select
+                    value={quickAddSupplierForm.stateCode}
+                    onChange={e => setQuickAddSupplierForm({ ...quickAddSupplierForm, stateCode: e.target.value })}
+                    className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 bg-white"
+                  >
+                    {INDIAN_STATES.map((state, index) => (
+                      <option key={index} value={String(index + 1).padStart(2, '0')}>{state}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase">Address</label>
+                  <textarea
+                    rows={2}
+                    value={quickAddSupplierForm.address}
+                    onChange={e => setQuickAddSupplierForm({ ...quickAddSupplierForm, address: e.target.value })}
+                    className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="bg-gray-50 px-4 py-3 flex justify-end space-x-3 border-t border-gray-200">
+              <button
+                onClick={() => setShowQuickAddSupplier(false)}
+                className="px-4 py-1.5 text-sm font-bold text-gray-600 hover:bg-gray-100 rounded-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveQuickSupplier}
+                disabled={saving}
+                className="px-6 py-1.5 text-sm font-bold bg-blue-600 text-white rounded-sm hover:bg-blue-700 disabled:opacity-50 flex items-center"
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : 'Save & Select'}
               </button>
             </div>
           </div>

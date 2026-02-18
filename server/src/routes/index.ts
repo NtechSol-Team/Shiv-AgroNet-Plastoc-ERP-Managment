@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import mastersRouter from './masters';
+import gstRouter from './gst';
 import purchaseRouter from './purchase';
 import productionRouter from './production';
 import salesRouter from './sales';
@@ -16,6 +17,7 @@ import ccAccountsRouter from './cc-accounts';
 const router = Router();
 
 router.use('/masters', mastersRouter);
+router.use('/gst', gstRouter);
 router.use('/purchase', purchaseRouter);
 router.use('/production', productionRouter);
 router.use('/sales', salesRouter);

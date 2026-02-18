@@ -2,7 +2,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { validateRequest } from '../middleware/validation';
 import { successResponse } from '../types/api';
-import { createCCAccount, getCCAccountStatus, postMonthlyInterest } from '../services/cc-account.service';
+import { createCCAccount, updateCCAccount, getCCAccountStatus, postMonthlyInterest } from '../services/cc-account.service';
 import { z } from 'zod';
 import { db } from '../db/index'; // Needed for code generation if logic is here
 import { bankCashAccounts } from '../db/schema'; // Needed for code gen
@@ -21,6 +21,20 @@ const createCCAccountSchema = z.object({
     drawingPowerMode: z.enum(['Manual', 'Automatic']).default('Automatic'),
     securityType: z.string().optional(),
     validityPeriod: z.string().optional(), // Date string
+    interestCalculationMethod: z.string().optional()
+});
+
+// Validation Schema for CC Account Update
+const updateCCAccountSchema = z.object({
+    name: z.string().min(1, 'Name is required'),
+    accountNo: z.string().min(1, 'Account No is required'),
+    sanctionedLimit: z.coerce.number().min(0, 'Limit must be positive'),
+    interestRate: z.coerce.number().min(0, 'Interest Rate must be positive'),
+    stockMargin: z.coerce.number().min(0).max(100).optional(),
+    receivablesMargin: z.coerce.number().min(0).max(100).optional(),
+    drawingPowerMode: z.enum(['Manual', 'Automatic']).default('Automatic'),
+    securityType: z.string().optional(),
+    validityPeriod: z.string().optional(),
     interestCalculationMethod: z.string().optional()
 });
 
@@ -49,6 +63,24 @@ router.post('/', validateRequest(createCCAccountSchema), async (req: Request, re
         cache.del('masters:cc-accounts');
 
         res.status(201).json(successResponse(account));
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * PUT /cc-accounts/:id
+ * Update an existing CC Account
+ */
+router.put('/:id', validateRequest(updateCCAccountSchema), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const account = await updateCCAccount(req.params.id, req.body);
+
+        // Invalidate caches
+        cache.del('masters:accounts');
+        cache.del('masters:cc-accounts');
+
+        res.json(successResponse(account));
     } catch (error) {
         next(error);
     }

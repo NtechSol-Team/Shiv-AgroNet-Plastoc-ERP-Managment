@@ -56,6 +56,7 @@ export const customers = pgTable('customers', {
     phone: text('phone').notNull(),
     address: text('address'),
     outstanding: decimal('outstanding', { precision: 10, scale: 2 }).default('0'),
+    gstVerifiedAt: timestamp('gst_verified_at'),
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),
 });
@@ -69,6 +70,7 @@ export const suppliers = pgTable('suppliers', {
     contact: text('contact').notNull(),
     address: text('address'),
     outstanding: decimal('outstanding', { precision: 10, scale: 2 }).default('0'),
+    gstVerifiedAt: timestamp('gst_verified_at'),
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),
 });
@@ -147,7 +149,8 @@ export const purchaseBillItems = pgTable('purchase_bill_items', {
     billId: text('bill_id').notNull().references(() => purchaseBills.id, { onDelete: 'cascade' }),
     rawMaterialId: text('raw_material_id').references(() => rawMaterials.id), // Nullable for General/FG Purchase
     finishedProductId: text('finished_product_id').references(() => finishedProducts.id), // For FG Purchase
-    expenseHeadId: text('expense_head_id').references(() => expenseHeads.id), // For General Purchase
+    expenseHeadId: text('expense_head_id').references(() => expenseHeads.id), // For General Purchase (Accounting)
+    generalItemId: text('general_item_id').references(() => generalItems.id), // For General Purchase (Item Master)
     materialName: text('material_name').notNull(),
     hsnCode: text('hsn_code').default('3901'),
     quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
@@ -204,6 +207,7 @@ export const productionBatches = pgTable('production_batches', {
     statusIdx: index('production_batches_status_idx').on(table.status),
     finishedProductIdx: index('production_batches_finished_product_idx').on(table.finishedProductId),
     allocationDateIdx: index('production_batches_allocation_date_idx').on(table.allocationDate),
+    completionDateIdx: index('production_batches_completion_date_idx').on(table.completionDate),
 }));
 
 export const productionBatchInputs = pgTable('production_batch_inputs', {
@@ -433,6 +437,14 @@ export const expenses = pgTable('expenses', {
     accountIdx: index('expenses_account_idx').on(table.accountId),
 }));
 
+export const generalItems = pgTable('general_items', {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    name: text('name').notNull().unique(),
+    defaultExpenseHeadId: text('default_expense_head_id').references(() => expenseHeads.id),
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+});
+
 // ==================== RELATIONS ====================
 
 export const suppliersRelations = relations(suppliers, ({ many }) => ({
@@ -473,6 +485,7 @@ export const purchaseBillItemsRelations = relations(purchaseBillItems, ({ one })
     rawMaterial: one(rawMaterials, { fields: [purchaseBillItems.rawMaterialId], references: [rawMaterials.id] }),
     finishedProduct: one(finishedProducts, { fields: [purchaseBillItems.finishedProductId], references: [finishedProducts.id] }),
     expenseHead: one(expenseHeads, { fields: [purchaseBillItems.expenseHeadId], references: [expenseHeads.id] }),
+    generalItem: one(generalItems, { fields: [purchaseBillItems.generalItemId], references: [generalItems.id] }),
 }));
 
 export const productionBatchesRelations = relations(productionBatches, ({ one, many }) => ({
@@ -714,6 +727,7 @@ export const rawMaterialRolls = pgTable('raw_material_rolls', {
     materialIdx: index('rm_rolls_material_idx').on(table.rawMaterialId),
     statusIdx: index('rm_rolls_status_idx').on(table.status),
     rollCodeIdx: index('rm_rolls_roll_code_idx').on(table.rollCode),
+    netWeightIdx: index('rm_rolls_net_weight_idx').on(table.netWeight),
 }));
 
 export const rawMaterialRollsRelations = relations(rawMaterialRolls, ({ one }) => ({
@@ -796,4 +810,8 @@ export const ccDailyBalancesRelations = relations(ccDailyBalances, ({ one }) => 
 export const ccInterestLogsRelations = relations(ccInterestLogs, ({ one }) => ({
     account: one(bankCashAccounts, { fields: [ccInterestLogs.accountId], references: [bankCashAccounts.id] }),
     ledgerEntry: one(generalLedger, { fields: [ccInterestLogs.ledgerEntryId], references: [generalLedger.id] }),
+}));
+
+export const generalItemsRelations = relations(generalItems, ({ one }) => ({
+    defaultExpenseHead: one(expenseHeads, { fields: [generalItems.defaultExpenseHeadId], references: [expenseHeads.id] }),
 }));

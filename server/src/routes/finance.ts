@@ -77,6 +77,63 @@ router.post('/entities', validateRequest(createEntitySchema), async (req: Reques
 });
 
 /**
+ * PUT /finance/entities/:id
+ * Update a Financial Entity
+ */
+router.put('/entities/:id', validateRequest(createEntitySchema), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+        const { name, type, contact, email } = req.body;
+
+        const [entity] = await db.update(financialEntities)
+            .set({ name, type, contact, email, updatedAt: new Date() })
+            .where(eq(financialEntities.id, id))
+            .returning();
+
+        if (!entity) throw createError('Entity not found', 404);
+
+        // Clear cache
+        cacheService.del('finance_entities');
+
+        res.json(successResponse(entity));
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * DELETE /finance/entities/:id
+ * Delete a Financial Entity
+ */
+router.delete('/entities/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+
+        // Check for transactions
+        const transactions = await db.select({ count: countFn() })
+            .from(financialTransactions)
+            .where(eq(financialTransactions.partyId, id));
+
+        if (transactions[0].count > 0) {
+            throw createError('Cannot delete entity with existing transactions', 400);
+        }
+
+        const [deleted] = await db.delete(financialEntities)
+            .where(eq(financialEntities.id, id))
+            .returning();
+
+        if (!deleted) throw createError('Entity not found', 404);
+
+        // Clear cache
+        cacheService.del('finance_entities');
+
+        res.json(successResponse({ message: 'Entity deleted successfully' }));
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
  * GET /finance/entities/:id/stats
  * Get Financial Stats for a specific Entity (Total Taken, Paid, Interest)
  */
@@ -385,7 +442,73 @@ router.post('/transactions', validateRequest(createTransactionSchema), async (re
     }
 });
 
+
+/**
+ * DELETE /finance/transactions/:id
+ * Delete a financial transaction and revert its effects
+ */
+router.delete('/transactions/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+
+        await db.transaction(async (tx) => {
+            // 1. Get Transaction
+            const [transaction] = await tx.select().from(financialTransactions).where(eq(financialTransactions.id, id));
+            if (!transaction) throw createError('Transaction not found', 404);
+
+            // 2. Revert Bank Balance
+            if (transaction.accountId) {
+                // Determine direction based on transaction type
+                let reverseAmount = 0;
+                const amount = parseFloat(transaction.amount);
+
+                switch (transaction.transactionType) {
+                    case 'LOAN_TAKEN': // Original: Dr Bank (Increase). Revert: Decrease.
+                        reverseAmount = -amount;
+                        break;
+                    case 'LOAN_GIVEN': // Original: Cr Bank (Decrease). Revert: Increase.
+                        reverseAmount = amount;
+                        break;
+                    case 'INVESTMENT_RECEIVED': // Original: Dr Bank (Increase). Revert: Decrease.
+                        reverseAmount = -amount;
+                        break;
+                    case 'INVESTMENT_MADE': // Original: Cr Bank (Decrease). Revert: Increase.
+                        reverseAmount = amount;
+                        break;
+                    case 'BORROWING': // Original: Dr Bank (Increase). Revert: Decrease.
+                        reverseAmount = -amount;
+                        break;
+                    case 'REPAYMENT': // Original: Cr Bank (Decrease). Revert: Increase.
+                        reverseAmount = amount;
+                        break;
+                }
+
+                if (reverseAmount !== 0) {
+                    await tx.update(bankCashAccounts)
+                        .set({
+                            balance: sql`${bankCashAccounts.balance} + ${reverseAmount}`,
+                            updatedAt: new Date()
+                        })
+                        .where(eq(bankCashAccounts.id, transaction.accountId));
+                }
+            }
+
+            // 3. Delete Ledger Entries (Cascade usually handles this, but manual for safety)
+            await tx.delete(financialTransactionLedger).where(eq(financialTransactionLedger.transactionId, id));
+            await tx.delete(generalLedger).where(eq(generalLedger.referenceId, id));
+
+            // 4. Delete Transaction
+            await tx.delete(financialTransactions).where(eq(financialTransactions.id, id));
+        });
+
+        res.json(successResponse({ message: 'Transaction deleted successfully' }));
+    } catch (error) {
+        next(error);
+    }
+});
+
 export default router;
+
 
 // ============================================================
 // DATA CONSISTENCY TOOLS

@@ -933,7 +933,11 @@ router.get('/transactions', async (req: Request, res: Response, next: NextFuncti
 
         // 4. Fetch General Ledger (Contra, Journal, Adjustments)
         // Exclude RECEIPT/PAYMENT as they are already in paymentTransactions
-        let glQuery = db.select()
+
+        // 4. Fetch General Ledger (Contra, Journal, Adjustments)
+        // Exclude RECEIPT/PAYMENT as they are already in paymentTransactions
+        // ALSO EXCLUDE if filtering by Party (GL is for Account view only)
+        let glQuery = partyType ? Promise.resolve([]) : db.select()
             .from(generalLedger)
             .leftJoin(bankCashAccounts, eq(generalLedger.ledgerId, bankCashAccounts.id))
             .where(

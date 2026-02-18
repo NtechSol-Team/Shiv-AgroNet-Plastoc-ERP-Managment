@@ -19,13 +19,18 @@ import { createStockMovement, getPendingBillQuantity } from '../services/invento
 import { cache as cacheService } from '../services/cache.service';
 
 // ... (imports remain)
-import { purchaseBills, purchaseBillItems, suppliers, rawMaterials, paymentTransactions, billPaymentAllocations, bankCashAccounts, generalLedger, rawMaterialBatches, finishedProducts, expenseHeads, productionBatchInputs, rawMaterialRolls, purchaseBillAdjustments } from '../db/schema';
+import {
+    purchaseBills, purchaseBillItems, suppliers, rawMaterials, paymentTransactions,
+    billPaymentAllocations, bankCashAccounts, generalLedger, rawMaterialBatches,
+    finishedProducts, expenseHeads, productionBatchInputs, rawMaterialRolls,
+    purchaseBillAdjustments, generalItems
+} from '../db/schema';
 // Removed stockMovements from imports as we use the service now
 
 // ... (inside the route)
 
 
-import { eq, desc, sql, count as countFn, and, inArray } from 'drizzle-orm';
+import { eq, desc, asc, sql, count as countFn, and, inArray } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
 
@@ -44,7 +49,11 @@ interface CreateBillRequest {
     supplierId: string;
     status: 'Draft' | 'Confirmed';
     items: {
-        rawMaterialId: string;
+        rawMaterialId?: string;
+        finishedProductId?: string;
+        generalItemId?: string;
+        generalItemName?: string;
+        expenseHeadId?: string;
         quantity: number;
         rate: number;
         gstPercent: number;
@@ -65,16 +74,42 @@ router.get('/bills', async (req: Request, res: Response, next: NextFunction) => 
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = (page - 1) * limit;
 
-        // 1. Get total count
-        const totalResult = await db.select({ count: countFn() }).from(purchaseBills);
+        const { sortBy = 'createdAt', sortOrder = 'desc', type } = req.query;
+
+        // 1. Build where clause
+        const conditions = [];
+        if (type) conditions.push(eq(purchaseBills.type, type as string));
+
+        const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+        // 2. Total count
+        const totalResult = await db.select({ count: countFn() })
+            .from(purchaseBills)
+            .where(whereClause);
         const total = Number(totalResult[0]?.count || 0);
 
-        // 2. Get bills (paginated)
+        // 3. Sorting
+        let orderByClause;
+        const sortDirection = sortOrder === 'asc' ? asc : desc;
+
+        switch (sortBy) {
+            case 'date':
+                orderByClause = sortDirection(purchaseBills.date);
+                break;
+            case 'code':
+                orderByClause = sortDirection(purchaseBills.code);
+                break;
+            default:
+                orderByClause = sortDirection(purchaseBills.createdAt);
+        }
+
+        // 4. Get bills (paginated)
         const bills = await db
             .select()
             .from(purchaseBills)
             .leftJoin(suppliers, eq(purchaseBills.supplierId, suppliers.id))
-            .orderBy(desc(purchaseBills.createdAt))
+            .where(whereClause)
+            .orderBy(orderByClause)
             .limit(limit)
             .offset(offset);
 
@@ -92,6 +127,9 @@ router.get('/bills', async (req: Request, res: Response, next: NextFunction) => 
             .select()
             .from(purchaseBillItems)
             .leftJoin(rawMaterials, eq(purchaseBillItems.rawMaterialId, rawMaterials.id))
+            .leftJoin(finishedProducts, eq(purchaseBillItems.finishedProductId, finishedProducts.id))
+            .leftJoin(generalItems, eq(purchaseBillItems.generalItemId, generalItems.id))
+            .leftJoin(expenseHeads, eq(purchaseBillItems.expenseHeadId, expenseHeads.id))
             .where(inArray(purchaseBillItems.billId, billIds));
 
         // Group items by billId
@@ -102,6 +140,9 @@ router.get('/bills', async (req: Request, res: Response, next: NextFunction) => 
             itemsMap.get(bId)?.push({
                 ...row.purchase_bill_items,
                 rawMaterial: row.raw_materials,
+                finishedProduct: row.finished_products,
+                generalItem: row.general_items,
+                expenseHead: row.expense_heads,
             });
         });
 
@@ -248,6 +289,7 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
                 let rawMaterialId = null;
                 let finishedProductId = null;
                 let expenseHeadId = null;
+                let generalItemId = null;
 
                 // Validate and Fetch Details based on Type
                 if (type === 'RAW_MATERIAL') {
@@ -264,37 +306,40 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
                     hsnCode = product.hsnCode || '5608';
                     finishedProductId = item.finishedProductId;
                 } else if (type === 'GENERAL') {
-                    if (item.expenseHeadId) {
-                        const [head] = await db.select().from(expenseHeads).where(eq(expenseHeads.id, item.expenseHeadId));
-                        if (!head) throw createError(`Expense Head not found: ${item.expenseHeadId}`, 404);
-                        materialName = head.name;
-                        expenseHeadId = item.expenseHeadId;
-                    } else if (item.expenseHeadName) {
-                        // Check if exists by name
-                        const [existing] = await db.select().from(expenseHeads).where(eq(expenseHeads.name, item.expenseHeadName));
+                    let gItemId = item.generalItemId;
+                    if (!gItemId && item.generalItemName) {
+                        const [existing] = await db.select().from(generalItems).where(eq(generalItems.name, item.generalItemName));
                         if (existing) {
-                            materialName = existing.name;
-                            expenseHeadId = existing.id;
+                            gItemId = existing.id;
                         } else {
-                            // Create new Expense Head
-                            const [newHead] = await db.insert(expenseHeads).values({
-                                name: item.expenseHeadName,
-                                code: `EXP-${Date.now()}-${Math.floor(Math.random() * 1000)}`, // Simple auto-code
-                                category: 'Variable'
+                            const [newItem] = await db.insert(generalItems).values({
+                                name: item.generalItemName,
+                                defaultExpenseHeadId: item.expenseHeadId
                             }).returning();
-                            materialName = newHead.name;
-                            expenseHeadId = newHead.id;
+                            gItemId = newItem.id;
+                            cacheService.del('masters:general-items');
+                        }
+                    }
+
+                    if (gItemId) {
+                        const [gItem] = await db.select().from(generalItems).where(eq(generalItems.id, gItemId));
+                        if (gItem) {
+                            materialName = gItem.name;
+                            generalItemId = gItemId;
                         }
                     } else {
-                        throw createError('Expense Head ID or Name required for General Purchase', 400);
+                        materialName = item.generalItemName || item.materialName || 'General Item';
                     }
-                    hsnCode = ''; // Expenses usually don't have HSN in this context
+
+                    expenseHeadId = item.expenseHeadId || null;
+                    hsnCode = '';
                 }
 
                 const itemData = {
                     billId: bill.id,
                     rawMaterialId,
                     finishedProductId,
+                    generalItemId,
                     expenseHeadId,
                     materialName,
                     hsnCode,
@@ -740,6 +785,7 @@ router.put('/bills/:id', async (req: Request, res: Response, next: NextFunction)
             let rawMaterialId = null;
             let finishedProductId = null;
             let expenseHeadId = null;
+            let generalItemId = null;
 
             if (type === 'RAW_MATERIAL' && item.rawMaterialId) {
                 const [material] = await db.select().from(rawMaterials).where(eq(rawMaterials.id, item.rawMaterialId));
@@ -756,24 +802,40 @@ router.put('/bills/:id', async (req: Request, res: Response, next: NextFunction)
                     finishedProductId = item.finishedProductId;
                 }
             } else if (type === 'GENERAL') {
-                if (item.expenseHeadId) {
-                    const [head] = await db.select().from(expenseHeads).where(eq(expenseHeads.id, item.expenseHeadId));
-                    if (head) {
-                        materialName = head.name;
-                        expenseHeadId = item.expenseHeadId;
+                let gItemId = item.generalItemId;
+                if (!gItemId && item.generalItemName) {
+                    const [existing] = await db.select().from(generalItems).where(eq(generalItems.name, item.generalItemName));
+                    if (existing) {
+                        gItemId = existing.id;
+                    } else {
+                        const [newItem] = await db.insert(generalItems).values({
+                            name: item.generalItemName,
+                            defaultExpenseHeadId: item.expenseHeadId
+                        }).returning();
+                        gItemId = newItem.id;
+                        cacheService.del('masters:general-items');
                     }
                 }
 
-                // Fallback to provided name
-                if (!materialName && (item.expenseHeadName || item.materialName)) {
-                    materialName = item.expenseHeadName || item.materialName;
+                if (gItemId) {
+                    const [gItem] = await db.select().from(generalItems).where(eq(generalItems.id, gItemId));
+                    if (gItem) {
+                        materialName = gItem.name;
+                        generalItemId = gItemId;
+                    }
+                } else {
+                    materialName = item.generalItemName || item.materialName || 'General Item';
                 }
+
+                expenseHeadId = item.expenseHeadId || null;
+                hsnCode = '';
             }
 
             await db.insert(purchaseBillItems).values({
                 billId: id,
                 rawMaterialId,
                 finishedProductId,
+                generalItemId,
                 expenseHeadId,
                 materialName,
                 hsnCode,

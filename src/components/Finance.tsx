@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { financeApi, accountsApi, mastersApi } from '../lib/api';
-import { Plus, Search, Filter, ArrowUpRight, ArrowDownLeft, Wallet, Building2, User, CheckCircle2, X } from 'lucide-react';
+import { Plus, Search, Filter, ArrowUpRight, ArrowDownLeft, Wallet, Building2, User, CheckCircle2, X, Trash2 } from 'lucide-react';
 
 export function Finance() {
     const [view, setView] = useState<'dashboard' | 'transactions' | 'entities'>('dashboard');
@@ -49,6 +49,7 @@ export function Finance() {
     const [selectedEntity, setSelectedEntity] = useState<any | null>(null);
 
     const [partyStats, setPartyStats] = useState<{ totalTaken: number, totalPrincipalRepaid: number, totalInterestPaid: number } | null>(null);
+    const [editingEntityId, setEditingEntityId] = useState<string | null>(null);
 
     useEffect(() => {
         loadInitialData();
@@ -109,6 +110,17 @@ export function Finance() {
         }
     };
 
+    const handleDeleteTransaction = async (id: string) => {
+        if (!window.confirm('Are you sure you want to delete this transaction? This will revert the bank balance.')) return;
+        try {
+            await financeApi.deleteTransaction(id);
+            setTransactions(prev => prev.filter(t => t.id !== id));
+            loadInitialData(); // Reload stats
+        } catch (error) {
+            alert('Failed to delete transaction');
+        }
+    };
+
     const handleCreateTransaction = async () => {
         try {
             // Auto-calculate amount for Repayment
@@ -157,14 +169,43 @@ export function Finance() {
 
     const handleCreateEntity = async () => {
         try {
-            const res = await financeApi.createEntity(entityForm);
-            if (res.data) {
-                setShowEntityModal(false);
-                loadInitialData();
-                setEntityForm({ name: '', type: 'Lender', contact: '', email: '' });
+            if (editingEntityId) {
+                await financeApi.updateEntity(editingEntityId, entityForm);
+            } else {
+                const res = await financeApi.createEntity(entityForm);
+                if (res.data && showModal) {
+                    setFormData(prev => ({ ...prev, partyId: res.data.id }));
+                }
             }
+            setShowEntityModal(false);
+            setEditingEntityId(null);
+            setEntityForm({ name: '', type: 'Lender', contact: '', email: '' });
+            loadInitialData();
         } catch (error) {
-            alert('Failed to create entity');
+            alert('Failed to save entity');
+        }
+    };
+
+    const handleEditEntity = (e: React.MouseEvent, entity: any) => {
+        e.stopPropagation();
+        setEntityForm({
+            name: entity.name,
+            type: entity.type,
+            contact: entity.contact || '',
+            email: entity.email || ''
+        });
+        setEditingEntityId(entity.id);
+        setShowEntityModal(true);
+    };
+
+    const handleDeleteEntity = async (e: React.MouseEvent, id: string) => {
+        e.stopPropagation();
+        if (!window.confirm('Are you sure you want to delete this entity?')) return;
+        try {
+            await financeApi.deleteEntity(id);
+            loadInitialData();
+        } catch (error: any) {
+            alert(error.response?.data?.message || 'Failed to delete entity');
         }
     };
 
@@ -315,6 +356,7 @@ export function Finance() {
                                                 <th className="px-6 py-4">Party / Entity</th>
                                                 <th className="px-6 py-4">Description</th>
                                                 <th className="px-6 py-4 text-right">Amount</th>
+                                                <th className="px-6 py-4 text-right">Actions</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
@@ -340,6 +382,15 @@ export function Finance() {
                                                     </td>
                                                     <td className="px-6 py-4 text-right font-bold text-slate-900 whitespace-nowrap">
                                                         ₹{parseFloat(tx.amount).toLocaleString()}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-right">
+                                                        <button
+                                                            onClick={() => handleDeleteTransaction(tx.id)}
+                                                            className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                                                            title="Delete Transaction"
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
                                                     </td>
                                                 </tr>
                                             ))}
@@ -385,6 +436,7 @@ export function Finance() {
                                             <th className="px-6 py-4">Entity Name</th>
                                             <th className="px-6 py-4">Role / Type</th>
                                             <th className="px-6 py-4">Contact Info</th>
+                                            <th className="px-6 py-4 text-right">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
@@ -411,11 +463,29 @@ export function Finance() {
                                                         <span className="text-xs text-slate-400">{e.email}</span>
                                                     </div>
                                                 </td>
+                                                <td className="px-6 py-4 text-right">
+                                                    <div className="flex justify-end gap-2">
+                                                        <button
+                                                            onClick={(ev) => handleEditEntity(ev, e)}
+                                                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                                            title="Edit Entity"
+                                                        >
+                                                            <Filter className="w-4 h-4 rotate-180" /> {/* Reusing Filter icon for edit if Edit icon not imported */}
+                                                        </button>
+                                                        <button
+                                                            onClick={(ev) => handleDeleteEntity(ev, e.id)}
+                                                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                            title="Delete Entity"
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                </td>
                                             </tr>
                                         ))}
                                         {entities.length === 0 && (
                                             <tr>
-                                                <td colSpan={3} className="px-6 py-12 text-center text-slate-500 italic">
+                                                <td colSpan={4} className="px-6 py-12 text-center text-slate-500 italic">
                                                     No entities found. Add lenders or investors to get started.
                                                 </td>
                                             </tr>
@@ -474,16 +544,26 @@ export function Finance() {
                             {/* Section 2: Party Details */}
                             <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100/50">
                                 <label className="block text-xs font-semibold text-blue-700 uppercase tracking-wider mb-2">Party Selection</label>
-                                <select
-                                    className="w-full p-2.5 bg-white border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                    value={formData.partyId}
-                                    onChange={e => setFormData({ ...formData, partyId: e.target.value })}
-                                >
-                                    <option value="">Select Party (Lender / Investor)</option>
-                                    {entities.map((e: any) => (
-                                        <option key={e.id} value={e.id}>{e.name} ({e.type})</option>
-                                    ))}
-                                </select>
+                                <div className="flex gap-2">
+                                    <select
+                                        className="flex-1 p-2.5 bg-white border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                        value={formData.partyId}
+                                        onChange={e => setFormData({ ...formData, partyId: e.target.value })}
+                                    >
+                                        <option value="">Select Party (Lender / Investor)</option>
+                                        {entities.map((e: any) => (
+                                            <option key={e.id} value={e.id}>{e.name} ({e.type})</option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowEntityModal(true)}
+                                        className="p-2.5 bg-blue-50 border border-blue-200 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+                                        title="Quick Add Entity"
+                                    >
+                                        <Plus className="w-5 h-5" />
+                                    </button>
+                                </div>
 
                                 {/* Repayment Stats Preview */}
                                 {formData.transactionType === 'REPAYMENT' && formData.partyId && partyStats && (
@@ -638,8 +718,8 @@ export function Finance() {
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
                         <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                            <h3 className="font-bold text-lg text-slate-900">Add New Entity</h3>
-                            <button onClick={() => setShowEntityModal(false)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+                            <h3 className="font-bold text-lg text-slate-900">{editingEntityId ? 'Edit Entity' : 'Add New Entity'}</h3>
+                            <button onClick={() => { setShowEntityModal(false); setEditingEntityId(null); setEntityForm({ name: '', type: 'Lender', contact: '', email: '' }); }} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
                         </div>
                         <div className="p-6 space-y-5">
                             <div>
@@ -691,12 +771,12 @@ export function Finance() {
                             </div>
                         </div>
                         <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
-                            <button onClick={() => setShowEntityModal(false)} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800">Cancel</button>
+                            <button onClick={() => { setShowEntityModal(false); setEditingEntityId(null); setEntityForm({ name: '', type: 'Lender', contact: '', email: '' }); }} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800">Cancel</button>
                             <button
                                 onClick={handleCreateEntity}
                                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm"
                             >
-                                Save Entity
+                                {editingEntityId ? 'Update Entity' : 'Save Entity'}
                             </button>
                         </div>
                     </div>

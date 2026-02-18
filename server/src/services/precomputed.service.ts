@@ -15,7 +15,7 @@ import { db } from '../db';
 import {
     stockMovements, rawMaterials, finishedProducts,
     invoices, purchaseBills, customers, suppliers,
-    paymentTransactions
+    paymentTransactions, rawMaterialRolls, bankCashAccounts
 } from '../db/schema';
 import { eq, sum, sql, and, count } from 'drizzle-orm';
 import { cache } from './cache.service';
@@ -53,6 +53,16 @@ export interface DashboardKPIs {
     paymentsThisMonth: number;
     pendingInvoices: number;
     pendingBills: number;
+    // Added for full dashboard coverage
+    totalSales: number;
+    receivedAmount: number;
+    totalPurchases: number;
+    paidAmount: number;
+    gstCollected: number;
+    bankBalance: number;
+    cashBalance: number;
+    customerOutstanding: number;
+    supplierOutstanding: number;
     updatedAt: Date;
 }
 
@@ -86,18 +96,17 @@ export async function getInventorySummary(): Promise<InventorySummary> {
 async function computeInventorySummary(): Promise<InventorySummary> {
     const start = Date.now();
 
-    // Get raw material stock totals in a single query
+    // Get raw material stock totals from ROLLS (Source of Truth)
     const rmStockResult = await db
         .select({
-            id: stockMovements.rawMaterialId,
-            totalIn: sql<string>`COALESCE(SUM(${stockMovements.quantityIn}), 0)`,
-            totalOut: sql<string>`COALESCE(SUM(${stockMovements.quantityOut}), 0)`,
+            id: rawMaterialRolls.rawMaterialId,
+            totalWeight: sql<string>`COALESCE(SUM(${rawMaterialRolls.netWeight}), 0)`,
         })
-        .from(stockMovements)
-        .where(eq(stockMovements.itemType, 'raw_material'))
-        .groupBy(stockMovements.rawMaterialId);
+        .from(rawMaterialRolls)
+        .where(eq(rawMaterialRolls.status, 'In Stock'))
+        .groupBy(rawMaterialRolls.rawMaterialId);
 
-    // Get finished product stock totals in a single query
+    // Get finished product stock totals in a single query (From movements)
     const fpStockResult = await db
         .select({
             id: stockMovements.finishedProductId,
@@ -121,7 +130,7 @@ async function computeInventorySummary(): Promise<InventorySummary> {
     const rmStockMap = new Map<string, number>();
     rmStockResult.forEach(r => {
         if (r.id) {
-            rmStockMap.set(r.id, parseFloat(r.totalIn) - parseFloat(r.totalOut));
+            rmStockMap.set(r.id, parseFloat(r.totalWeight));
         }
     });
 
@@ -258,7 +267,12 @@ async function computeDashboardKPIs(): Promise<DashboardKPIs> {
         collectionsResult,
         paymentsResult,
         pendingInvoicesResult,
-        pendingBillsResult
+        pendingBillsResult,
+        allSalesResult,
+        allPurchasesResult,
+        accountsResult,
+        customerOutstandingResult,
+        supplierOutstandingResult
     ] = await Promise.all([
         // Sales this month (Confirmed invoices)
         db.select({
@@ -309,6 +323,35 @@ async function computeDashboardKPIs(): Promise<DashboardKPIs> {
             count: count()
         }).from(purchaseBills)
             .where(sql`${purchaseBills.paymentStatus} IN ('Unpaid', 'Partial')`),
+
+        // All-time Sales Stats
+        db.select({
+            total: sql<string>`COALESCE(SUM(${invoices.grandTotal}::numeric), 0)`,
+            received: sql<string>`COALESCE(SUM(${invoices.paidAmount}::numeric), 0)`,
+            gstCollected: sql<string>`COALESCE(SUM(${invoices.totalTax}::numeric), 0)`,
+        }).from(invoices).where(sql`${invoices.status} IN ('Confirmed', 'Approved')`),
+
+        // All-time Purchase Stats
+        db.select({
+            total: sql<string>`COALESCE(SUM(${purchaseBills.grandTotal}::numeric), 0)`,
+            paid: sql<string>`COALESCE(SUM(${purchaseBills.paidAmount}::numeric), 0)`,
+        }).from(purchaseBills).where(eq(purchaseBills.status, 'Confirmed')),
+
+        // Bank/Cash Balances
+        db.select({
+            bankBalance: sql<string>`COALESCE(SUM(${bankCashAccounts.balance}::numeric) FILTER (WHERE ${bankCashAccounts.type} = 'Bank'), 0)`,
+            cashBalance: sql<string>`COALESCE(SUM(${bankCashAccounts.balance}::numeric) FILTER (WHERE ${bankCashAccounts.type} = 'Cash'), 0)`,
+        }).from(bankCashAccounts),
+
+        // Customer Outstanding
+        db.select({
+            total: sql<string>`COALESCE(SUM(${customers.outstanding}::numeric), 0)`,
+        }).from(customers),
+
+        // Supplier Outstanding
+        db.select({
+            total: sql<string>`COALESCE(SUM(${suppliers.outstanding}::numeric), 0)`,
+        }).from(suppliers),
     ]);
 
     const kpis: DashboardKPIs = {
@@ -318,6 +361,15 @@ async function computeDashboardKPIs(): Promise<DashboardKPIs> {
         paymentsThisMonth: parseFloat(paymentsResult[0]?.total || '0'),
         pendingInvoices: pendingInvoicesResult[0]?.count || 0,
         pendingBills: pendingBillsResult[0]?.count || 0,
+        totalSales: parseFloat(allSalesResult[0]?.total || '0'),
+        receivedAmount: parseFloat(allSalesResult[0]?.received || '0'),
+        totalPurchases: parseFloat(allPurchasesResult[0]?.total || '0'),
+        paidAmount: parseFloat(allPurchasesResult[0]?.paid || '0'),
+        gstCollected: parseFloat(allSalesResult[0]?.gstCollected || '0'),
+        bankBalance: parseFloat(accountsResult[0]?.bankBalance || '0'),
+        cashBalance: parseFloat(accountsResult[0]?.cashBalance || '0'),
+        customerOutstanding: parseFloat(customerOutstandingResult[0]?.total || '0'),
+        supplierOutstanding: parseFloat(supplierOutstandingResult[0]?.total || '0'),
         updatedAt: new Date(),
     };
 

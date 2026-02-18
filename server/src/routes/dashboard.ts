@@ -24,7 +24,8 @@ import {
 } from '../db/schema';
 import { eq, sql, desc, and, lt, inArray } from 'drizzle-orm';
 import { successResponse } from '../types/api';
-import { getInventorySummary, getAllRawMaterialsWithStock } from '../services/inventory.service';
+import { getAllRawMaterialsWithStock } from '../services/inventory.service';
+import { getInventorySummary, getDashboardKPIs } from '../services/precomputed.service';
 import { cache as cacheService } from '../services/cache.service';
 
 const router = Router();
@@ -76,92 +77,28 @@ router.get('/init', async (req: Request, res: Response, next: NextFunction) => {
  */
 router.get('/kpis', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const cacheKey = 'dashboard:kpis';
-        const cachedData = cacheService.get(cacheKey);
-        if (cachedData) {
-            return res.json(successResponse(cachedData));
-        }
-
-        // Run all queries in parallel for performance
-        const [
-            inventorySummary,
-            productionStats,
-            salesStats,
-            purchaseStats,
-            accountBalances,
-            customerOutstanding,
-            supplierOutstanding,
-        ] = await Promise.all([
-            // Inventory from movements
+        const [inventorySummary, kpis, productionStats] = await Promise.all([
             getInventorySummary(),
-
-            // Production stats
+            getDashboardKPIs(),
+            // Still need production stats for in-progress count (more volatile)
             db.select({
                 inProgress: sql<number>`COUNT(*) FILTER (WHERE ${productionBatches.status} = 'in-progress')`,
                 completed: sql<number>`COUNT(*) FILTER (WHERE ${productionBatches.status} = 'completed')`,
                 totalBatches: sql<number>`COUNT(*)`,
                 totalOutput: sql<string>`COALESCE(SUM(${productionBatches.outputQuantity}::numeric), 0)`,
                 exceededLoss: sql<number>`COUNT(*) FILTER (WHERE ${productionBatches.lossExceeded} = true)`,
-            }).from(productionBatches),
-
-            // Sales stats (confirmed only)
-            db.select({
-                total: sql<string>`COALESCE(SUM(${invoices.grandTotal}::numeric), 0)`,
-                received: sql<string>`COALESCE(SUM(${invoices.paidAmount}::numeric), 0)`,
-                gstCollected: sql<string>`COALESCE(SUM(${invoices.totalTax}::numeric), 0)`,
-                invoiceCount: sql<number>`COUNT(*)`,
-                paidCount: sql<number>`COUNT(*) FILTER (WHERE ${invoices.paymentStatus} = 'Paid')`,
-                unpaidCount: sql<number>`COUNT(*) FILTER (WHERE ${invoices.paymentStatus} = 'Unpaid')`,
-            }).from(invoices).where(inArray(invoices.status, ['Confirmed', 'Approved'])),
-
-            // Purchase stats (confirmed only)
-            db.select({
-                total: sql<string>`COALESCE(SUM(${purchaseBills.grandTotal}::numeric), 0)`,
-                paid: sql<string>`COALESCE(SUM(${purchaseBills.paidAmount}::numeric), 0)`,
-                billCount: sql<number>`COUNT(*)`,
-            }).from(purchaseBills).where(eq(purchaseBills.status, 'Confirmed')),
-
-            // Bank/Cash balances
-            db.select({
-                bankBalance: sql<string>`COALESCE(SUM(${bankCashAccounts.balance}::numeric) FILTER (WHERE ${bankCashAccounts.type} = 'Bank'), 0)`,
-                cashBalance: sql<string>`COALESCE(SUM(${bankCashAccounts.balance}::numeric) FILTER (WHERE ${bankCashAccounts.type} = 'Cash'), 0)`,
-                bankAccounts: sql<number>`COUNT(*) FILTER (WHERE ${bankCashAccounts.type} = 'Bank')`,
-                cashAccounts: sql<number>`COUNT(*) FILTER (WHERE ${bankCashAccounts.type} = 'Cash')`,
-            }).from(bankCashAccounts),
-
-            // Customer outstanding
-            db.select({
-                total: sql<string>`COALESCE(SUM(${customers.outstanding}::numeric), 0)`,
-            }).from(customers),
-
-            // Supplier outstanding
-            db.select({
-                total: sql<string>`COALESCE(SUM(${suppliers.outstanding}::numeric), 0)`,
-            }).from(suppliers),
+            }).from(productionBatches)
         ]);
 
-        // Process results
         const production = productionStats[0];
-        const sales = salesStats[0];
-        const purchases = purchaseStats[0];
-        const accounts = accountBalances[0];
-
-        const totalSales = parseFloat(sales?.total || '0');
-        const receivedAmount = parseFloat(sales?.received || '0');
-        const totalPurchases = parseFloat(purchases?.total || '0');
-        const paidAmount = parseFloat(purchases?.paid || '0');
-        const bankBalance = parseFloat(accounts?.bankBalance || '0');
-        const cashBalance = parseFloat(accounts?.cashBalance || '0');
-        const customerOutstandingTotal = parseFloat(customerOutstanding[0]?.total || '0');
-        const supplierOutstandingTotal = parseFloat(supplierOutstanding[0]?.total || '0');
 
         const responseData = {
             inventory: {
-                rawMaterialStock: inventorySummary.rawMaterialStock,
-                rawMaterialItems: inventorySummary.rawMaterialCount,
-                lowStockItems: inventorySummary.lowStockCount,
-                finishedGoodsStock: inventorySummary.finishedGoodsStock,
-                finishedProductItems: inventorySummary.finishedGoodsCount,
+                rawMaterialStock: inventorySummary.rawMaterials.totalStock,
+                rawMaterialItems: inventorySummary.rawMaterials.totalItems,
+                lowStockItems: inventorySummary.rawMaterials.lowStockCount,
+                finishedGoodsStock: inventorySummary.finishedProducts.totalStock,
+                finishedProductItems: inventorySummary.finishedProducts.totalItems,
             },
             production: {
                 inProgress: Number(production?.inProgress || 0),
@@ -171,35 +108,30 @@ router.get('/kpis', async (req: Request, res: Response, next: NextFunction) => {
                 exceededLoss: Number(production?.exceededLoss || 0),
             },
             sales: {
-                total: totalSales.toFixed(2),
-                received: receivedAmount.toFixed(2),
-                pendingReceivables: (totalSales - receivedAmount).toFixed(2),
-                gstCollected: sales?.gstCollected || '0',
-                invoiceCount: Number(sales?.invoiceCount || 0),
-                paidCount: Number(sales?.paidCount || 0),
-                unpaidCount: Number(sales?.unpaidCount || 0),
+                total: kpis.totalSales.toFixed(2),
+                received: kpis.receivedAmount.toFixed(2),
+                pendingReceivables: (kpis.totalSales - kpis.receivedAmount).toFixed(2),
+                gstCollected: kpis.gstCollected.toFixed(2),
+                invoiceCount: Number(kpis.pendingInvoices), // Note: pendingInvoices is count, totalSales is amount
             },
             purchases: {
-                total: totalPurchases.toFixed(2),
-                paid: paidAmount.toFixed(2),
-                pendingPayables: (totalPurchases - paidAmount).toFixed(2),
-                billCount: Number(purchases?.billCount || 0),
+                total: kpis.totalPurchases.toFixed(2),
+                paid: kpis.paidAmount.toFixed(2),
+                pendingPayables: (kpis.totalPurchases - kpis.paidAmount).toFixed(2),
+                billCount: Number(kpis.pendingBills),
             },
             accounts: {
-                bankBalance: bankBalance.toFixed(2),
-                cashBalance: cashBalance.toFixed(2),
-                totalBalance: (bankBalance + cashBalance).toFixed(2),
-                bankAccounts: Number(accounts?.bankAccounts || 0),
-                cashAccounts: Number(accounts?.cashAccounts || 0),
+                bankBalance: kpis.bankBalance.toFixed(2),
+                cashBalance: kpis.cashBalance.toFixed(2),
+                totalBalance: (kpis.bankBalance + kpis.cashBalance).toFixed(2),
             },
             ledgers: {
-                customerOutstanding: customerOutstandingTotal.toFixed(2),
-                supplierOutstanding: supplierOutstandingTotal.toFixed(2),
-                netPosition: (customerOutstandingTotal - supplierOutstandingTotal).toFixed(2),
+                customerOutstanding: kpis.customerOutstanding.toFixed(2),
+                supplierOutstanding: kpis.supplierOutstanding.toFixed(2),
+                netPosition: (kpis.customerOutstanding - kpis.supplierOutstanding).toFixed(2),
             },
         };
 
-        cacheService.set(cacheKey, responseData, 60 * 1000); // Cache for 1 minute
         res.json(successResponse(responseData));
     } catch (error) {
         next(error);
@@ -340,6 +272,12 @@ router.get('/recent-activity', async (req: Request, res: Response, next: NextFun
  */
 router.get('/machine-efficiency', async (req: Request, res: Response, next: NextFunction) => {
     try {
+        const cacheKey = 'dashboard:machine-efficiency';
+        const cachedData = cacheService.get(cacheKey);
+        if (cachedData) {
+            return res.json(successResponse(cachedData));
+        }
+
         const result = await db
             .select({
                 machineId: productionBatches.machineId,
@@ -352,6 +290,7 @@ router.get('/machine-efficiency', async (req: Request, res: Response, next: Next
             .from(productionBatches)
             .groupBy(productionBatches.machineId);
 
+        cacheService.set(cacheKey, result, 5 * 60 * 1000); // Cache for 5 minutes
         res.json(successResponse(result));
     } catch (error) {
         next(error);

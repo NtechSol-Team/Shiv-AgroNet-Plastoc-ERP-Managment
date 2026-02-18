@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, X, Loader2, Package, Trash2 } from 'lucide-react';
-import { mastersApi } from '../lib/api';
+import { mastersApi, gstApi } from '../lib/api';
 
 const ActionButton = ({ onClick }: { onClick: () => void }) => (
   <button
@@ -20,7 +20,7 @@ const DeleteButton = ({ onClick }: { onClick: () => void }) => (
   </button>
 );
 
-type MasterType = 'raw-material' | 'finished-product' | 'machine' | 'customer' | 'supplier' | 'expense' | 'accounts' | 'employee' | 'cc-account';
+type MasterType = 'raw-material' | 'finished-product' | 'machine' | 'customer' | 'supplier' | 'expense' | 'general-item' | 'accounts' | 'employee' | 'cc-account';
 
 // Indian States for Dropdown
 const INDIAN_STATES = [
@@ -40,6 +40,9 @@ export function Masters() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [gstLoading, setGstLoading] = useState(false);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
   // State for all masters
   const [rawMaterials, setRawMaterials] = useState<any[]>([]);
   const [finishedProducts, setFinishedProducts] = useState<any[]>([]);
@@ -47,6 +50,7 @@ export function Masters() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [expenseHeads, setExpenseHeads] = useState<any[]>([]);
+  const [generalItems, setGeneralItems] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [ccAccounts, setCCAccounts] = useState<any[]>([]); // New State
   const [employees, setEmployees] = useState<any[]>([]);
@@ -101,6 +105,10 @@ export function Masters() {
           result = await mastersApi.getEmployees();
           if (result.data) setEmployees(result.data);
           break;
+        case 'general-item':
+          result = await mastersApi.getGeneralItems();
+          if (result.data) setGeneralItems(result.data);
+          break;
       }
       if (result?.error) setError(result.error);
     } catch (err) {
@@ -140,6 +148,8 @@ export function Masters() {
         };
       case 'employee':
         return { name: '', designation: '', contact: '', salary: '' };
+      case 'general-item':
+        return { name: '', defaultExpenseHeadId: '' };
       default:
         return {};
     }
@@ -221,6 +231,11 @@ export function Masters() {
             ? await mastersApi.updateEmployee(editingItem.id, formData)
             : await mastersApi.createEmployee(formData);
           break;
+        case 'general-item':
+          result = editingItem
+            ? await mastersApi.updateGeneralItem(editingItem.id, formData)
+            : await mastersApi.createGeneralItem(formData);
+          break;
       }
 
       if (result?.error) {
@@ -256,6 +271,36 @@ export function Masters() {
       setError('Failed to delete item');
     }
     setLoading(false);
+  };
+
+  const handleGstSearch = async () => {
+    const gstin = formData.gstNo;
+    if (!gstin || gstin.length !== 15) return;
+
+    setGstLoading(true);
+    setSuccessMsg(null);
+    setError(null);
+
+    try {
+      const result = await gstApi.search(gstin);
+      if (result.data) {
+        setFormData((prev: any) => ({
+          ...prev,
+          name: result.data.name,
+          stateCode: result.data.stateCode,
+          address: result.data.address,
+          gstVerifiedAt: result.data.gstVerifiedAt
+        }));
+        setSuccessMsg('GST details fetched successfully.');
+        setTimeout(() => setSuccessMsg(null), 3000);
+      } else {
+        setError(result.error || 'Unable to fetch GST details. Please verify GST number or enter details manually.');
+      }
+    } catch (err) {
+      setError('Unable to fetch GST details. Please verify GST number or enter details manually.');
+    } finally {
+      setGstLoading(false);
+    }
   };
 
   const renderForm = () => {
@@ -390,8 +435,22 @@ export function Masters() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">GST Number</label>
-              <input type="text" value={formData.gstNo || ''} onChange={(e) => setFormData({ ...formData, gstNo: e.target.value })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+              <div className="relative">
+                <input
+                  type="text"
+                  value={formData.gstNo || ''}
+                  onChange={(e) => setFormData({ ...formData, gstNo: e.target.value.toUpperCase() })}
+                  onBlur={handleGstSearch}
+                  maxLength={15}
+                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${gstLoading ? 'bg-slate-50 border-blue-200' : 'border-gray-300'}`}
+                  placeholder="Enter GSTIN"
+                />
+                {gstLoading && (
+                  <div className="absolute right-3 top-2.5">
+                    <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+                  </div>
+                )}
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Phone *</label>
@@ -432,8 +491,22 @@ export function Masters() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">GST Number</label>
-              <input type="text" value={formData.gstNo || ''} onChange={(e) => setFormData({ ...formData, gstNo: e.target.value })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+              <div className="relative">
+                <input
+                  type="text"
+                  value={formData.gstNo || ''}
+                  onChange={(e) => setFormData({ ...formData, gstNo: e.target.value.toUpperCase() })}
+                  onBlur={handleGstSearch}
+                  maxLength={15}
+                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${gstLoading ? 'bg-slate-50 border-blue-200' : 'border-gray-300'}`}
+                  placeholder="Enter GSTIN"
+                />
+                {gstLoading && (
+                  <div className="absolute right-3 top-2.5">
+                    <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+                  </div>
+                )}
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Contact *</label>
@@ -597,6 +670,27 @@ export function Masters() {
           </div>
         );
 
+      case 'general-item':
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Item Name *</label>
+              <input type="text" value={formData.name || ''} onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Default Expense Head</label>
+              <select value={formData.defaultExpenseHeadId || ''} onChange={(e) => setFormData({ ...formData, defaultExpenseHeadId: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                <option value="">None (Select at purchase)</option>
+                {expenseHeads.map(h => (
+                  <option key={h.id} value={h.id}>{h.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        );
+
       default:
         return null;
     }
@@ -610,11 +704,12 @@ export function Masters() {
       'customer': 'Customer',
       'supplier': 'Supplier',
       'expense': 'Expense Head',
+      'general-item': 'General Item',
       'accounts': 'Bank/Cash Account',
       'cc-account': 'Cash Credit Account',
       'employee': 'Employee'
     };
-    return `${editingItem ? 'Edit' : 'Add New'} ${titles[activeTab]}`;
+    return `${editingItem ? 'Edit' : 'Add New'} ${titles[activeTab as keyof typeof titles]}`;
   };
 
   const renderTable = () => {
@@ -658,6 +753,7 @@ export function Masters() {
         case 'accounts': return accounts;
         case 'employee': return employees;
         case 'cc-account': return ccAccounts;
+        case 'general-item': return generalItems;
         default: return [];
       }
     };
@@ -713,6 +809,9 @@ export function Masters() {
               setLoading(false);
               return;
             }
+            break;
+          case 'general-item':
+            result = await mastersApi.deleteGeneralItem(id);
             break;
         }
 
@@ -1059,6 +1158,35 @@ export function Masters() {
           </table>
         );
 
+      case 'general-item':
+        return (
+          <table className="w-full text-left border-collapse">
+            <TableHeader>
+              <Th>Name</Th>
+              <Th>Default Expense Head</Th>
+              <Th>Actions</Th>
+            </TableHeader>
+            <tbody className="bg-white">
+              {generalItems.map((item) => (
+                <tr key={item.id} className="hover:bg-slate-50/80 transition-colors group">
+                  <Td className="font-medium text-slate-900">{item.name}</Td>
+                  <Td>
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-lg text-xs font-medium border ${item.defaultExpenseHead ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                      {item.defaultExpenseHead?.name || 'N/A'}
+                    </span>
+                  </Td>
+                  <Td>
+                    <div className="flex items-center gap-2">
+                      <ActionButton onClick={() => handleEdit(item)} />
+                      <DeleteButton onClick={() => handleDelete('general-item', item.id)} />
+                    </div>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        );
+
       default:
         return null;
     }
@@ -1080,6 +1208,7 @@ export function Masters() {
             { id: 'accounts', label: 'Accounts' },
             { id: 'cc-account', label: 'CC Accounts' },
             { id: 'employee', label: 'Employees' },
+            { id: 'general-item', label: 'General Items' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1111,6 +1240,13 @@ export function Masters() {
         <div className="bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl flex items-center">
           <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
           {error}
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="bg-green-50 border border-green-100 text-green-600 px-4 py-3 rounded-xl flex items-center animate-in fade-in slide-in-from-top-2">
+          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+          {successMsg}
         </div>
       )}
 

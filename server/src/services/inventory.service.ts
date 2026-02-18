@@ -61,10 +61,11 @@ export interface StockValidationResult {
  * Stock = SUM(quantity_in) - SUM(quantity_out)
  * 
  * @param rawMaterialId - UUID of the raw material
+ * @param tx - Optional transaction object
  * @returns Current stock quantity
  */
-export async function getRawMaterialStock(rawMaterialId: string): Promise<number> {
-    const result = await db
+export async function getRawMaterialStock(rawMaterialId: string, tx: any = db): Promise<number> {
+    const result = await tx
         .select({
             totalIn: sql<string>`COALESCE(SUM(${stockMovements.quantityIn}), 0)`,
             totalOut: sql<string>`COALESCE(SUM(${stockMovements.quantityOut}), 0)`,
@@ -87,10 +88,11 @@ export async function getRawMaterialStock(rawMaterialId: string): Promise<number
  * Calculate current stock for a finished product from movements
  * 
  * @param finishedProductId - UUID of the finished product
+ * @param tx - Optional transaction object
  * @returns Current stock quantity
  */
-export async function getFinishedProductStock(finishedProductId: string): Promise<number> {
-    const result = await db
+export async function getFinishedProductStock(finishedProductId: string, tx: any = db): Promise<number> {
+    const result = await tx
         .select({
             totalIn: sql<string>`COALESCE(SUM(${stockMovements.quantityIn}), 0)`,
             totalOut: sql<string>`COALESCE(SUM(${stockMovements.quantityOut}), 0)`,
@@ -227,26 +229,22 @@ export async function getAllFinishedProductsWithStock() {
         if (r.id) stockMap.set(r.id, parseFloat(r.totalIn) - parseFloat(r.totalOut));
     });
 
-    // 3. Get Last Batch Date (Optimization: Using subquery or simpler window if feasible, 
-    // but for now, we'll keep it simple or skip if not critical. 
-    // Optimization: Fetch ALL completed batches sorted by date, keep first per product in memory map.)
-    const completedBatches = await db
-        .select({
-            pid: productionBatches.finishedProductId,
-            code: productionBatches.code,
-            date: productionBatches.completionDate,
-        })
-        .from(productionBatches)
-        .where(eq(productionBatches.status, 'completed'))
-        .orderBy(desc(productionBatches.completionDate));
+    // 3. Get Last Batch Date (Optimization: Using a more targeted query)
+    // Fetch only the latest completed batch for each product
+    const latestBatches = await db.execute(sql`
+        SELECT DISTINCT ON (finished_product_id) 
+            finished_product_id as pid, 
+            code, 
+            completion_date as date
+        FROM production_batches
+        WHERE status = 'completed'
+        ORDER BY finished_product_id, completion_date DESC
+    `);
 
     const lastBatchMap = new Map();
-    // Since it's ordered by desc, the first one we encounter for a PID is the latest
-    for (const batch of completedBatches) {
-        if (batch.pid && !lastBatchMap.has(batch.pid)) {
-            lastBatchMap.set(batch.pid, batch);
-        }
-    }
+    (latestBatches.rows as any[]).forEach(batch => {
+        lastBatchMap.set(batch.pid, batch);
+    });
 
     // 4. Merge results
     return products.map(product => {
@@ -324,23 +322,24 @@ export async function validateFinishedProductStock(
  * This is the core function that modifies inventory
  * 
  * @param input - Movement details
+ * @param tx - Optional transaction object
  * @returns Created movement record
  */
-export async function createStockMovement(input: StockMovementInput) {
+export async function createStockMovement(input: StockMovementInput, tx: any = db) {
     // Calculate running balance
     let runningBalance = 0;
 
     if (input.itemType === 'raw_material' && input.rawMaterialId) {
-        runningBalance = await getRawMaterialStock(input.rawMaterialId);
+        runningBalance = await getRawMaterialStock(input.rawMaterialId, tx);
     } else if (input.itemType === 'finished_product' && input.finishedProductId) {
-        runningBalance = await getFinishedProductStock(input.finishedProductId);
+        runningBalance = await getFinishedProductStock(input.finishedProductId, tx);
     }
 
     // Apply this movement to running balance
     runningBalance += (input.quantityIn || 0) - (input.quantityOut || 0);
 
     // Insert the movement
-    const [movement] = await db.insert(stockMovements).values({
+    const [movement] = await tx.insert(stockMovements).values({
         date: input.date,
         movementType: input.movementType,
         itemType: input.itemType,

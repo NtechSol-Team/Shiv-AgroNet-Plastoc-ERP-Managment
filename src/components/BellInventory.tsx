@@ -63,6 +63,7 @@ export function BellInventory() {
 
     // Create Form State
     const [selectedProductId, setSelectedProductId] = useState('');
+    const [batchCode, setBatchCode] = useState('');
     const [bellItems, setBellItems] = useState<NewBellItem[]>([]);
 
     // Derived state for current product selection
@@ -180,6 +181,7 @@ export function BellInventory() {
             if (!isValid) throw new Error(validationErrors[0]);
 
             const payload = {
+                batchCode,
                 items: bellItems.map(item => ({
                     finishedProductId: item.finishedProductId,
                     gsm: item.gsm,
@@ -193,6 +195,7 @@ export function BellInventory() {
             if (res.data) {
                 setShowCreateModal(false);
                 setSelectedProductId('');
+                setBatchCode('');
                 setBellItems([]);
                 fetchData();
             } else if (res.error) {
@@ -211,6 +214,20 @@ export function BellInventory() {
             fetchData();
         } catch (err) {
             alert('Failed to delete batch');
+        }
+    };
+
+    const handleDeleteBale = async (baleId: string) => {
+        if (!window.confirm('Delete this individual bale? Stock will be restored.')) return;
+        try {
+            const res = await bellInventoryApi.deleteBaleItem(baleId);
+            if (res.data) {
+                fetchData();
+            } else {
+                setError(res.error || 'Failed to delete bale');
+            }
+        } catch (err) {
+            setError('Failed to delete bale');
         }
     };
 
@@ -496,13 +513,22 @@ export function BellInventory() {
                                                                                         </button>
                                                                                     </div>
                                                                                 ) : (
-                                                                                    <button
-                                                                                        onClick={() => handleEditBellItem(item)}
-                                                                                        className="text-gray-400 hover:text-blue-600 transition-colors p-1"
-                                                                                        title="Edit Item"
-                                                                                    >
-                                                                                        <Edit2 className="w-4 h-4" />
-                                                                                    </button>
+                                                                                    <div className="flex items-center justify-center space-x-2">
+                                                                                        <button
+                                                                                            onClick={() => handleEditBellItem(item)}
+                                                                                            className="text-gray-400 hover:text-blue-600 transition-colors p-1"
+                                                                                            title="Edit Item"
+                                                                                        >
+                                                                                            <Edit2 className="w-4 h-4" />
+                                                                                        </button>
+                                                                                        <button
+                                                                                            onClick={() => handleDeleteBale(item.id)}
+                                                                                            className="text-gray-400 hover:text-red-600 transition-colors p-1"
+                                                                                            title="Delete Bale"
+                                                                                        >
+                                                                                            <Trash2 className="w-4 h-4" />
+                                                                                        </button>
+                                                                                    </div>
                                                                                 )
                                                                             )}
                                                                         </td>
@@ -537,6 +563,24 @@ export function BellInventory() {
                         </div>
 
                         <div className="p-6 overflow-y-auto flex-grow space-y-6">
+                            {/* Batch Info */}
+                            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                                    <Package className="w-4 h-4 mr-2 text-blue-600" />
+                                    Batch Information
+                                </h4>
+                                <div className="max-w-xs">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Batch Code <span className="text-red-500">*</span></label>
+                                    <input
+                                        type="text"
+                                        placeholder="Enter Batch Code (e.g. BB-01)"
+                                        className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
+                                        value={batchCode}
+                                        onChange={(e) => setBatchCode(e.target.value)}
+                                        required
+                                    />
+                                </div>
+                            </div>
 
                             {/* Input Form */}
                             <div className="bg-blue-50/50 p-4 rounded-lg border border-blue-100">

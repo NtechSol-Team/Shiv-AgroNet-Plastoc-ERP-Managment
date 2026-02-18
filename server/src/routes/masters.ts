@@ -22,12 +22,12 @@ import {
     rawMaterials, finishedProducts, machines, customers,
     suppliers, expenseHeads, bankCashAccounts, employees,
     productionBatches, stockMovements, bellItems,
-    paymentTransactions, invoices, purchaseBills,
+    paymentTransactions, invoices, purchaseBills, purchaseBillItems,
     billPaymentAllocations, invoicePaymentAllocations,
     expenses, financialTransactions, generalLedger,
-    ccAccountDetails,
+    ccAccountDetails, generalItems,
 } from '../db/schema';
-import { eq, count as countFn } from 'drizzle-orm';
+import { eq, and, like, notLike, count as countFn } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
 import { getRawMaterialStock, getFinishedProductStock, getAllRawMaterialsWithStock, getAllFinishedProductsWithStock } from '../services/inventory.service';
@@ -592,12 +592,35 @@ router.post('/expense-heads', async (req: Request, res: Response, next: NextFunc
     try {
         const { name, category } = req.body;
 
+        // Find last code that starts with 'E-' but NOT 'EXP-'
+        // This avoids conflict with auto-generated expense heads from Purchase Bills
         const lastItem = await db.query.expenseHeads.findFirst({
+            where: (table, { and, like, notLike }) => and(
+                like(table.code, 'E-%'),
+                notLike(table.code, 'EXP-%')
+            ),
             orderBy: (table, { desc }) => [desc(table.code)]
         });
-        const lastCode = lastItem?.code || 'E-000';
-        const lastNum = parseInt(lastCode.split('-')[1] || '0');
-        const code = `E-${String(lastNum + 1).padStart(3, '0')}`;
+
+        let code = 'E-001';
+        if (lastItem) {
+            const parts = lastItem.code.split('-');
+            const numStr = parts[1];
+            if (numStr && !isNaN(parseInt(numStr))) {
+                const nextNum = parseInt(numStr) + 1;
+                // Preserve padding if small, else just use number
+                code = `E-${String(nextNum).padStart(3, '0')}`;
+            } else {
+                // Fallback if parsing fails
+                code = `E-${Date.now()}`;
+            }
+        }
+
+        // Double check uniqueness
+        const existing = await db.query.expenseHeads.findFirst({ where: eq(expenseHeads.code, code) });
+        if (existing) {
+            code = `E-${Date.now()}`;
+        }
 
         const [item] = await db.insert(expenseHeads).values({
             code, name, category: category || 'Variable',
@@ -628,8 +651,92 @@ router.put('/expense-heads/:id', async (req: Request, res: Response, next: NextF
 
 router.delete('/expense-heads/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        await db.delete(expenseHeads).where(eq(expenseHeads.id, req.params.id));
+        const { id } = req.params;
+
+        // 1. Check for references in Purchase Bill Items
+        const purchaseItems = await db.query.purchaseBillItems.findFirst({
+            where: eq(purchaseBillItems.expenseHeadId, id)
+        });
+        if (purchaseItems) {
+            throw createError('Cannot delete: This expense head is used in Purchase Bills.', 409);
+        }
+
+        // 2. Check for references in Expenses (Cash/Bank)
+        const expenseEntries = await db.query.expenses.findFirst({
+            where: eq(expenses.expenseHeadId, id)
+        });
+        if (expenseEntries) {
+            throw createError('Cannot delete: This expense head is used in Cash/Bank Expenses.', 409);
+        }
+
+        // 3. Delete
+        await db.delete(expenseHeads).where(eq(expenseHeads.id, id));
         cache.del('masters:expense-heads');
+        res.json(successResponse({ deleted: true }));
+    } catch (error) {
+        next(error);
+    }
+});
+
+// ============================================================
+// GENERAL ITEMS
+// ============================================================
+
+router.get('/general-items', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const items = await db.query.generalItems.findMany({
+            with: { defaultExpenseHead: true },
+            orderBy: (table, { asc }) => [asc(table.name)]
+        });
+        res.json(successResponse(items));
+    } catch (error) {
+        next(error);
+    }
+});
+
+router.post('/general-items', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { name, defaultExpenseHeadId } = req.body;
+        const [item] = await db.insert(generalItems).values({
+            name,
+            defaultExpenseHeadId
+        }).returning();
+        cache.del('masters:general-items');
+        res.status(201).json(successResponse(item));
+    } catch (error) {
+        next(error);
+    }
+});
+
+router.put('/general-items/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { name, defaultExpenseHeadId } = req.body;
+        const [item] = await db.update(generalItems)
+            .set({ name, defaultExpenseHeadId, updatedAt: new Date() })
+            .where(eq(generalItems.id, req.params.id))
+            .returning();
+        if (!item) throw createError('General Item not found', 404);
+        cache.del('masters:general-items');
+        res.json(successResponse(item));
+    } catch (error) {
+        next(error);
+    }
+});
+
+router.delete('/general-items/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+
+        // Check for references in Purchase Bill Items
+        const purchaseItems = await db.query.purchaseBillItems.findFirst({
+            where: eq(purchaseBillItems.generalItemId, id)
+        });
+        if (purchaseItems) {
+            throw createError('Cannot delete: This item is used in Purchase Bills.', 409);
+        }
+
+        await db.delete(generalItems).where(eq(generalItems.id, id));
+        cache.del('masters:general-items');
         res.json(successResponse({ deleted: true }));
     } catch (error) {
         next(error);

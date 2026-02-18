@@ -3,7 +3,7 @@ import {
   Plus, TrendingUp, TrendingDown, X, Loader2, Users, Truck,
   CreditCard, Wallet, FileText, ArrowUpRight, ArrowDownRight, Search, Printer, MessageCircle
 } from 'lucide-react';
-import { accountsApi, mastersApi } from '../lib/api';
+import { accountsApi, mastersApi, financeApi } from '../lib/api';
 
 // ============================================================
 // TYPE DEFINITIONS
@@ -79,6 +79,9 @@ export function Accounts() {
   // Modal States
 
   const [showExpenseModal, setShowExpenseModal] = useState(false);
+
+  const [recalculating, setRecalculating] = useState(false);
+  const [showRecalculateConfirm, setShowRecalculateConfirm] = useState(false);
 
   // Ledger Filter States
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
@@ -209,6 +212,24 @@ export function Accounts() {
     }
   };
 
+  const handleRecalculateBatch = async () => {
+    setRecalculating(true);
+    try {
+      const res = await financeApi.recalculateLedgers();
+      if (res.data) {
+        alert('Ledgers recalculated successfully!');
+        fetchInitialData();
+      } else {
+        alert('Failed to recalculate: ' + (res.error || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Error during recalculation');
+    } finally {
+      setRecalculating(false);
+      setShowRecalculateConfirm(false);
+    }
+  };
+
   // Helper to get color for transaction type
   const getTypeColor = (type: string) => {
     return type === 'RECEIPT' ? 'text-green-600' : 'text-red-600';
@@ -238,6 +259,14 @@ export function Accounts() {
           <p className="text-sm text-gray-600 mt-1">Manage cash flow, receivables, and payables</p>
         </div>
         <div className="flex gap-3">
+          <button
+            onClick={() => setShowRecalculateConfirm(true)}
+            className="flex items-center px-4 py-2 bg-orange-50 border border-orange-200 rounded-lg text-orange-700 hover:bg-orange-100"
+            title="Fix discrepancies by recalculating from bills"
+          >
+            <TrendingUp className="w-4 h-4 mr-2" />
+            Recalculate Balances
+          </button>
           <button
             onClick={() => setShowExpenseModal(true)}
             className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
@@ -1071,6 +1100,50 @@ export function Accounts() {
               >
                 Save Expense
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* RECALCULATE CONFIRMATION MODAL */}
+      {showRecalculateConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center justify-center w-12 h-12 bg-orange-100 rounded-full mb-4 mx-auto">
+                <TrendingUp className="w-6 h-6 text-orange-600" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 text-center mb-2">Recalculate Ledgers?</h3>
+              <p className="text-sm text-gray-600 text-center mb-6">
+                This will overwrite current supplier and customer outstanding balances based strictly on the sum of their <strong>Confirmed</strong> bills and invoices.
+              </p>
+              <div className="bg-orange-50 border border-orange-100 rounded-lg p-4 mb-6">
+                <p className="text-xs text-orange-800 font-medium">
+                  <strong>Warning:</strong> Manual opening balances or direct adjustments in the Master data will be LOST and replaced with the system-calculated values.
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowRecalculateConfirm(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
+                  disabled={recalculating}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRecalculateBatch}
+                  className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg font-medium hover:bg-orange-700 disabled:opacity-50 flex items-center justify-center"
+                  disabled={recalculating}
+                >
+                  {recalculating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    'Confirm & Fix'
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
