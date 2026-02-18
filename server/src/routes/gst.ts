@@ -4,30 +4,34 @@ import { createError } from '../middleware/errorHandler';
 
 const router = Router();
 
-const GST_API_URL = 'https://apisandbox.whitebooks.in/public/search';
-const CLIENT_ID = 'GSTS842466fb-5f5e-4564-9d4c-3f80c57078ea';
-const CLIENT_SECRET = 'GSTSb28a7b45-4b84-4d26-aa89-d341eb3d3751';
+const GST_API_URL = 'https://my.gstzen.in/api/gstin-validator/';
+const API_TOKEN = process.env.GSTZEN_API_TOKEN;
 
-interface GstApiResponse {
-    data?: {
-        lgnm?: string; // Legal Name
-        tradeNam?: string; // Trade Name
-        gstin?: string;
-        pradr?: {
-            addr?: {
-                bno?: string; // Building No
-                bnm?: string; // Building Name
-                st?: string; // Street
-                loc?: string; // Location
-                dst?: string; // District
-                pncd?: string; // Pincode
-                stcd?: string; // State Code
-            }
+interface GstZenResponse {
+    status: number;
+    gstin: string;
+    valid: boolean;
+    company_details?: {
+        legal_name: string;
+        trade_name: string;
+        company_status: string;
+        pan: string;
+        state: string;
+        state_info: {
+            code: string;
+            name: string;
+            alpha_code: string;
         };
-        sts?: string; // Status
-        dty?: string; // Taxpayer Type
+        registration_date: string;
+        gst_type: string;
+        pradr: {
+            addr: string;
+            loc: string;
+            pincode: string;
+            street: string;
+        };
     };
-    error?: any;
+    message?: string;
 }
 
 router.get('/search', async (req: Request, res: Response, next: Function) => {
@@ -38,55 +42,52 @@ router.get('/search', async (req: Request, res: Response, next: Function) => {
             throw createError('GSTIN is required', 400);
         }
 
-        // Hardcoded email as per user curl request example, or we could leave it blank if optional.
-        // The user provided curl has `email=deepnakrani1207%40gmail.com`.
-        // The user request says "email" is a query param. I'll use the one from the curl as default or allow passing it.
-        // Let's use the one from curl as a fallback/default if not provided in our internal API, 
-        // to match the working example.
-        const email = req.query.email as string || 'deepnakrani1207@gmail.com';
+        if (!API_TOKEN) {
+            throw createError('GSTZen API Token is not configured', 500);
+        }
 
-        const url = `${GST_API_URL}?gstin=${gstin}&email=${encodeURIComponent(email)}`;
+        console.log(`fetching GST data for ${gstin} via GSTZen`);
 
-        console.log(`fetching GST data for ${gstin}`);
-
-        const response = await fetch(url, {
-            method: 'GET',
+        const response = await fetch(GST_API_URL, {
+            method: 'POST',
             headers: {
-                'accept': '*/*',
-                'client_id': CLIENT_ID,
-                'client_secret': CLIENT_SECRET
-            }
+                'Content-Type': 'application/json',
+                'Token': API_TOKEN
+            },
+            body: JSON.stringify({ gstin })
         });
 
         if (!response.ok) {
-            console.error('GST API Error:', response.status, response.statusText);
-            throw createError('Failed to fetch GST details from external API', response.status);
+            console.error('GSTZen API Error:', response.status, response.statusText);
+            throw createError('Failed to fetch GST details from GSTZen API', response.status);
         }
 
-        const data = await response.json() as GstApiResponse;
+        const data = await response.json() as GstZenResponse;
 
-        if (!data || !data.data) {
-            throw createError('Invalid response from GST API', 502);
+        // Handle Subscription/General errors
+        if (data.status === 0) {
+            throw createError(data.message || 'GSTZen API Error', 400);
         }
 
-        // Map response to our format
-        const gstData = data.data;
-        const addressParts = [
-            gstData.pradr?.addr?.bno,
-            gstData.pradr?.addr?.bnm,
-            gstData.pradr?.addr?.st,
-            gstData.pradr?.addr?.loc,
-            gstData.pradr?.addr?.dst,
-            gstData.pradr?.addr?.pncd
-        ].filter(Boolean); // Remove undefined/null/empty
+        // Handle invalid GSTIN
+        if (!data.valid) {
+            throw createError('Invalid GSTIN', 400);
+        }
 
+        if (!data.company_details) {
+            throw createError('No company details found for this GSTIN', 404);
+        }
+
+        const details = data.company_details;
+
+        // Map to our internal format
         const mappedData = {
-            name: gstData.lgnm || gstData.tradeNam, // Prefer Legal Name, fallback to Trade Name
-            gstin: gstData.gstin,
-            stateCode: gstData.pradr?.addr?.stcd,
-            address: addressParts.join(', '),
-            status: gstData.sts,
-            taxpayerType: gstData.dty,
+            name: details.legal_name || details.trade_name,
+            gstin: data.gstin,
+            stateCode: details.state_info?.code,
+            address: `${details.pradr.addr}, ${details.pradr.street}, ${details.pradr.loc}, ${details.pradr.pincode}`,
+            status: details.company_status,
+            taxpayerType: details.gst_type,
             gstVerifiedAt: new Date().toISOString()
         };
 
