@@ -56,6 +56,7 @@ interface Expense {
   amount: string;
   expenseHead?: ExpenseHead;
   account?: Account;
+  paymentMode?: string;
 }
 
 // ============================================================
@@ -79,6 +80,7 @@ export function Accounts() {
   // Modal States
 
   const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
 
   const [recalculating, setRecalculating] = useState(false);
   const [showRecalculateConfirm, setShowRecalculateConfirm] = useState(false);
@@ -103,7 +105,8 @@ export function Accounts() {
     expenseHeadId: '',
     description: '',
     amount: '',
-    accountId: ''
+    accountId: '',
+    paymentMode: 'Cash'
   });
 
   // ============================================================
@@ -200,15 +203,54 @@ export function Accounts() {
 
   const handleExpenseSubmit = async () => {
     try {
-      await accountsApi.createExpense({
+      const payload = {
         ...expenseForm,
         amount: parseFloat(expenseForm.amount)
-      });
+      };
+
+      if (editingExpenseId) {
+        await accountsApi.updateExpense(editingExpenseId, payload);
+      } else {
+        await accountsApi.createExpense(payload);
+      }
       setShowExpenseModal(false);
+      setEditingExpenseId(null);
+      setExpenseForm({
+        date: new Date().toISOString().split('T')[0],
+        expenseHeadId: '',
+        description: '',
+        amount: '',
+        accountId: '',
+        paymentMode: 'Cash'
+      });
       fetchInitialData();
       if (selectedAccountId) loadAccountLedger(selectedAccountId); // Refresh ledger if active
     } catch (err) {
       setError('Failed to record expense');
+    }
+  };
+
+  const handleEditExpense = (expense: Expense) => {
+    setExpenseForm({
+      date: expense.date.split('T')[0],
+      expenseHeadId: expense.expenseHead?.id || '',
+      description: expense.description,
+      amount: expense.amount,
+      accountId: expense.account?.id || '',
+      paymentMode: expense.paymentMode || 'Cash'
+    });
+    setEditingExpenseId(expense.id);
+    setShowExpenseModal(true);
+  };
+
+  const handleDeleteExpense = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this expense?')) return;
+    try {
+      await accountsApi.deleteExpense(id);
+      fetchInitialData();
+      if (selectedAccountId) loadAccountLedger(selectedAccountId);
+    } catch (err) {
+      setError('Failed to delete expense');
     }
   };
 
@@ -1004,6 +1046,7 @@ export function Accounts() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Paid From</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -1014,6 +1057,10 @@ export function Accounts() {
                   <td className="px-6 py-4 text-sm text-gray-500">{exp.description}</td>
                   <td className="px-6 py-4 text-sm text-gray-500">{exp.account?.name}</td>
                   <td className="px-6 py-4 text-sm text-right text-red-600 font-medium">- ₹{parseFloat(exp.amount).toLocaleString()}</td>
+                  <td className="px-6 py-4 text-right text-sm font-medium">
+                    <button onClick={() => handleEditExpense(exp)} className="text-blue-600 hover:text-blue-900 mr-3">Edit</button>
+                    <button onClick={() => handleDeleteExpense(exp.id)} className="text-red-600 hover:text-red-900">Delete</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1063,6 +1110,20 @@ export function Accounts() {
                     onChange={(e) => setExpenseForm(p => ({ ...p, date: e.target.value }))}
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Mode</label>
+                <select
+                  className="w-full border-gray-300 rounded-lg"
+                  value={expenseForm.paymentMode}
+                  onChange={(e) => setExpenseForm(p => ({ ...p, paymentMode: e.target.value }))}
+                >
+                  <option value="Cash">Cash</option>
+                  <option value="Bank">Bank</option>
+                  <option value="Cheque">Cheque</option>
+                  <option value="UPI">UPI</option>
+                </select>
               </div>
 
               <div>

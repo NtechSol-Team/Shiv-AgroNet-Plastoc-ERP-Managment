@@ -499,7 +499,7 @@ export function Reports() {
                           getFilteredPurchaseData().map((purchase, index) => (
                             <tr key={index} className="border-b border-gray-200 hover:bg-gray-50">
                               <td className="px-4 py-3 text-sm font-medium text-gray-900">{purchase.code}</td>
-                              <td className="px-4 py-3 text-sm text-gray-600">{purchase.date}</td>
+                              <td className="px-4 py-3 text-sm text-gray-600">{new Date(purchase.date).toLocaleDateString()}</td>
                               <td className="px-4 py-3 text-sm text-gray-900">{purchase.supplier}</td>
                               <td className="px-4 py-3 text-sm text-gray-600">
                                 {purchase.items?.map((i: any, idx: number) => <div key={idx}>{i.name}</div>) || '-'}

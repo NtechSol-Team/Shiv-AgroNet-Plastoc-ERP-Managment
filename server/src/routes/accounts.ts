@@ -141,14 +141,22 @@ router.get('/cash-ledger', async (req: Request, res: Response, next: NextFunctio
                 type: sql<string>`CASE WHEN ${generalLedger.creditAmount} > 0 THEN 'PAYMENT' ELSE 'RECEIPT' END`, // Credit reduces asset (Payment-like), Debit increases (Receipt-like)
                 partyName: sql<string>`'System'`,
                 mode: sql<string>`'System'`,
-                voucherType: generalLedger.voucherType
+                voucherType: generalLedger.voucherType,
+                referenceId: generalLedger.referenceId
             })
             .from(generalLedger)
             .where(
                 and(
                     sql`${generalLedger.ledgerId} IN (${sql.raw(cashAccountIds.map(id => `'${id}'`).join(','))})`,
+                    inArray(generalLedger.voucherType, ['CONTRA', 'JOURNAL', 'ADJUSTMENT', 'SYSTEM'])
                 )
             );
+
+        // Filter GL
+        const filteredGlRecords = glRecords.filter(g => {
+            const isDuplicate = financeRecords.some(f => f.id === g.referenceId) || payments.some(p => p.id === g.referenceId);
+            return !isDuplicate;
+        });
 
         // Merge and Normalize
         const allTransactions = [
@@ -182,7 +190,7 @@ router.get('/cash-ledger', async (req: Request, res: Response, next: NextFunctio
                 mode: f.mode,
                 category: 'Financial'
             })),
-            ...glRecords.map(g => ({
+            ...filteredGlRecords.map(g => ({
                 id: g.id,
                 date: new Date(g.date),
                 amount: g.amount,
@@ -283,14 +291,22 @@ router.get('/bank-ledger', async (req: Request, res: Response, next: NextFunctio
                 type: sql<string>`CASE WHEN ${generalLedger.creditAmount} > 0 THEN 'PAYMENT' ELSE 'RECEIPT' END`, // Credit reduces asset
                 partyName: sql<string>`'System'`,
                 mode: sql<string>`'System'`,
-                voucherType: generalLedger.voucherType
+                voucherType: generalLedger.voucherType,
+                referenceId: generalLedger.referenceId
             })
             .from(generalLedger)
             .where(
                 and(
                     sql`${generalLedger.ledgerId} IN (${sql.raw(bankAccountIds.map(id => `'${id}'`).join(','))})`,
+                    inArray(generalLedger.voucherType, ['CONTRA', 'JOURNAL', 'ADJUSTMENT', 'SYSTEM'])
                 )
             );
+
+        // Filter GL - Remove duplicates that are already covered by financeRecords or payments
+        const filteredGlRecords = glRecords.filter(g => {
+            const isDuplicate = financeRecords.some(f => f.id === g.referenceId) || payments.some(p => p.id === g.referenceId);
+            return !isDuplicate;
+        });
 
         // Merge and Normalize
         const allTransactions = [
@@ -324,7 +340,7 @@ router.get('/bank-ledger', async (req: Request, res: Response, next: NextFunctio
                 mode: f.mode,
                 category: 'Financial'
             })),
-            ...glRecords.map(g => ({
+            ...filteredGlRecords.map(g => ({
                 id: g.id,
                 date: new Date(g.date),
                 amount: g.amount,
@@ -949,12 +965,20 @@ router.get('/transactions', async (req: Request, res: Response, next: NextFuncti
             .orderBy(desc(generalLedger.transactionDate))
             .limit(fetchLimit);
 
-        const [payments, expenseRecords, financeRecords, glRecords] = await Promise.all([
+        const [payments, expenseRecords, financeRecords, rawGlRecords] = await Promise.all([
             paymentQuery,
             expenseQuery,
             financeQuery,
             glQuery
         ]);
+
+        // Filter out GL records that are just shadow entries for Financial/Payment Transactions
+        const existingTxIds = new Set([
+            ...payments.map(p => p.payment_transactions.id),
+            ...financeRecords.map(f => f.financial_transactions.id)
+        ]);
+
+        const glRecords = rawGlRecords.filter(g => !g.general_ledger.referenceId || !existingTxIds.has(g.general_ledger.referenceId));
 
         // FETCH ALLOCATIONS
         // Note: With select(), payments are { payment_transactions: ..., bank_cash_accounts: ... }
@@ -1184,6 +1208,102 @@ router.post('/expenses', validateRequest(createExpenseSchema), async (req: Reque
                 expense: expenseCreate,
                 accountNewBalance: parseFloat(accountUpdate?.newBalance || '0').toFixed(2),
             }));
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * PUT /accounts/expenses/:id
+ * Update an expense
+ */
+router.put('/expenses/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+        const { date, expenseHeadId, accountId, amount, paymentMode, description } = req.body;
+
+        await db.transaction(async (tx) => {
+            // 1. Get existing expense
+            const [existingExpense] = await tx.select().from(expenses).where(eq(expenses.id, id));
+            if (!existingExpense) throw createError('Expense not found', 404);
+
+            // 2. Revert Old Balance (Add back old amount to old account)
+            if (existingExpense.accountId) {
+                await tx.update(bankCashAccounts)
+                    .set({
+                        balance: sql`${bankCashAccounts.balance} + ${existingExpense.amount}`,
+                        updatedAt: new Date(),
+                    })
+                    .where(eq(bankCashAccounts.id, existingExpense.accountId));
+            }
+
+            // 3. Update Expense
+            const [updatedExpense] = await tx.update(expenses)
+                .set({
+                    date: new Date(date),
+                    expenseHeadId,
+                    accountId,
+                    amount: String(amount),
+                    paymentMode,
+                    description,
+                })
+                .where(eq(expenses.id, id))
+                .returning();
+
+            // 4. Apply New Balance (Deduct new amount from new account)
+            if (accountId) {
+                await tx.update(bankCashAccounts)
+                    .set({
+                        balance: sql`${bankCashAccounts.balance} - ${amount}`,
+                        updatedAt: new Date(),
+                    })
+                    .where(eq(bankCashAccounts.id, accountId));
+            }
+
+            // Invalidate cache
+            cache.del('masters:accounts');
+
+            res.json(successResponse({
+                message: 'Expense updated successfully',
+                expense: updatedExpense
+            }));
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * DELETE /accounts/expenses/:id
+ * Delete an expense
+ */
+router.delete('/expenses/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+
+        await db.transaction(async (tx) => {
+            // 1. Get existing expense
+            const [existingExpense] = await tx.select().from(expenses).where(eq(expenses.id, id));
+            if (!existingExpense) throw createError('Expense not found', 404);
+
+            // 2. Revert Balance (Add back amount)
+            if (existingExpense.accountId) {
+                await tx.update(bankCashAccounts)
+                    .set({
+                        balance: sql`${bankCashAccounts.balance} + ${existingExpense.amount}`,
+                        updatedAt: new Date(),
+                    })
+                    .where(eq(bankCashAccounts.id, existingExpense.accountId));
+            }
+
+            // 3. Delete Expense
+            await tx.delete(expenses).where(eq(expenses.id, id));
+
+            // Invalidate cache
+            cache.del('masters:accounts');
+
+            res.json(successResponse({ message: 'Expense deleted successfully' }));
         });
     } catch (error) {
         next(error);

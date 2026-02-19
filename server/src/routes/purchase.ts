@@ -1214,6 +1214,224 @@ router.post('/payments', async (req: Request, res: Response, next: NextFunction)
     }
 });
 
+
+/**
+ * GET /purchase/payments/:id
+ * Get single payment with allocations
+ */
+router.get('/payments/:id', async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const payment = await db.query.paymentTransactions.findFirst({
+            where: eq(paymentTransactions.id, id),
+            with: {
+                account: true
+            }
+        });
+
+        if (!payment) throw createError('Payment not found', 404);
+
+        const allocations = await db.select({
+            billId: billPaymentAllocations.billId,
+            amount: billPaymentAllocations.amount,
+            billCode: purchaseBills.code,
+            billDate: purchaseBills.date,
+            billTotal: purchaseBills.grandTotal,
+            currBalance: purchaseBills.balanceAmount // This is current balance, but for editing we might show (Balance + Allocated) as "Outstanding before this payment" logic in UI?
+            // Actually UI usually calculates "Outstanding" as Current Balance + Allocated Amount (if we are editing this payment)
+        })
+            .from(billPaymentAllocations)
+            .leftJoin(purchaseBills, eq(purchaseBills.id, billPaymentAllocations.billId))
+            .where(eq(billPaymentAllocations.paymentId, id));
+
+        res.json(successResponse({
+            ...payment,
+            allocations
+        }));
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * PUT /purchase/payments/:id
+ * Update a payment transaction
+ */
+router.put('/payments/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+        const {
+            supplierId,
+            amount,
+            mode, // Cash, Bank, Cheque, UPI
+            accountId, // Bank/Cash account ID
+            bankReference,
+            remarks,
+            allocations, // Array of { billId, amount }
+            date
+        } = req.body;
+
+        await db.transaction(async (tx) => {
+            // 1. Get existing payment
+            const [existingPayment] = await tx.select().from(paymentTransactions).where(eq(paymentTransactions.id, id));
+            if (!existingPayment) throw createError('Payment not found', 404);
+
+            // ================= REVERSAL PHASE =================
+
+            // A. Revert Bills (Fetch allocations)
+            const existingAllocations = await tx.select().from(billPaymentAllocations).where(eq(billPaymentAllocations.paymentId, id));
+
+            for (const allocation of existingAllocations) {
+                const [bill] = await tx.select().from(purchaseBills).where(eq(purchaseBills.id, allocation.billId));
+                if (bill) {
+                    const newPaid = parseFloat(bill.paidAmount || '0') - parseFloat(allocation.amount);
+                    const newBalance = parseFloat(bill.grandTotal || '0') - newPaid;
+
+                    await tx.update(purchaseBills)
+                        .set({
+                            paidAmount: newPaid.toString(),
+                            balanceAmount: newBalance.toString(),
+                            paymentStatus: newBalance >= parseFloat(bill.grandTotal || '0') - 1 ? 'Unpaid' : (newBalance > 1 ? 'Partial' : 'Paid')
+                        })
+                        .where(eq(purchaseBills.id, allocation.billId));
+                }
+            }
+
+            // B. Revert Supplier Outstanding (INCREASE it back)
+            if (existingPayment.partyId && existingPayment.partyType === 'supplier') {
+                const [supplier] = await tx.select().from(suppliers).where(eq(suppliers.id, existingPayment.partyId));
+                if (supplier) {
+                    const newOutstanding = parseFloat(supplier.outstanding || '0') + parseFloat(existingPayment.amount);
+                    await tx.update(suppliers)
+                        .set({ outstanding: newOutstanding.toString() })
+                        .where(eq(suppliers.id, existingPayment.partyId));
+                }
+            }
+
+            // C. Revert Bank Balance (INCREASE it back - Money In)
+            if (existingPayment.accountId) {
+                const [account] = await tx.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, existingPayment.accountId));
+                if (account) {
+                    const newBalance = parseFloat(account.balance || '0') + parseFloat(existingPayment.amount);
+                    await tx.update(bankCashAccounts)
+                        .set({ balance: newBalance.toString() })
+                        .where(eq(bankCashAccounts.id, existingPayment.accountId));
+                }
+            }
+
+            // D. Delete Old Allocations
+            await tx.delete(billPaymentAllocations).where(eq(billPaymentAllocations.paymentId, id));
+
+            // E. Delete Old Ledger Entries
+            await tx.delete(generalLedger).where(eq(generalLedger.referenceId, id));
+
+
+            // ================= APPLICATION PHASE =================
+
+            // 2. Update Payment Transaction
+            await tx.update(paymentTransactions)
+                .set({
+                    date: new Date(date),
+                    amount: String(amount),
+                    mode,
+                    accountId,
+                    bankReference,
+                    remarks,
+                    partyId: supplierId, // In case supplier changed (rare but possible)
+                })
+                .where(eq(paymentTransactions.id, id));
+
+            // 3. Update Supplier Outstanding (DECREASE it - We paid them)
+            const [supplier] = await tx.select().from(suppliers).where(eq(suppliers.id, supplierId));
+            if (!supplier) throw createError('Supplier not found', 404);
+
+            const newSupplierOutstanding = parseFloat(supplier.outstanding || '0') - parseFloat(amount);
+            await tx.update(suppliers)
+                .set({ outstanding: newSupplierOutstanding.toString() })
+                .where(eq(suppliers.id, supplierId));
+
+            // 4. Update Bank Balance (DECREASE it - Money Out)
+            if (accountId) {
+                const [account] = await tx.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, accountId));
+                if (!account) throw createError('Bank Account not found', 404);
+
+                const newBankBalance = parseFloat(account.balance || '0') - parseFloat(amount);
+                await tx.update(bankCashAccounts)
+                    .set({ balance: newBankBalance.toString() })
+                    .where(eq(bankCashAccounts.id, accountId));
+
+                // 5. Ledger: Bank/Cash Credit (Asset Decrease)
+                await tx.insert(generalLedger).values({
+                    transactionDate: new Date(date),
+                    voucherNumber: existingPayment.code,
+                    voucherType: 'PAYMENT',
+                    ledgerId: accountId,
+                    ledgerType: account.type || 'Bank',
+                    debitAmount: '0',
+                    creditAmount: String(amount),
+                    description: `Payment to ${supplier.name} (${remarks || ''})`,
+                    referenceId: id,
+                });
+            }
+
+            // 6. Ledger: Supplier Debit (Liability Decrease)
+            await tx.insert(generalLedger).values({
+                transactionDate: new Date(date),
+                voucherNumber: existingPayment.code,
+                voucherType: 'PAYMENT',
+                ledgerId: supplierId,
+                ledgerType: 'SUPPLIER',
+                debitAmount: String(amount),
+                creditAmount: '0',
+                description: `Payment made via ${mode}`,
+                referenceId: id,
+            });
+
+            // 7. Process Allocations
+            if (allocations && allocations.length > 0) {
+                for (const alloc of allocations) { // { billId, amount }
+                    const allocAmount = parseFloat(alloc.amount);
+                    if (allocAmount <= 0) continue;
+
+                    // Create Allocation Record
+                    await tx.insert(billPaymentAllocations).values({
+                        paymentId: id,
+                        billId: alloc.billId,
+                        amount: String(allocAmount)
+                    });
+
+                    // Update Bill Balance
+                    const [bill] = await tx.select().from(purchaseBills).where(eq(purchaseBills.id, alloc.billId));
+                    if (bill) {
+                        const billPaid = parseFloat(bill.paidAmount || '0') + allocAmount;
+                        const billBalance = parseFloat(bill.grandTotal || '0') - billPaid;
+
+                        await tx.update(purchaseBills)
+                            .set({
+                                paidAmount: billPaid.toString(),
+                                balanceAmount: billBalance.toString(),
+                                paymentStatus: billBalance <= 1 ? 'Paid' : (billPaid > 0 ? 'Partial' : 'Unpaid')
+                            })
+                            .where(eq(purchaseBills.id, alloc.billId));
+                    }
+                }
+            }
+
+            // Invalidate cache
+            cacheService.del('dashboard:kpis');
+            cacheService.del('masters:suppliers');
+            cacheService.del('masters:accounts');
+
+            res.json(successResponse({
+                message: 'Payment updated successfully',
+                paymentId: id
+            }));
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
 // REVERSE PAYMENT
 // DELETE PAYMENT
 router.delete('/payments/:id', async (req, res, next) => {

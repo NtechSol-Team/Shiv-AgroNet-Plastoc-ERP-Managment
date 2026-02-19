@@ -267,6 +267,12 @@ export const purchaseApi = {
             method: 'POST',
             body: JSON.stringify(data),
         }),
+    getPayment: (id: string) => fetchApi<any>(`/purchase/payments/${id}`),
+    updatePayment: (id: string, data: any) =>
+        fetchApi<any>(`/purchase/payments/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        }),
     deletePayment: (id: string) =>
         fetchApi<any>(`/purchase/payments/${id}`, { method: 'DELETE' }),
     deleteBill: (id: string) =>
@@ -384,6 +390,13 @@ export const accountsApi = {
             method: 'POST',
             body: JSON.stringify(data),
         }),
+    updateExpense: (id: string, data: any) =>
+        fetchApi<any>(`/accounts/expenses/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        }),
+    deleteExpense: (id: string) =>
+        fetchApi<any>(`/accounts/expenses/${id}`, { method: 'DELETE' }),
     getSummary: () => fetchApi<any>('/accounts/summary'),
     getPartyAdvances: (partyId: string) => fetchApi<any[]>(`/accounts/advances/${partyId}`),
     adjustAdvance: (data: any) =>
@@ -468,6 +481,11 @@ export const financeApi = {
             body: JSON.stringify(data),
         }),
     deleteTransaction: (id: string) => fetchApi<any>(`/finance/transactions/${id}`, { method: 'DELETE' }),
+    updateTransaction: (id: string, data: any) =>
+        fetchApi<any>(`/finance/transactions/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        }),
     getDashboardStats: () => fetchApi<any>('/finance/dashboard-stats'),
     recalculateLedgers: () => fetchApi<any>('/finance/recalculate-ledgers', { method: 'POST' }),
 };

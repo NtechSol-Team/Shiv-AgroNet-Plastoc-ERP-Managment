@@ -16,7 +16,7 @@ import {
     purchaseBills
 } from '../db/schema';
 import { cache as cacheService } from '../services/cache.service';
-import { eq, desc, sql, count as countFn } from 'drizzle-orm';
+import { eq, desc, sql, count as countFn, and, ne } from 'drizzle-orm';
 
 const router = Router();
 
@@ -443,6 +443,263 @@ router.post('/transactions', validateRequest(createTransactionSchema), async (re
 });
 
 
+/**
+ * PUT /finance/transactions/:id
+ * Update a Financial Transaction
+ * CRITICAL: Reverts old balance/ledger and applies new one.
+ */
+router.put('/transactions/:id', validateRequest(createTransactionSchema), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+        const {
+            transactionType,
+            partyId,
+            amount,
+            paymentMode,
+            accountId,
+            transactionDate,
+            reference,
+            remarks,
+            interestRate,
+            tenure,
+            dueDate,
+            repaymentType,
+            principalAmount,
+            interestAmount
+        } = req.body;
+
+        const newAmt = parseFloat(amount);
+        if (newAmt <= 0) throw createError('Invalid amount', 400);
+
+        const updatedTx = await db.transaction(async (tx) => {
+            // 1. Fetch Existing Transaction
+            const [oldTx] = await tx.select().from(financialTransactions).where(eq(financialTransactions.id, id));
+            if (!oldTx) throw createError('Transaction not found', 404);
+
+            // 2. Revert Old Bank Balance (if applicable)
+            if (oldTx.accountId) {
+                let reverseAmount = 0;
+                const oldAmt = parseFloat(oldTx.amount);
+
+                switch (oldTx.transactionType) {
+                    case 'LOAN_TAKEN': // Original: Dr Bank (Increase). Revert: Decrease (-).
+                    case 'INVESTMENT_RECEIVED':
+                    case 'BORROWING':
+                        reverseAmount = -oldAmt;
+                        break;
+                    case 'LOAN_GIVEN': // Original: Cr Bank (Decrease). Revert: Increase (+).
+                    case 'INVESTMENT_MADE':
+                    case 'REPAYMENT':
+                        reverseAmount = oldAmt;
+                        break;
+                }
+
+                if (reverseAmount !== 0) {
+                    await tx.update(bankCashAccounts)
+                        .set({
+                            balance: sql`${bankCashAccounts.balance} + ${reverseAmount}`,
+                            updatedAt: new Date()
+                        })
+                        .where(eq(bankCashAccounts.id, oldTx.accountId));
+                }
+            }
+
+            // 3. Update Transaction Record
+            const [updated] = await tx.update(financialTransactions)
+                .set({
+                    transactionType,
+                    partyId,
+                    amount: String(newAmt),
+                    paymentMode,
+                    accountId,
+                    transactionDate: new Date(transactionDate),
+                    reference,
+                    remarks,
+                    interestRate: interestRate ? String(interestRate) : null,
+                    tenure: tenure ? String(tenure) : null,
+                    dueDate: dueDate ? new Date(dueDate) : null,
+                    repaymentType,
+                    principalAmount: principalAmount ? String(principalAmount) : null,
+                    interestAmount: interestAmount ? String(interestAmount) : null,
+                    updatedAt: new Date()
+                })
+                .where(eq(financialTransactions.id, id))
+                .returning();
+
+            // 4. Ledger Calculations for NEW values
+            let bankDr = 0;
+            let bankCr = 0;
+            let partyDr = 0;
+            let partyCr = 0;
+            let ledgerType = '';
+
+            switch (transactionType) {
+                case 'LOAN_TAKEN':
+                    bankDr = newAmt;
+                    partyCr = newAmt;
+                    ledgerType = 'LIABILITY';
+                    break;
+                case 'LOAN_GIVEN':
+                    partyDr = newAmt;
+                    bankCr = newAmt;
+                    ledgerType = 'ASSET';
+                    break;
+                case 'INVESTMENT_RECEIVED':
+                    bankDr = newAmt;
+                    partyCr = newAmt;
+                    ledgerType = 'CAPITAL';
+                    break;
+                case 'INVESTMENT_MADE':
+                    partyDr = newAmt;
+                    bankCr = newAmt;
+                    ledgerType = 'ASSET';
+                    break;
+                case 'BORROWING':
+                    bankDr = newAmt;
+                    partyCr = newAmt;
+                    ledgerType = 'LIABILITY';
+                    break;
+                case 'REPAYMENT':
+                    const principal = principalAmount ? parseFloat(principalAmount) : newAmt;
+                    const interest = interestAmount ? parseFloat(interestAmount) : 0;
+                    if (Math.abs((principal + interest) - newAmt) > 0.01) {
+                        throw createError('Principal + Interest does not match Total Amount', 400);
+                    }
+                    bankCr = newAmt;
+                    partyDr = principal;
+                    ledgerType = 'LIABILITY';
+                    break;
+                default:
+                    throw createError('Invalid Transaction Type', 400);
+            }
+
+            // 5. Apply New Bank Balance
+            if (accountId) {
+                const balanceChange = bankDr - bankCr;
+                if (balanceChange !== 0) {
+                    await tx.update(bankCashAccounts)
+                        .set({
+                            balance: sql`${bankCashAccounts.balance} + ${balanceChange}`,
+                            updatedAt: new Date()
+                        })
+                        .where(eq(bankCashAccounts.id, accountId));
+                }
+            }
+
+            // 6. UPDATE Ledger Entries (In-Place to preserve IDs)
+            // Strategy: Verify consistency. If complex, delete/recreate might be safer, but user requested Update.
+            // We will update entries based on type.
+
+            // A. Bank Leg
+            if (accountId) {
+                // Check if existing bank ledger entry exists
+                const existingBankLedger = await tx.select().from(financialTransactionLedger)
+                    .where(and(
+                        eq(financialTransactionLedger.transactionId, id),
+                        eq(financialTransactionLedger.ledgerType, 'BANK')
+                    ));
+
+                if (existingBankLedger.length > 0) {
+                    await tx.update(financialTransactionLedger)
+                        .set({
+                            ledgerAccountId: accountId,
+                            debit: String(bankDr),
+                            credit: String(bankCr),
+                            transactionDate: new Date(transactionDate)
+                        })
+                        .where(eq(financialTransactionLedger.id, existingBankLedger[0].id));
+                } else {
+                    // Insert if missing (e.g. was Cash before, now Bank?)
+                    await tx.insert(financialTransactionLedger).values({
+                        transactionId: id,
+                        ledgerAccountId: accountId,
+                        ledgerType: 'BANK',
+                        debit: String(bankDr),
+                        credit: String(bankCr),
+                        transactionDate: new Date(transactionDate)
+                    });
+                }
+            }
+
+            // B. Party Leg
+            if (partyId) {
+                const existingPartyLedger = await tx.select().from(financialTransactionLedger)
+                    .where(and(
+                        eq(financialTransactionLedger.transactionId, id),
+                        ne(financialTransactionLedger.ledgerType, 'BANK'),
+                        ne(financialTransactionLedger.ledgerType, 'EXPENSE') // Exclude interest leg
+                    ));
+
+                if (existingPartyLedger.length > 0) {
+                    await tx.update(financialTransactionLedger)
+                        .set({
+                            ledgerAccountId: partyId,
+                            ledgerType: ledgerType,
+                            debit: String(partyDr),
+                            credit: String(partyCr),
+                            transactionDate: new Date(transactionDate)
+                        })
+                        .where(eq(financialTransactionLedger.id, existingPartyLedger[0].id));
+                } else {
+                    await tx.insert(financialTransactionLedger).values({
+                        transactionId: id,
+                        ledgerAccountId: partyId,
+                        ledgerType: ledgerType,
+                        debit: String(partyDr),
+                        credit: String(partyCr),
+                        transactionDate: new Date(transactionDate)
+                    });
+                }
+            }
+
+            // C. General Ledger Update
+            // Delete and Recreate GL entries is often safer for GL specifically due to voucher numbering/structure,
+            // or we can update. User asked to "update".
+            // Let's update the BANK and JOURNAL entries.
+
+            // Update GL - Bank Leg
+            if (accountId) {
+                await tx.update(generalLedger)
+                    .set({
+                        transactionDate: new Date(transactionDate),
+                        ledgerId: accountId,
+                        debitAmount: String(bankDr),
+                        creditAmount: String(bankCr),
+                        description: `${transactionType} - ${remarks || ''} (Edited)`
+                    })
+                    .where(and(
+                        eq(generalLedger.referenceId, id),
+                        eq(generalLedger.ledgerType, 'BANK')
+                    ));
+            }
+
+            // Update GL - Party Leg
+            if (partyId) {
+                await tx.update(generalLedger)
+                    .set({
+                        transactionDate: new Date(transactionDate),
+                        ledgerId: partyId,
+                        debitAmount: String(partyDr),
+                        creditAmount: String(partyCr),
+                        description: `${transactionType} - ${remarks || ''} (Edited)`
+                    })
+                    .where(and(
+                        eq(generalLedger.referenceId, id),
+                        ne(generalLedger.ledgerType, 'BANK')
+                    ));
+            }
+
+            return updated;
+        });
+
+        // Invalidate caches
+        cacheService.del('masters:accounts');
+
+        res.json(successResponse(updatedTx));
+    } catch (error) {
+        next(error);
+    }
+});
 /**
  * DELETE /finance/transactions/:id
  * Delete a financial transaction and revert its effects

@@ -159,6 +159,7 @@ export function Purchase() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [editingBillId, setEditingBillId] = useState<string | null>(null);
+  const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
 
   // Data State
   const [purchaseBills, setPurchaseBills] = useState<PurchaseBill[]>([]);
@@ -744,6 +745,80 @@ export function Purchase() {
     setAllocations(newAllocations);
   };
 
+  const handleEditPayment = async (id: string) => {
+    setLoading(true);
+    try {
+      const res = await purchaseApi.getPayment(id);
+      if (res.data) {
+        const p = res.data;
+        const supplierId = p.partyId;
+
+        // 1. Set Form
+        setPaymentForm({
+          supplierId,
+          date: new Date(p.date).toISOString().split('T')[0],
+          mode: p.mode,
+          amount: p.amount,
+          accountId: p.accountId || '',
+          reference: p.bankReference || '',
+          remarks: p.remarks || '',
+          isAdvance: p.isAdvance || false,
+          useAdvancePayment: false,
+          selectedAdvanceId: ''
+        });
+
+        // 2. Set Allocations Map and adjust bills
+        const existingAllocations: { [key: string]: number } = {};
+        const allocatedBills: any[] = [];
+
+        if (p.allocations) {
+          p.allocations.forEach((a: any) => {
+            existingAllocations[a.billId] = parseFloat(a.amount);
+            allocatedBills.push({
+              id: a.billId,
+              code: a.billCode,
+              date: a.billDate,
+              grandTotal: a.billTotal,
+              balanceAmount: a.currBalance
+            });
+          });
+        }
+        setAllocations(existingAllocations);
+
+        // 3. Fetch Outstanding Bills
+        const outRes = await purchaseApi.getOutstandingBills(supplierId);
+        let bills = outRes.data || [];
+
+        // 4. Merge and Adjust Balances
+        const mergedBills = [...bills];
+        allocatedBills.forEach(allocBill => {
+          if (!mergedBills.find(b => b.id === allocBill.id)) {
+            mergedBills.push(allocBill);
+          }
+        });
+
+        const adjustedBills = mergedBills.map(b => {
+          const allocatedByThis = existingAllocations[b.id] || 0;
+          const currentDbBal = parseFloat(b.balanceAmount || b.grandTotal || '0');
+          return {
+            ...b,
+            balanceAmount: (currentDbBal + allocatedByThis).toString()
+          };
+        });
+
+        adjustedBills.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+        setOutstandingBills(adjustedBills);
+        setEditingPaymentId(id);
+        setShowPaymentForm(true);
+      }
+    } catch (err) {
+      console.error(err);
+      setError('Failed to load payment details');
+    }
+    setLoading(false);
+  };
+
   const handleCreatePayment = async () => {
     if (!paymentForm.supplierId || !paymentForm.amount) {
       setError("Please fill all required fields");
@@ -781,11 +856,16 @@ export function Purchase() {
         ...paymentForm,
         allocations: allocationItems
       };
-      const result = await purchaseApi.createPayment(payload);
+
+      const result = editingPaymentId
+        ? await purchaseApi.updatePayment(editingPaymentId, payload)
+        : await purchaseApi.createPayment(payload);
+
       if (result.error) {
         setError(result.error);
       } else {
         setShowPaymentForm(false);
+        setEditingPaymentId(null);
         setPaymentForm({
           supplierId: '',
           date: new Date().toISOString().split('T')[0],
@@ -1748,9 +1828,14 @@ export function Purchase() {
                           <td className="px-4 py-1.5 text-sm font-mono font-bold text-gray-900 text-right">₹{parseFloat(payment.amount).toLocaleString()}</td>
                           <td className="px-4 py-1.5 text-right text-xs text-blue-600 font-bold">
                             {payment.status !== 'Reversed' && (
-                              <button onClick={() => handleDeletePayment(payment.id)} className="text-gray-400 hover:text-red-600 transition-colors p-1" title="Delete Payment">
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              <div className="flex justify-end space-x-1">
+                                <button onClick={() => handleEditPayment(payment.id)} className="text-gray-400 hover:text-blue-600 transition-colors p-1" title="Edit Payment">
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                                <button onClick={() => handleDeletePayment(payment.id)} className="text-gray-400 hover:text-red-600 transition-colors p-1" title="Delete Payment">
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -1845,9 +1930,9 @@ export function Purchase() {
         <div className="bg-white border border-gray-300 rounded-sm shadow-sm">
           {/* Header */}
           <div className="bg-gray-100 px-4 py-2 border-b border-gray-300 flex justify-between items-center sticky top-0 z-10">
-            <h2 className="text-sm font-bold text-gray-800 uppercase">New Outward Payment / Advance</h2>
+            <h2 className="text-sm font-bold text-gray-800 uppercase">{editingPaymentId ? 'Edit Payment / Advance' : 'New Outward Payment / Advance'}</h2>
             <div className="flex space-x-2">
-              <button onClick={() => setShowPaymentForm(false)} className="px-3 py-1 text-xs font-bold text-gray-600 hover:text-red-600 border border-transparent hover:border-red-200 rounded-sm uppercase">Cancel</button>
+              <button onClick={() => { setShowPaymentForm(false); setEditingPaymentId(null); }} className="px-3 py-1 text-xs font-bold text-gray-600 hover:text-red-600 border border-transparent hover:border-red-200 rounded-sm uppercase">Cancel</button>
               <button onClick={handleCreatePayment} disabled={saving} className="px-3 py-1 bg-green-700 text-white text-xs font-bold uppercase rounded-sm hover:bg-green-800 shadow-sm flex items-center">
                 {saving && <Loader2 className="w-3 h-3 animate-spin mr-1" />} Save Transaction
               </button>

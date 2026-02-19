@@ -50,6 +50,7 @@ export function Finance() {
 
     const [partyStats, setPartyStats] = useState<{ totalTaken: number, totalPrincipalRepaid: number, totalInterestPaid: number } | null>(null);
     const [editingEntityId, setEditingEntityId] = useState<string | null>(null);
+    const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
 
     useEffect(() => {
         loadInitialData();
@@ -121,6 +122,24 @@ export function Finance() {
         }
     };
 
+    const handleEditTransaction = (tx: any) => {
+        setEditingTransactionId(tx.id);
+        setFormData({
+            transactionType: tx.transactionType,
+            partyId: tx.partyId || '',
+            amount: tx.amount,
+            principalAmount: tx.principalAmount || '',
+            interestAmount: tx.interestAmount || '',
+            accountId: tx.accountId || '',
+            transactionDate: new Date(tx.transactionDate).toISOString().split('T')[0],
+            remarks: tx.remarks || '',
+            paymentMode: tx.paymentMode || 'Bank',
+            interestRate: tx.interestRate || '',
+            tenure: tx.tenure || ''
+        });
+        setShowModal(true);
+    };
+
     const handleCreateTransaction = async () => {
         try {
             // Auto-calculate amount for Repayment
@@ -131,9 +150,16 @@ export function Finance() {
                 finalData.amount = (principal + interest).toString();
             }
 
-            const res = await financeApi.createTransaction(finalData);
+            let res;
+            if (editingTransactionId) {
+                res = await financeApi.updateTransaction(editingTransactionId, finalData);
+            } else {
+                res = await financeApi.createTransaction(finalData);
+            }
+
             if (res.data) {
                 setShowModal(false);
+                setEditingTransactionId(null);
                 loadInitialData(); // Reload everything to update stats and list
                 setFormData({
                     transactionType: 'LOAN_TAKEN',
@@ -150,7 +176,7 @@ export function Finance() {
                 });
             }
         } catch (error) {
-            alert('Failed to create transaction');
+            alert('Failed to save transaction');
         }
     };
 
@@ -385,6 +411,13 @@ export function Finance() {
                                                     </td>
                                                     <td className="px-6 py-4 text-right">
                                                         <button
+                                                            onClick={() => handleEditTransaction(tx)}
+                                                            className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
+                                                            title="Edit Transaction"
+                                                        >
+                                                            <Filter className="w-4 h-4 rotate-180" />
+                                                        </button>
+                                                        <button
                                                             onClick={() => handleDeleteTransaction(tx.id)}
                                                             className="p-1 text-slate-400 hover:text-red-600 transition-colors"
                                                             title="Delete Transaction"
@@ -504,10 +537,10 @@ export function Finance() {
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
                         <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                             <div>
-                                <h3 className="font-bold text-lg text-slate-900">New Financial Transaction</h3>
-                                <p className="text-xs text-slate-500 mt-0.5">Record a loan, repayment, or investment</p>
+                                <h3 className="font-bold text-lg text-slate-900">{editingTransactionId ? 'Edit Transaction' : 'New Financial Transaction'}</h3>
+                                <p className="text-xs text-slate-500 mt-0.5">{editingTransactionId ? 'Update transaction details' : 'Record a loan, repayment, or investment'}</p>
                             </div>
-                            <button onClick={() => setShowModal(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600">
+                            <button onClick={() => { setShowModal(false); setEditingTransactionId(null); }} className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600">
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
@@ -701,12 +734,12 @@ export function Finance() {
                         </div>
 
                         <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
-                            <button onClick={() => setShowModal(false)} className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors">Cancel</button>
+                            <button onClick={() => { setShowModal(false); setEditingTransactionId(null); }} className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors">Cancel</button>
                             <button
                                 onClick={handleCreateTransaction}
                                 className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-md transform active:scale-95 transition-all"
                             >
-                                Confirm Transaction
+                                {editingTransactionId ? 'Update Transaction' : 'Confirm Transaction'}
                             </button>
                         </div>
                     </div>
