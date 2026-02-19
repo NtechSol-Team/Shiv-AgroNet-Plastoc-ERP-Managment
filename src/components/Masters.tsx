@@ -284,26 +284,7 @@ export function Masters() {
     setSaving(false);
   };
 
-  const handleDelete = async (id: string, type: MasterType) => {
-    if (!window.confirm('Are you sure you want to delete this item?')) return;
 
-    setLoading(true);
-    let result;
-    try {
-      if (type === 'finished-product') {
-        result = await mastersApi.deleteFinishedProduct(id);
-      }
-
-      if (result?.error) {
-        setError(result.error);
-      } else {
-        fetchData(); // Refresh list
-      }
-    } catch (err) {
-      setError('Failed to delete item');
-    }
-    setLoading(false);
-  };
 
   const handleGstSearch = async () => {
     const gstin = formData.gstNo;
@@ -844,6 +825,12 @@ export function Masters() {
             break;
           case 'general-item':
             result = await mastersApi.deleteGeneralItem(id);
+            break;
+          case 'expense':
+            result = await mastersApi.deleteExpenseHead(id);
+            break;
+          case 'employee':
+            result = await mastersApi.deleteEmployee(id);
             break;
         }
 

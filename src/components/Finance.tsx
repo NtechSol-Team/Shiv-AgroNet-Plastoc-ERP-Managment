@@ -52,6 +52,15 @@ export function Finance() {
     const [editingEntityId, setEditingEntityId] = useState<string | null>(null);
     const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
 
+    // Filter State
+    const [filters, setFilters] = useState({
+        type: '',
+        partyId: '',
+        startDate: '',
+        endDate: ''
+    });
+    const [filteredTotal, setFilteredTotal] = useState(0);
+
     useEffect(() => {
         loadInitialData();
     }, []);
@@ -67,14 +76,14 @@ export function Finance() {
         }
     }, [formData.partyId, formData.transactionType]);
 
-    const loadInitialData = async () => {
+    const loadInitialData = async (currentFilters = filters) => {
         setLoading(true);
         try {
             const [statsRes, entRes, accRes, txRes] = await Promise.all([
                 financeApi.getDashboardStats(),
                 financeApi.getEntities(),
                 mastersApi.getAccounts(),
-                financeApi.getTransactions(1, 20)
+                financeApi.getTransactions(1, 20, currentFilters)
             ]);
 
             if (statsRes.data) setDashboardStats(statsRes.data);
@@ -85,6 +94,9 @@ export function Finance() {
                 setTransactions(txRes.data.data);
                 setHasMore(txRes.data.meta.page < txRes.data.meta.totalPages);
                 setPage(1);
+                if (txRes.data.meta.totalFilteredAmount !== undefined) {
+                    setFilteredTotal(txRes.data.meta.totalFilteredAmount);
+                }
             }
         } catch (error) {
             console.error(error);
@@ -98,7 +110,7 @@ export function Finance() {
         setLoadingMore(true);
         try {
             const nextPage = page + 1;
-            const res = await financeApi.getTransactions(nextPage, 20);
+            const res = await financeApi.getTransactions(nextPage, 20, filters);
             if (res.data && res.data.data) {
                 setTransactions(prev => [...prev, ...res.data.data]);
                 setHasMore(res.data.meta.page < res.data.meta.totalPages);
@@ -372,92 +384,167 @@ export function Finance() {
                         )}
 
                         {view === 'transactions' && (
-                            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-sm text-left">
-                                        <thead>
-                                            <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 font-semibold">
-                                                <th className="px-6 py-4">Date</th>
-                                                <th className="px-6 py-4">Type</th>
-                                                <th className="px-6 py-4">Party / Entity</th>
-                                                <th className="px-6 py-4">Description</th>
-                                                <th className="px-6 py-4 text-right">Amount</th>
-                                                <th className="px-6 py-4 text-right">Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100">
-                                            {transactions.map((tx: any) => (
-                                                <tr key={tx.id} className="hover:bg-slate-50 transition-colors group">
-                                                    <td className="px-6 py-4 text-slate-600 whitespace-nowrap font-medium">
-                                                        {new Date(tx.transactionDate).toLocaleDateString()}
-                                                    </td>
-                                                    <td className="px-6 py-4">
-                                                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${['LOAN_TAKEN', 'INVESTMENT_RECEIVED', 'BORROWING'].includes(tx.transactionType)
-                                                            ? 'bg-green-50 text-green-700 border-green-100'
-                                                            : 'bg-red-50 text-red-700 border-red-100'
-                                                            }`}>
-                                                            {tx.transactionType.replace(/_/g, ' ')}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-6 py-4">
-                                                        <div className="font-medium text-slate-900">{tx.party?.name || '-'}</div>
-                                                        <div className="text-xs text-slate-500">{tx.account?.name || 'Cash Account'}</div>
-                                                    </td>
-                                                    <td className="px-6 py-4 text-slate-500 max-w-xs truncate" title={tx.remarks}>
-                                                        {tx.remarks || '-'}
-                                                    </td>
-                                                    <td className="px-6 py-4 text-right font-bold text-slate-900 whitespace-nowrap">
-                                                        ₹{parseFloat(tx.amount).toLocaleString()}
-                                                    </td>
-                                                    <td className="px-6 py-4 text-right">
-                                                        <button
-                                                            onClick={() => handleEditTransaction(tx)}
-                                                            className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
-                                                            title="Edit Transaction"
-                                                        >
-                                                            <Filter className="w-4 h-4 rotate-180" />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleDeleteTransaction(tx.id)}
-                                                            className="p-1 text-slate-400 hover:text-red-600 transition-colors"
-                                                            title="Delete Transaction"
-                                                        >
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                            {transactions.length === 0 && (
-                                                <tr>
-                                                    <td colSpan={5} className="px-6 py-16 text-center text-slate-400">
-                                                        <div className="flex flex-col items-center justify-center">
-                                                            <Filter className="w-8 h-8 mb-2 opacity-50" />
-                                                            <p>No transactions recorded yet.</p>
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
-                                {hasMore && (
-                                    <div className="p-4 border-t border-slate-100 flex justify-center bg-slate-50">
-                                        <button
-                                            onClick={loadMoreTransactions}
-                                            disabled={loadingMore}
-                                            className="text-sm font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50 flex items-center gap-2"
+                            <div className="space-y-4">
+                                {/* Filter Bar */}
+                                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-4 items-end">
+                                    <div className="flex-1 min-w-[150px]">
+                                        <label className="block text-xs font-semibold text-slate-500 mb-1">Type</label>
+                                        <select
+                                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-500"
+                                            value={filters.type}
+                                            onChange={e => setFilters({ ...filters, type: e.target.value })}
                                         >
-                                            {loadingMore ? (
-                                                <>
-                                                    <div className="animate-spin h-4 w-4 border-2 border-blue-600 rounded-full border-t-transparent"></div>
-                                                    Loading...
-                                                </>
-                                            ) : (
-                                                'Load More Transactions'
-                                            )}
+                                            <option value="">All Types</option>
+                                            <option value="LOAN_TAKEN">Loan Taken</option>
+                                            <option value="LOAN_GIVEN">Loan Given</option>
+                                            <option value="INVESTMENT_RECEIVED">Investment Received</option>
+                                            <option value="INVESTMENT_MADE">Investment Made</option>
+                                            <option value="BORROWING">Borrowing</option>
+                                            <option value="REPAYMENT">Repayment</option>
+                                        </select>
+                                    </div>
+                                    <div className="flex-1 min-w-[150px]">
+                                        <label className="block text-xs font-semibold text-slate-500 mb-1">Party</label>
+                                        <select
+                                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-500"
+                                            value={filters.partyId}
+                                            onChange={e => setFilters({ ...filters, partyId: e.target.value })}
+                                        >
+                                            <option value="">All Parties</option>
+                                            {entities.map((e: any) => (
+                                                <option key={e.id} value={e.id}>{e.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-500 mb-1">Start Date</label>
+                                        <input
+                                            type="date"
+                                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-500"
+                                            value={filters.startDate}
+                                            onChange={e => setFilters({ ...filters, startDate: e.target.value })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-500 mb-1">End Date</label>
+                                        <input
+                                            type="date"
+                                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-500"
+                                            value={filters.endDate}
+                                            onChange={e => setFilters({ ...filters, endDate: e.target.value })}
+                                        />
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => loadInitialData(filters)}
+                                            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                                        >
+                                            Apply
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                const reset = { type: '', partyId: '', startDate: '', endDate: '' };
+                                                setFilters(reset);
+                                                loadInitialData(reset);
+                                            }}
+                                            className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
+                                        >
+                                            Reset
                                         </button>
                                     </div>
-                                )}
+                                    <div className="ml-auto pl-4 border-l border-slate-100 hidden md:block">
+                                        <p className="text-xs text-slate-400">Total Filtered Amount</p>
+                                        <p className="text-xl font-bold text-slate-900">₹{filteredTotal.toLocaleString()}</p>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-sm text-left">
+                                            <thead>
+                                                <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 font-semibold">
+                                                    <th className="px-6 py-4">Date</th>
+                                                    <th className="px-6 py-4">Type</th>
+                                                    <th className="px-6 py-4">Party / Entity</th>
+                                                    <th className="px-6 py-4">Description</th>
+                                                    <th className="px-6 py-4 text-right">Amount</th>
+                                                    <th className="px-6 py-4 text-right">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {transactions.map((tx: any) => (
+                                                    <tr key={tx.id} className="hover:bg-slate-50 transition-colors group">
+                                                        <td className="px-6 py-4 text-slate-600 whitespace-nowrap font-medium">
+                                                            {new Date(tx.transactionDate).toLocaleDateString()}
+                                                        </td>
+                                                        <td className="px-6 py-4">
+                                                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${['LOAN_TAKEN', 'INVESTMENT_RECEIVED', 'BORROWING'].includes(tx.transactionType)
+                                                                ? 'bg-green-50 text-green-700 border-green-100'
+                                                                : 'bg-red-50 text-red-700 border-red-100'
+                                                                }`}>
+                                                                {tx.transactionType.replace(/_/g, ' ')}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-6 py-4">
+                                                            <div className="font-medium text-slate-900">{tx.party?.name || '-'}</div>
+                                                            <div className="text-xs text-slate-500">{tx.account?.name || 'Cash Account'}</div>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-slate-500 max-w-xs truncate" title={tx.remarks}>
+                                                            {tx.remarks || '-'}
+                                                        </td>
+                                                        <td className="px-6 py-4 text-right font-bold text-slate-900 whitespace-nowrap">
+                                                            ₹{parseFloat(tx.amount).toLocaleString()}
+                                                        </td>
+                                                        <td className="px-6 py-4 text-right">
+                                                            <button
+                                                                onClick={() => handleEditTransaction(tx)}
+                                                                className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
+                                                                title="Edit Transaction"
+                                                            >
+                                                                <Filter className="w-4 h-4 rotate-180" />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleDeleteTransaction(tx.id)}
+                                                                className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                                                                title="Delete Transaction"
+                                                            >
+                                                                <Trash2 className="w-4 h-4" />
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                {transactions.length === 0 && (
+                                                    <tr>
+                                                        <td colSpan={5} className="px-6 py-16 text-center text-slate-400">
+                                                            <div className="flex flex-col items-center justify-center">
+                                                                <Filter className="w-8 h-8 mb-2 opacity-50" />
+                                                                <p>No transactions recorded yet.</p>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    {hasMore && (
+                                        <div className="p-4 border-t border-slate-100 flex justify-center bg-slate-50">
+                                            <button
+                                                onClick={loadMoreTransactions}
+                                                disabled={loadingMore}
+                                                className="text-sm font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50 flex items-center gap-2"
+                                            >
+                                                {loadingMore ? (
+                                                    <>
+                                                        <div className="animate-spin h-4 w-4 border-2 border-blue-600 rounded-full border-t-transparent"></div>
+                                                        Loading...
+                                                    </>
+                                                ) : (
+                                                    'Load More Transactions'
+                                                )}
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
 

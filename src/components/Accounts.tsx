@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Plus, TrendingUp, TrendingDown, X, Loader2, Users, Truck,
-  CreditCard, Wallet, FileText, ArrowUpRight, ArrowDownRight, Search, Printer, MessageCircle
+  CreditCard, Wallet, FileText, ArrowUpRight, ArrowDownRight, Search, Printer, MessageCircle, ChevronDown, Check
 } from 'lucide-react';
 import { accountsApi, mastersApi, financeApi } from '../lib/api';
 
@@ -76,6 +76,16 @@ export function Accounts() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [expenseHeads, setExpenseHeads] = useState<ExpenseHead[]>([]);
+
+  // Expense Head Search State
+  const [expenseHeadSearch, setExpenseHeadSearch] = useState('');
+  const [showExpenseHeadDropdown, setShowExpenseHeadDropdown] = useState(false);
+  const [creatingExpenseHead, setCreatingExpenseHead] = useState(false);
+
+  // Filtered Expense Heads
+  const filteredExpenseHeads = expenseHeads.filter(h =>
+    h.name.toLowerCase().includes(expenseHeadSearch.toLowerCase())
+  );
 
   // Modal States
 
@@ -213,8 +223,10 @@ export function Accounts() {
       } else {
         await accountsApi.createExpense(payload);
       }
+
       setShowExpenseModal(false);
       setEditingExpenseId(null);
+      setExpenseHeadSearch(''); // Reset search
       setExpenseForm({
         date: new Date().toISOString().split('T')[0],
         expenseHeadId: '',
@@ -239,6 +251,7 @@ export function Accounts() {
       accountId: expense.account?.id || '',
       paymentMode: expense.paymentMode || 'Cash'
     });
+    setExpenseHeadSearch(expense.expenseHead?.name || ''); // Pre-fill search
     setEditingExpenseId(expense.id);
     setShowExpenseModal(true);
   };
@@ -310,7 +323,10 @@ export function Accounts() {
             Recalculate Balances
           </button>
           <button
-            onClick={() => setShowExpenseModal(true)}
+            onClick={() => {
+              setShowExpenseModal(true);
+              setExpenseHeadSearch(''); // Ensure empty on new add
+            }}
             className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
           >
             <TrendingDown className="w-4 h-4 mr-2" />
@@ -1081,14 +1097,90 @@ export function Accounts() {
             <div className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Expense Head</label>
-                <select
-                  className="w-full border-gray-300 rounded-lg"
-                  value={expenseForm.expenseHeadId}
-                  onChange={(e) => setExpenseForm(p => ({ ...p, expenseHeadId: e.target.value }))}
-                >
-                  <option value="">-- Select Category --</option>
-                  {expenseHeads.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
-                </select>
+                <div className="relative">
+                  <div
+                    className="w-full border border-gray-300 rounded-lg flex items-center justify-between px-3 py-2 cursor-text"
+                    onClick={() => setShowExpenseHeadDropdown(true)}
+                  >
+                    <input
+                      type="text"
+                      className="w-full outline-none text-sm"
+                      placeholder="Select or Create Exepnse Head..."
+                      value={expenseHeadSearch}
+                      onChange={(e) => {
+                        setExpenseHeadSearch(e.target.value);
+                        setShowExpenseHeadDropdown(true);
+                        // If user clears input, clear selection? Maybe not strictly needed if we rely on selection.
+                        if (e.target.value === '') setExpenseForm(p => ({ ...p, expenseHeadId: '' }));
+                      }}
+                      onFocus={() => setShowExpenseHeadDropdown(true)}
+                    />
+                    <ChevronDown className="w-4 h-4 text-gray-400" />
+                  </div>
+
+                  {showExpenseHeadDropdown && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
+                      {filteredExpenseHeads.length > 0 ? (
+                        filteredExpenseHeads.map(h => (
+                          <div
+                            key={h.id}
+                            className="px-4 py-2 text-sm hover:bg-blue-50 cursor-pointer flex justify-between items-center"
+                            onClick={() => {
+                              setExpenseHeadSearch(h.name);
+                              setExpenseForm(p => ({ ...p, expenseHeadId: h.id }));
+                              setShowExpenseHeadDropdown(false);
+                            }}
+                          >
+                            <span>{h.name}</span>
+                            {expenseForm.expenseHeadId === h.id && <Check className="w-4 h-4 text-blue-600" />}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="p-2">
+                          <p className="text-xs text-gray-500 px-2 py-1">No matches found.</p>
+                        </div>
+                      )}
+
+                      {expenseHeadSearch && !filteredExpenseHeads.find(h => h.name.toLowerCase() === expenseHeadSearch.toLowerCase()) && (
+                        <div
+                          className="px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-gray-100 font-medium flex items-center"
+                          onClick={async () => {
+                            setCreatingExpenseHead(true);
+                            try {
+                              const res = await mastersApi.createExpenseHead({ name: expenseHeadSearch, category: 'Variable' });
+                              if (res.data) {
+                                // Add to local list immediately to update UI without full refetch if possible, 
+                                // but expenseHeads is state. We should update state.
+                                setExpenseHeads(prev => [...prev, res.data]);
+                                setExpenseForm(p => ({ ...p, expenseHeadId: res.data.id }));
+                                setShowExpenseHeadDropdown(false);
+                              }
+                            } catch (e) {
+                              console.error(e);
+                              alert('Failed to create expense head');
+                            } finally {
+                              setCreatingExpenseHead(false);
+                            }
+                          }}
+                        >
+                          {creatingExpenseHead ? (
+                            <><Loader2 className="w-3 h-3 animate-spin mr-2" /> Creating...</>
+                          ) : (
+                            <><Plus className="w-3 h-3 mr-2" /> Create "{expenseHeadSearch}"</>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {/* Click outside listener could be added here or simple blur, but blur is tricky with click inside dropdown. 
+                      For simplicity, we leave it open until selection or strict outside click implementation. 
+                      To make it user friendly, we can add a backdrop or use a refined blur handler. 
+                      For now, let's add a self-closing overlay if open.
+                  */}
+                  {showExpenseHeadDropdown && (
+                    <div className="fixed inset-0 z-0" onClick={() => setShowExpenseHeadDropdown(false)}></div>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

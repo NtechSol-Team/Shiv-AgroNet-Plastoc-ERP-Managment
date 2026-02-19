@@ -474,7 +474,11 @@ export const financeApi = {
         }),
     deleteEntity: (id: string) => fetchApi<any>(`/finance/entities/${id}`, { method: 'DELETE' }),
     getPartyStats: (id: string) => fetchApi<any>(`/finance/entities/${id}/stats`),
-    getTransactions: (page = 1, limit = 20) => fetchApi<any>(`/finance/transactions?page=${page}&limit=${limit}`),
+    getTransactions: (page = 1, limit = 20, filters = {}) => {
+        const query = new URLSearchParams(filters).toString();
+        const separator = query ? '&' : '';
+        return fetchApi<any>(`/finance/transactions?page=${page}&limit=${limit}${separator}${query}`);
+    },
     createTransaction: (data: any) =>
         fetchApi<any>('/finance/transactions', {
             method: 'POST',

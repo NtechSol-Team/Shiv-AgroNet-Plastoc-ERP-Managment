@@ -16,7 +16,7 @@ import {
     purchaseBills
 } from '../db/schema';
 import { cache as cacheService } from '../services/cache.service';
-import { eq, desc, sql, count as countFn, and, ne } from 'drizzle-orm';
+import { eq, desc, sql, count as countFn, and, ne, gte, lte } from 'drizzle-orm';
 
 const router = Router();
 
@@ -207,11 +207,31 @@ router.get('/transactions', async (req: Request, res: Response, next: NextFuncti
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = (page - 1) * limit;
 
-        // Get Total Count
-        const [totalObj] = await db.select({ count: countFn() }).from(financialTransactions);
-        const total = Number(totalObj.count);
+        const { type, partyId, startDate, endDate } = req.query;
 
+        // Build Filters
+        const conditions = [];
+        if (type) conditions.push(eq(financialTransactions.transactionType, type as string));
+        if (partyId) conditions.push(eq(financialTransactions.partyId, partyId as string));
+        if (startDate) conditions.push(gte(financialTransactions.transactionDate, new Date(startDate as string)));
+        if (endDate) conditions.push(lte(financialTransactions.transactionDate, new Date(endDate as string)));
+
+        const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+        // Get Total Count & Total Amount (Filtered)
+        const [stats] = await db.select({
+            count: countFn(),
+            totalAmount: sql<string>`coalesce(sum(${financialTransactions.amount}), 0)`
+        })
+            .from(financialTransactions)
+            .where(whereClause);
+
+        const total = Number(stats.count);
+        const totalAmount = parseFloat(stats.totalAmount);
+
+        // Fetch Data
         const txs = await db.query.financialTransactions.findMany({
+            where: whereClause,
             orderBy: [desc(financialTransactions.transactionDate)],
             limit: limit,
             offset: offset,
@@ -227,7 +247,8 @@ router.get('/transactions', async (req: Request, res: Response, next: NextFuncti
                 page,
                 limit,
                 total,
-                totalPages: Math.ceil(total / limit)
+                totalPages: Math.ceil(total / limit),
+                totalFilteredAmount: totalAmount // New Field
             }
         }));
     } catch (error) {
