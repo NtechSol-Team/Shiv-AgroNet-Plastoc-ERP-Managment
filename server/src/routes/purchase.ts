@@ -55,6 +55,7 @@ interface CreateBillRequest {
         generalItemName?: string;
         expenseHeadId?: string;
         quantity: number;
+        unit?: string;
         rate: number;
         gstPercent: number;
     }[];
@@ -242,6 +243,7 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
             const processed = {
                 ...item,
                 quantity,
+                unit: item.unit || 'kg',
                 rate,
                 amount,
                 gstPercent,
@@ -351,6 +353,7 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
                     materialName,
                     hsnCode,
                     quantity: String(item.quantity),
+                    unit: item.unit || 'kg',
                     rate: String(item.rate),
                     amount: String(item.amount),
                     gstPercent: String(item.gstPercent),
@@ -746,6 +749,7 @@ router.put('/bills/:id', async (req: Request, res: Response, next: NextFunction)
             return {
                 ...item,
                 quantity,
+                unit: item.unit || 'kg',
                 rate,
                 amount,
                 gstPercent,
@@ -847,6 +851,7 @@ router.put('/bills/:id', async (req: Request, res: Response, next: NextFunction)
                 materialName,
                 hsnCode,
                 quantity: String(item.quantity),
+                unit: item.unit || 'kg',
                 rate: String(item.rate),
                 amount: String(item.amount),
                 gstPercent: String(item.gstPercent),

@@ -70,6 +70,7 @@ interface PurchaseItem {
   materialName: string;
   hsnCode: string;
   quantity: string;
+  unit: string;
   rate: string;
   gstPercent: string;
   amount: number;
@@ -397,6 +398,7 @@ export function Purchase() {
       materialName: '',
       hsnCode: '',
       quantity: '',
+      unit: 'kg',
       rate: '',
       gstPercent: '18',
       amount: 0,
@@ -459,6 +461,8 @@ export function Purchase() {
           }
           updatedItem.gstPercent = '18';
         }
+      } else if (field === 'unit') {
+        updatedItem.unit = value;
       }
 
       // Recalculate amounts
@@ -606,6 +610,7 @@ export function Purchase() {
             generalItemName: (purchaseType === 'GENERAL' && !item.generalItemId) ? item.materialName : undefined,
             expenseHeadId: purchaseType === 'GENERAL' ? item.expenseHeadId : undefined,
             quantity: parseFloat(item.quantity) || 1,
+            unit: item.unit || 'kg',
             rate: parseFloat(item.rate),
             gstPercent: parseFloat(item.gstPercent),
           })),
@@ -888,6 +893,7 @@ export function Purchase() {
       quantity: item.quantity?.toString() || '',
       rate: item.rate?.toString() || '',
       gstPercent: item.gstPercent?.toString() || '18',
+      unit: item.unit || 'kg',
       amount: parseFloat(item.amount) || 0,
       cgst: parseFloat(item.cgst) || 0,
       sgst: parseFloat(item.sgst) || 0,
@@ -1172,7 +1178,7 @@ export function Purchase() {
                             {bill.items?.map((i: any, idx) => <div key={idx}>{i.materialName}{i.rawMaterial?.color ? <span className="text-gray-500 font-normal"> ({i.rawMaterial.color})</span> : ''}</div>)}
                           </td>
                           <td className="px-4 py-1.5 text-sm font-mono text-gray-900 text-right">
-                            {bill.items?.map((i: any, idx) => <div key={idx}>{i.quantity} kg</div>)}
+                            {bill.items?.map((i: any, idx) => <div key={idx}>{i.quantity} {i.unit || 'kg'}</div>)}
                           </td>
                           <td className="px-4 py-1.5 text-sm font-mono text-gray-600 text-right">₹{parseFloat(bill.subtotal || '0').toLocaleString()}</td>
                           <td className="px-4 py-1.5 text-sm font-mono text-gray-600 text-right">₹{(parseFloat(bill.cgst || '0') + parseFloat(bill.sgst || '0') + parseFloat(bill.igst || '0')).toLocaleString()}</td>
@@ -1406,6 +1412,7 @@ export function Purchase() {
                           {purchaseType === 'GENERAL' && <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-40">Expense Head</th>}
                           {purchaseType !== 'GENERAL' && <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24">HSN</th>}
                           <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24 text-right">Qty</th>
+                          <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24 text-center">Unit</th>
                           <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-28 text-right">Rate</th>
                           <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-32 text-right">Amount</th>
                           <th className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider w-20 text-right">GST %</th>
@@ -1570,6 +1577,29 @@ export function Purchase() {
                                     </div>
                                   )}
                                 </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              {purchaseType === 'GENERAL' ? (
+                                <select
+                                  value={item.unit}
+                                  onChange={(e) => updateItem(item.id, 'unit', e.target.value)}
+                                  className="w-full px-1 py-1 text-xs border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 bg-white"
+                                >
+                                  <option value="kg">kg</option>
+                                  <option value="pise">pise</option>
+                                  <option value="meter">meter</option>
+                                  <option value="gram">gram</option>
+                                  <option value="pkt">pkt</option>
+                                  <option value="nos">nos</option>
+                                </select>
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={item.unit || 'kg'}
+                                  readOnly
+                                  className="w-full px-1 py-1 text-xs border border-transparent bg-transparent text-gray-500 text-center"
+                                />
                               )}
                             </td>
                             <td className="px-3 py-2">

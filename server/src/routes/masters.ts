@@ -27,7 +27,7 @@ import {
     expenses, financialTransactions, generalLedger,
     ccAccountDetails, generalItems,
 } from '../db/schema';
-import { eq, and, like, notLike, count as countFn } from 'drizzle-orm';
+import { eq, and, like, notLike, count as countFn, sql } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
 import { getRawMaterialStock, getFinishedProductStock, getAllRawMaterialsWithStock, getAllFinishedProductsWithStock } from '../services/inventory.service';
@@ -765,12 +765,29 @@ router.post('/accounts', async (req: Request, res: Response, next: NextFunction)
     try {
         const { name, accountNo, type, balance } = req.body;
 
-        const lastItem = await db.query.bankCashAccounts.findFirst({
-            orderBy: (table, { desc }) => [desc(table.code)]
-        });
-        const lastCode = lastItem?.code || 'A-000';
-        const lastNum = parseInt(lastCode.split('-')[1] || '0');
-        const code = `A-${String(lastNum + 1).padStart(3, '0')}`;
+        // Find the highest existing A-NNN code to avoid duplicates
+        const allAccounts = await db.select({ code: bankCashAccounts.code })
+            .from(bankCashAccounts)
+            .where(sql`${bankCashAccounts.code} ~ '^A-[0-9]+$'`);
+
+        let maxNum = 0;
+        for (const acc of allAccounts) {
+            const num = parseInt(acc.code.split('-')[1] || '0');
+            if (num > maxNum) maxNum = num;
+        }
+
+        // Find a unique code (handles gaps from deletions)
+        let code = `A-${String(maxNum + 1).padStart(3, '0')}`;
+        let attempts = 0;
+        while (attempts < 50) {
+            const existing = await db.query.bankCashAccounts.findFirst({
+                where: eq(bankCashAccounts.code, code)
+            });
+            if (!existing) break;
+            maxNum++;
+            code = `A-${String(maxNum + 1).padStart(3, '0')}`;
+            attempts++;
+        }
 
         const [item] = await db.insert(bankCashAccounts).values({
             code, name, accountNo, type: type || 'Bank',

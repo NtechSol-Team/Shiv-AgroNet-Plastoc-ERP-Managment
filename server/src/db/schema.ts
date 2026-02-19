@@ -154,6 +154,7 @@ export const purchaseBillItems = pgTable('purchase_bill_items', {
     materialName: text('material_name').notNull(),
     hsnCode: text('hsn_code').default('3901'),
     quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
+    unit: text('unit').default('kg'),
     rate: decimal('rate', { precision: 10, scale: 2 }).notNull(),
     amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
     gstPercent: decimal('gst_percent', { precision: 5, scale: 2 }).default('18'),
