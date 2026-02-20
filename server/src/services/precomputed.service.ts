@@ -16,9 +16,10 @@ import {
     stockMovements, rawMaterials, finishedProducts,
     invoices, purchaseBills, customers, suppliers,
     paymentTransactions, rawMaterialRolls, bankCashAccounts,
-    productionBatches, bellItems, purchaseBillItems
+    productionBatches, bellItems, purchaseBillItems,
+    expenses, expenseHeads, productionBatchInputs, invoiceItems
 } from '../db/schema';
-import { eq, sum, sql, and, count, inArray } from 'drizzle-orm';
+import { eq, sum, sql, and, count, inArray, desc } from 'drizzle-orm';
 import { cache } from './cache.service';
 
 // ============================================================
@@ -71,6 +72,15 @@ export interface DashboardKPIs {
     cashBalance: number;
     customerOutstanding: number;
     supplierOutstanding: number;
+    // Profitability Metrics
+    profitability: {
+        today: { sales: number; grossProfit: number; netProfit: number; margin: number };
+        monthly: { sales: number; grossProfit: number; netProfit: number; margin: number };
+    };
+    assets: {
+        finishedGoodsValue: number;
+        baleValue: number;
+    };
     updatedAt: Date;
 }
 
@@ -362,6 +372,164 @@ export async function getDashboardKPIs(): Promise<DashboardKPIs> {
     return await computeDashboardKPIs();
 }
 
+
+/**
+ * Calculate profitability metrics for any given date range
+ */
+export async function getProfitabilityMetrics(startDate?: Date, endDate?: Date): Promise<any> {
+    const parseNum = (val: any) => parseFloat(val || '0');
+
+    // 1. Build Date Conditions
+    const invoiceConditions = [eq(invoices.status, 'Confirmed')];
+    const expenseConditions = [eq(expenses.status, 'Paid')];
+    const billConditions = [eq(purchaseBills.status, 'Confirmed'), eq(purchaseBills.type, 'GENERAL')];
+    const itemConditions = [eq(invoices.status, 'Confirmed')];
+
+    if (startDate) {
+        invoiceConditions.push(sql`${invoices.invoiceDate} >= ${startDate}`);
+        expenseConditions.push(sql`${expenses.date} >= ${startDate}`);
+        billConditions.push(sql`${purchaseBills.date} >= ${startDate}`);
+        itemConditions.push(sql`${invoices.invoiceDate} >= ${startDate}`);
+    }
+    if (endDate) {
+        invoiceConditions.push(sql`${invoices.invoiceDate} <= ${endDate}`);
+        expenseConditions.push(sql`${expenses.date} <= ${endDate}`);
+        billConditions.push(sql`${purchaseBills.date} <= ${endDate}`);
+        itemConditions.push(sql`${invoices.invoiceDate} <= ${endDate}`);
+    }
+
+    // 2. Fetch Aggregates
+    const [salesResult, expenseResult, generalBillResult] = await Promise.all([
+        db.select({ total: sql<string>`COALESCE(SUM(${invoices.grandTotal}::numeric), 0)` }).from(invoices).where(and(...invoiceConditions)),
+        db.select({ total: sql<string>`COALESCE(SUM(${expenses.amount}::numeric), 0)` }).from(expenses).innerJoin(expenseHeads, eq(expenses.expenseHeadId, expenseHeads.id)).where(and(...expenseConditions, sql`${expenseHeads.category} IN ('Operational', 'Variable')`)),
+        db.select({ total: sql<string>`COALESCE(SUM(${purchaseBills.grandTotal}::numeric), 0)` }).from(purchaseBills).where(and(...billConditions)),
+    ]);
+
+    const salesVal = parseNum(salesResult[0]?.total);
+    const expVal = parseNum(expenseResult[0]?.total) + parseNum(generalBillResult[0]?.total);
+
+    // 3. Optimize COGS: Fetch All Items in Range
+    const items = await db.select({
+        quantity: invoiceItems.quantity,
+        taxableAmount: invoiceItems.taxableAmount,
+        productId: invoiceItems.finishedProductId,
+    }).from(invoiceItems)
+        .innerJoin(invoices, eq(invoiceItems.invoiceId, invoices.id))
+        .where(and(...itemConditions));
+
+    if (items.length === 0) {
+        return { sales: salesVal, grossProfit: 0, netProfit: -expVal, margin: 0 };
+    }
+
+    // 4. Fetch Average Costs for All Products in range
+    const productIds = [...new Set(items.map(i => i.productId))];
+
+    // Trading Costs (Direct Purchase)
+    const tradingCosts = await db.select({
+        productId: purchaseBillItems.finishedProductId,
+        avgRate: sql<string>`AVG(rate::numeric)`
+    }).from(purchaseBillItems)
+        .where(and(inArray(purchaseBillItems.finishedProductId, productIds)))
+        .groupBy(purchaseBillItems.finishedProductId);
+
+    // RM Costs (Production Input)
+    const rmCosts = await db.select({
+        productId: productionBatches.finishedProductId,
+        avgRMRate: sql<string>`AVG(pbi.rate::numeric)`
+    }).from(productionBatches)
+        .innerJoin(productionBatchInputs, eq(productionBatchInputs.batchId, productionBatches.id))
+        .innerJoin(purchaseBillItems, eq(purchaseBillItems.rawMaterialId, productionBatchInputs.rawMaterialId))
+        .where(and(inArray(productionBatches.finishedProductId, productIds)))
+        .groupBy(productionBatches.finishedProductId);
+
+    const costMap: Record<string, number> = {};
+    tradingCosts.forEach(c => costMap[c.productId!] = parseNum(c.avgRate));
+    rmCosts.forEach(c => {
+        const manufacturingCost = parseNum(c.avgRMRate) * 0.95; // 5% buffer
+        costMap[c.productId!] = Math.max(costMap[c.productId!] || 0, manufacturingCost);
+    });
+
+    // 5. Calculate GP
+    let totalCOGS = 0;
+    let totalTaxable = 0;
+    items.forEach(item => {
+        const cost = costMap[item.productId] || 0;
+        totalCOGS += parseNum(item.quantity) * cost;
+        totalTaxable += parseNum(item.taxableAmount);
+    });
+
+    const grossProfit = totalTaxable - totalCOGS;
+    const netProfit = grossProfit - expVal;
+
+    return {
+        sales: salesVal,
+        grossProfit,
+        netProfit,
+        margin: salesVal > 0 ? (netProfit / salesVal) * 100 : 0
+    };
+}
+
+/**
+ * Calculate the current value of assets (FG Stock and Bales)
+ */
+export async function getAssetValuation(): Promise<{ finishedGoodsValue: number; baleValue: number }> {
+    const parseNum = (val: any) => parseFloat(val || '0');
+
+    // 1. Get Physical FG Stock for each product (SUM of IN - SUM of OUT)
+    // Matches the exact calculation used in the Inventory Control page
+    const fgStockResults = await db.select({
+        productId: stockMovements.finishedProductId,
+        totalIn: sql<string>`COALESCE(SUM(${stockMovements.quantityIn}), 0)`,
+        totalOut: sql<string>`COALESCE(SUM(${stockMovements.quantityOut}), 0)`,
+    }).from(stockMovements)
+        .where(eq(stockMovements.itemType, 'finished_product'))
+        .groupBy(stockMovements.finishedProductId);
+
+    const fgStockMap = new Map<string, number>();
+    for (const res of fgStockResults) {
+        if (res.productId) {
+            const stock = parseNum(res.totalIn) - parseNum(res.totalOut);
+            if (stock > 0) fgStockMap.set(res.productId, stock);
+        }
+    }
+
+    // 2. Get Available Bales net weight
+    const availableBales = await db.select({
+        productId: bellItems.finishedProductId,
+        totalNetWeight: sql<string>`SUM(${bellItems.netWeight})`
+    }).from(bellItems)
+        .where(eq(bellItems.status, 'Available'))
+        .groupBy(bellItems.finishedProductId);
+
+    const productIds = Array.from(new Set([...fgStockMap.keys(), ...availableBales.map(b => b.productId!)]));
+    if (productIds.length === 0) return { finishedGoodsValue: 0, baleValue: 0 };
+
+    // 3. Fetch Master Data for all relevant products (User strictly wants to use ratePerKg from master)
+    const masterData = await db.select({
+        id: finishedProducts.id,
+        ratePerKg: finishedProducts.ratePerKg
+    }).from(finishedProducts)
+        .where(inArray(finishedProducts.id, productIds));
+
+    const costMap: Record<string, number> = {};
+    masterData.forEach(p => costMap[p.id] = parseNum(p.ratePerKg));
+
+    // 4. Calculate Values
+    let finishedGoodsValue = 0;
+    fgStockMap.forEach((balance, productId) => {
+        const cost = costMap[productId] || 0;
+        finishedGoodsValue += balance * cost;
+    });
+
+    let baleValue = 0;
+    availableBales.forEach(b => {
+        const cost = costMap[b.productId!] || 0;
+        baleValue += parseNum(b.totalNetWeight) * cost;
+    });
+
+    return { finishedGoodsValue, baleValue };
+}
+
 /**
  * Compute dashboard KPIs
  */
@@ -371,115 +539,72 @@ async function computeDashboardKPIs(): Promise<DashboardKPIs> {
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
 
-    const [
-        salesResult,
-        purchasesResult,
-        collectionsResult,
-        paymentsResult,
-        pendingInvoicesResult,
-        pendingBillsResult,
-        allSalesResult,
-        allPurchasesResult,
-        accountsResult,
-        customerOutstandingResult,
-        supplierOutstandingResult
-    ] = await Promise.all([
-        // Sales this month (Confirmed invoices)
-        db.select({
-            total: sql<string>`COALESCE(SUM(${invoices.grandTotal}), 0)`
-        }).from(invoices)
-            .where(and(
-                eq(invoices.status, 'Confirmed'),
-                sql`${invoices.createdAt} >= ${startOfMonth}`
-            )),
-
-        // Purchases this month (Confirmed bills)
-        db.select({
-            total: sql<string>`COALESCE(SUM(${purchaseBills.grandTotal}), 0)`
-        }).from(purchaseBills)
-            .where(and(
-                eq(purchaseBills.status, 'Confirmed'),
-                sql`${purchaseBills.createdAt} >= ${startOfMonth}`
-            )),
-
-        // Collections this month (receipts from customers)
-        db.select({
-            total: sql<string>`COALESCE(SUM(${paymentTransactions.amount}), 0)`
-        }).from(paymentTransactions)
-            .where(and(
-                eq(paymentTransactions.type, 'RECEIPT'),
-                eq(paymentTransactions.partyType, 'customer'),
-                sql`${paymentTransactions.createdAt} >= ${startOfMonth}`
-            )),
-
-        // Payments this month (payments to suppliers)
-        db.select({
-            total: sql<string>`COALESCE(SUM(${paymentTransactions.amount}), 0)`
-        }).from(paymentTransactions)
-            .where(and(
-                eq(paymentTransactions.type, 'PAYMENT'),
-                eq(paymentTransactions.partyType, 'supplier'),
-                sql`${paymentTransactions.createdAt} >= ${startOfMonth}`
-            )),
-
-        // Pending invoices count
-        db.select({
-            count: count()
-        }).from(invoices)
-            .where(sql`${invoices.paymentStatus} IN ('Unpaid', 'Partial')`),
-
-        // Pending bills count
-        db.select({
-            count: count()
-        }).from(purchaseBills)
-            .where(sql`${purchaseBills.paymentStatus} IN ('Unpaid', 'Partial')`),
-
-        // All-time Sales Stats
-        db.select({
-            total: sql<string>`COALESCE(SUM(${invoices.grandTotal}::numeric), 0)`,
-            received: sql<string>`COALESCE(SUM(${invoices.paidAmount}::numeric), 0)`,
-            gstCollected: sql<string>`COALESCE(SUM(${invoices.totalTax}::numeric), 0)`,
-        }).from(invoices).where(sql`${invoices.status} IN ('Confirmed', 'Approved')`),
-
-        // All-time Purchase Stats
-        db.select({
-            total: sql<string>`COALESCE(SUM(${purchaseBills.grandTotal}::numeric), 0)`,
-            paid: sql<string>`COALESCE(SUM(${purchaseBills.paidAmount}::numeric), 0)`,
-        }).from(purchaseBills).where(eq(purchaseBills.status, 'Confirmed')),
-
-        // Bank/Cash Balances
-        db.select({
-            bankBalance: sql<string>`COALESCE(SUM(${bankCashAccounts.balance}::numeric) FILTER (WHERE ${bankCashAccounts.type} = 'Bank'), 0)`,
-            cashBalance: sql<string>`COALESCE(SUM(${bankCashAccounts.balance}::numeric) FILTER (WHERE ${bankCashAccounts.type} = 'Cash'), 0)`,
-        }).from(bankCashAccounts),
-
-        // Customer Outstanding
-        db.select({
-            total: sql<string>`COALESCE(SUM(${customers.outstanding}::numeric), 0)`,
-        }).from(customers),
-
-        // Supplier Outstanding
-        db.select({
-            total: sql<string>`COALESCE(SUM(${suppliers.outstanding}::numeric), 0)`,
-        }).from(suppliers),
+    const results = await Promise.all([
+        // [0] Sales this month
+        db.select({ total: sql<string>`COALESCE(SUM(${invoices.grandTotal}), 0)` }).from(invoices).where(and(eq(invoices.status, 'Confirmed'), sql`${invoices.invoiceDate} >= ${startOfMonth}`)),
+        // [1] Purchases this month
+        db.select({ total: sql<string>`COALESCE(SUM(${purchaseBills.grandTotal}), 0)` }).from(purchaseBills).where(and(eq(purchaseBills.status, 'Confirmed'), sql`${purchaseBills.date} >= ${startOfMonth}`)),
+        // [2] Collections this month
+        db.select({ total: sql<string>`COALESCE(SUM(${paymentTransactions.amount}), 0)` }).from(paymentTransactions).where(and(eq(paymentTransactions.type, 'RECEIPT'), eq(paymentTransactions.partyType, 'customer'), sql`${paymentTransactions.date} >= ${startOfMonth}`)),
+        // [3] Payments this month
+        db.select({ total: sql<string>`COALESCE(SUM(${paymentTransactions.amount}), 0)` }).from(paymentTransactions).where(and(eq(paymentTransactions.type, 'PAYMENT'), eq(paymentTransactions.partyType, 'supplier'), sql`${paymentTransactions.date} >= ${startOfMonth}`)),
+        // [4] Pending invoices count
+        db.select({ count: count() }).from(invoices).where(sql`${invoices.paymentStatus} IN ('Unpaid', 'Partial')`),
+        // [5] Pending bills count
+        db.select({ count: count() }).from(purchaseBills).where(sql`${purchaseBills.paymentStatus} IN ('Unpaid', 'Partial')`),
+        // [6] All-time Sales Stats
+        db.select({ total: sql<string>`COALESCE(SUM(${invoices.grandTotal}::numeric), 0)`, received: sql<string>`COALESCE(SUM(${invoices.paidAmount}::numeric), 0)`, gstCollected: sql<string>`COALESCE(SUM(${invoices.totalTax}::numeric), 0)` }).from(invoices).where(sql`${invoices.status} IN ('Confirmed', 'Approved')`),
+        // [7] All-time Purchase Stats
+        db.select({ total: sql<string>`COALESCE(SUM(${purchaseBills.grandTotal}::numeric), 0)`, paid: sql<string>`COALESCE(SUM(${purchaseBills.paidAmount}::numeric), 0)` }).from(purchaseBills).where(eq(purchaseBills.status, 'Confirmed')),
+        // [8] Bank/Cash Balances
+        db.select({ bankBalance: sql<string>`COALESCE(SUM(${bankCashAccounts.balance}::numeric) FILTER (WHERE ${bankCashAccounts.type} = 'Bank'), 0)`, cashBalance: sql<string>`COALESCE(SUM(${bankCashAccounts.balance}::numeric) FILTER (WHERE ${bankCashAccounts.type} = 'Cash'), 0)` }).from(bankCashAccounts),
+        // [9] Customer Outstanding
+        db.select({ total: sql<string>`COALESCE(SUM(${customers.outstanding}::numeric), 0)` }).from(customers),
+        // [10] Supplier Outstanding
+        db.select({ total: sql<string>`COALESCE(SUM(${suppliers.outstanding}::numeric), 0)` }).from(suppliers),
+        // [11] Sales Today
+        db.select({ total: sql<string>`COALESCE(SUM(${invoices.grandTotal}::numeric), 0)` }).from(invoices).where(and(eq(invoices.status, 'Confirmed'), sql`DATE(${invoices.invoiceDate}) = CURRENT_DATE`)),
+        // [12] Operating Expenses Today
+        db.select({ total: sql<string>`COALESCE(SUM(${expenses.amount}::numeric), 0)` }).from(expenses).innerJoin(expenseHeads, eq(expenses.expenseHeadId, expenseHeads.id)).where(and(eq(expenses.status, 'Paid'), sql`${expenseHeads.category} IN ('Operational', 'Variable')`, sql`DATE(${expenses.date}) = CURRENT_DATE`)),
+        // [13] General Bills Today
+        db.select({ total: sql<string>`COALESCE(SUM(${purchaseBills.grandTotal}::numeric), 0)` }).from(purchaseBills).where(and(eq(purchaseBills.status, 'Confirmed'), eq(purchaseBills.type, 'GENERAL'), sql`DATE(${purchaseBills.date}) = CURRENT_DATE`)),
+        // [14] Sales Monthly
+        db.select({ total: sql<string>`COALESCE(SUM(${invoices.grandTotal}::numeric), 0)` }).from(invoices).where(and(eq(invoices.status, 'Confirmed'), sql`${invoices.invoiceDate} >= ${startOfMonth}`)),
+        // [15] Operating Expenses Monthly
+        db.select({ total: sql<string>`COALESCE(SUM(${expenses.amount}::numeric), 0)` }).from(expenses).innerJoin(expenseHeads, eq(expenses.expenseHeadId, expenseHeads.id)).where(and(eq(expenses.status, 'Paid'), sql`${expenseHeads.category} IN ('Operational', 'Variable')`, sql`${expenses.date} >= ${startOfMonth}`)),
+        // [16] General Bills Monthly
+        db.select({ total: sql<string>`COALESCE(SUM(${purchaseBills.grandTotal}::numeric), 0)` }).from(purchaseBills).where(and(eq(purchaseBills.status, 'Confirmed'), eq(purchaseBills.type, 'GENERAL'), sql`${purchaseBills.date} >= ${startOfMonth}`)),
     ]);
 
+    const [todayProfit, monthlyProfit, assets] = await Promise.all([
+        getProfitabilityMetrics(new Date(new Date().setHours(0, 0, 0, 0)), new Date(new Date().setHours(23, 59, 59, 999))),
+        getProfitabilityMetrics(startOfMonth),
+        getAssetValuation()
+    ]);
+
+    const parseNum = (val: any) => parseFloat(val || '0');
+
     const kpis: DashboardKPIs = {
-        salesThisMonth: parseFloat(salesResult[0]?.total || '0'),
-        purchasesThisMonth: parseFloat(purchasesResult[0]?.total || '0'),
-        collectionsThisMonth: parseFloat(collectionsResult[0]?.total || '0'),
-        paymentsThisMonth: parseFloat(paymentsResult[0]?.total || '0'),
-        pendingInvoices: pendingInvoicesResult[0]?.count || 0,
-        pendingBills: pendingBillsResult[0]?.count || 0,
-        totalSales: parseFloat(allSalesResult[0]?.total || '0'),
-        receivedAmount: parseFloat(allSalesResult[0]?.received || '0'),
-        totalPurchases: parseFloat(allPurchasesResult[0]?.total || '0'),
-        paidAmount: parseFloat(allPurchasesResult[0]?.paid || '0'),
-        gstCollected: parseFloat(allSalesResult[0]?.gstCollected || '0'),
-        bankBalance: parseFloat(accountsResult[0]?.bankBalance || '0'),
-        cashBalance: parseFloat(accountsResult[0]?.cashBalance || '0'),
-        customerOutstanding: parseFloat(customerOutstandingResult[0]?.total || '0'),
-        supplierOutstanding: parseFloat(supplierOutstandingResult[0]?.total || '0'),
+        salesThisMonth: parseNum(results[0][0]?.total),
+        purchasesThisMonth: parseNum(results[1][0]?.total),
+        collectionsThisMonth: parseNum(results[2][0]?.total),
+        paymentsThisMonth: parseNum(results[3][0]?.total),
+        pendingInvoices: results[4][0]?.count || 0,
+        pendingBills: results[5][0]?.count || 0,
+        totalSales: parseNum(results[6][0]?.total),
+        receivedAmount: parseNum(results[6][0]?.received),
+        totalPurchases: parseNum(results[7][0]?.total),
+        paidAmount: parseNum(results[7][0]?.paid),
+        gstCollected: parseNum(results[6][0]?.gstCollected),
+        bankBalance: parseNum(results[8][0]?.bankBalance),
+        cashBalance: parseNum(results[8][0]?.cashBalance),
+        customerOutstanding: parseNum(results[9][0]?.total),
+        supplierOutstanding: parseNum(results[10][0]?.total),
+        profitability: {
+            today: todayProfit,
+            monthly: monthlyProfit
+        },
+        assets,
         updatedAt: new Date(),
     };
 

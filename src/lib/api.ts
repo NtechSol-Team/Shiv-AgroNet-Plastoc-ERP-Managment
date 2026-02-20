@@ -464,6 +464,12 @@ export const dashboardApi = {
     getKpis: () => fetchApi<any>('/dashboard/kpis'),
     getAlerts: () => fetchApi<any>('/dashboard/alerts'),
     getMachineEfficiency: () => fetchApi<any[]>('/dashboard/machine-efficiency'),
+    getProfitability: (start?: string, end?: string) => {
+        const query = new URLSearchParams();
+        if (start) query.append('start', start);
+        if (end) query.append('end', end);
+        return fetchApi<any>(`/dashboard/profitability${query.toString() ? `?${query.toString()}` : ''}`);
+    },
 };
 
 // ==================== FINANCE API ====================

@@ -7,9 +7,10 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Package, TrendingUp, AlertTriangle, Boxes, Loader2,
+  Package, TrendingUp, AlertTriangle, DollarSign, Boxes, Loader2,
   ArrowDownRight, CreditCard, Wallet,
-  Activity, History, ShoppingCart, Target, Scale
+  Activity, History, ShoppingCart, Target, Scale,
+  Calendar, ChevronDown, Filter
 } from 'lucide-react';
 import { dashboardApi } from '../lib/api';
 import { CCDashboardWidget } from './CCDashboardWidget';
@@ -63,7 +64,16 @@ interface KpiData {
     supplierOutstanding: string;
     netPosition: string;
   };
-}
+  profitability: {
+    today: { sales: number; grossProfit: number; netProfit: number; margin: number };
+    monthly: { sales: number; grossProfit: number; netProfit: number; margin: number };
+  };
+  assets: {
+    finishedGoodsValue: number;
+    baleValue: number;
+  };
+};
+
 
 
 // ============================================================
@@ -72,8 +82,12 @@ interface KpiData {
 
 export function Dashboard() {
   const [loading, setLoading] = useState(true);
+  const [profitLoading, setProfitLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [kpis, setKpis] = useState<KpiData | null>(null);
+  const [rangeType, setRangeType] = useState<string>('monthly');
+  const [customRange, setCustomRange] = useState({ start: '', end: '' });
+  const [dynamicProfit, setDynamicProfit] = useState<any>(null);
   const [machineEfficiency, setMachineEfficiency] = useState<any[]>([]);
 
   useEffect(() => {
@@ -88,13 +102,49 @@ export function Dashboard() {
         dashboardApi.getKpis(),
         dashboardApi.getMachineEfficiency(),
       ]);
-      if (kpisResult.data) setKpis(kpisResult.data);
+      if (kpisResult.data) {
+        setKpis(kpisResult.data);
+        setDynamicProfit(kpisResult.data.profitability.monthly);
+      }
       if (efficiencyResult.data) setMachineEfficiency(efficiencyResult.data);
     } catch (err) {
       console.error('Dashboard error:', err);
       setError('Failed to load dashboard data');
     }
     setLoading(false);
+  };
+
+  const handleRangeChange = async (type: string) => {
+    setRangeType(type);
+    if (type === 'today' && kpis) {
+      setDynamicProfit(kpis.profitability.today);
+      return;
+    }
+    if (type === 'monthly' && kpis) {
+      setDynamicProfit(kpis.profitability.monthly);
+      return;
+    }
+    if (type === 'custom') return; // Wait for date selection
+
+    // Calculate dates for presets
+    const end = new Date();
+    const start = new Date();
+    if (type === 'last3m') start.setMonth(start.getMonth() - 3);
+    else if (type === 'last6m') start.setMonth(start.getMonth() - 6);
+    else if (type === 'last1y') start.setFullYear(start.getFullYear() - 1);
+
+    fetchDynamicProfit(start.toISOString(), end.toISOString());
+  };
+
+  const fetchDynamicProfit = async (start: string, end: string) => {
+    setProfitLoading(true);
+    try {
+      const result = await dashboardApi.getProfitability(start, end);
+      if (result.data) setDynamicProfit(result.data);
+    } catch (err) {
+      console.error('Failed to fetch profit:', err);
+    }
+    setProfitLoading(false);
   };
 
   const formatQuantity = (value: string | number) => {
@@ -133,15 +183,156 @@ export function Dashboard() {
           </p>
         </div>
         <div className="flex items-center space-x-3">
+          {/* Advanced Range Selector */}
+          <div className="flex items-center bg-white border border-slate-200 rounded-xl p-1 shadow-sm relative">
+            <Filter className="w-3.5 h-3.5 ml-2 text-slate-400" />
+            <select
+              value={rangeType}
+              onChange={(e) => handleRangeChange(e.target.value)}
+              className="bg-transparent border-none text-xs font-bold text-slate-700 py-1.5 pl-2 pr-8 focus:ring-0 cursor-pointer appearance-none"
+            >
+              <option value="today">Today</option>
+              <option value="monthly">This Month</option>
+              <option value="last3m">Last 3 Months</option>
+              <option value="last6m">Last 6 Months</option>
+              <option value="last1y">Last 1 Year</option>
+              <option value="custom">Custom Range</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 absolute right-3 pointer-events-none text-slate-400" />
+          </div>
+
+          {rangeType === 'custom' && (
+            <div className="flex items-center bg-white border border-slate-200 rounded-xl p-1 shadow-sm animate-in fade-in slide-in-from-left-2 transition-all">
+              <input
+                type="date"
+                value={customRange.start}
+                onChange={(e) => setCustomRange({ ...customRange, start: e.target.value })}
+                className="bg-transparent border-none text-[10px] font-bold text-slate-600 focus:ring-0 py-1 px-2"
+              />
+              <span className="text-slate-300 mx-1">-</span>
+              <input
+                type="date"
+                value={customRange.end}
+                onChange={(e) => setCustomRange({ ...customRange, end: e.target.value })}
+                className="bg-transparent border-none text-[10px] font-bold text-slate-600 focus:ring-0 py-1 px-2"
+              />
+              <button
+                disabled={!customRange.start || !customRange.end || profitLoading}
+                onClick={() => fetchDynamicProfit(customRange.start, customRange.end)}
+                className="bg-indigo-600 text-white p-1.5 rounded-lg ml-1 hover:bg-indigo-700 disabled:bg-slate-200 transition-colors"
+              >
+                {profitLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Calendar className="w-3 h-3" />}
+              </button>
+            </div>
+          )}
+
           <button
             onClick={fetchDashboardData}
             className="flex items-center px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
           >
             <History className="w-4 h-4 mr-2" />
-            Refresh Data
+            Refresh
           </button>
+
           <div className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-indigo-200 shadow-lg">
             {new Date().toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+          </div>
+        </div>
+      </div>
+
+      {/* Profitability Metrics Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        {[
+          {
+            label: 'Total Sales',
+            value: formatCurrency(dynamicProfit?.sales || 0),
+            subtitle: rangeType === 'today' ? 'Sales Today' : rangeType === 'monthly' ? 'Monthly Sales' : 'Sales for selected range',
+            icon: ShoppingCart,
+            color: 'text-indigo-600',
+            bg: 'bg-indigo-50',
+            trend: 'Revenue'
+          },
+          {
+            label: 'Gross Profit',
+            value: formatCurrency(dynamicProfit?.grossProfit || 0),
+            subtitle: 'Revenue - Production Costs',
+            icon: TrendingUp,
+            color: 'text-emerald-600',
+            bg: 'bg-emerald-50',
+            trend: 'Operating'
+          },
+          {
+            label: 'Net Profit',
+            value: formatCurrency(dynamicProfit?.netProfit || 0),
+            subtitle: 'After Overheads & Expenses',
+            icon: DollarSign,
+            color: 'text-emerald-700',
+            bg: 'bg-emerald-50',
+            trend: (dynamicProfit?.netProfit || 0) >= 0 ? 'Surplus' : 'Deficit'
+          },
+          {
+            label: 'Profit Margin',
+            value: `${(dynamicProfit?.margin || 0).toFixed(2)}%`,
+            subtitle: 'Efficiency Percentage',
+            icon: Activity,
+            color: (dynamicProfit?.margin || 0) >= 15 ? 'text-emerald-600' : 'text-amber-600',
+            bg: (dynamicProfit?.margin || 0) >= 15 ? 'bg-emerald-50' : 'bg-amber-50',
+            trend: (dynamicProfit?.margin || 0) >= 0 ? 'Positive' : 'Negative'
+          },
+        ].map((item, i) => (
+          <div key={i} className="group bg-white p-5 rounded-3xl border border-slate-200 shadow-sm hover:shadow-lg transition-all duration-300 relative overflow-hidden flex flex-col justify-between min-h-[140px]">
+            <div className={`p-3 rounded-2xl ${item.bg} w-fit group-hover:scale-110 transition-transform duration-300`}>
+              <item.icon className={`w-6 h-6 ${item.color}`} />
+            </div>
+            <div className="mt-4">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{item.trend}</span>
+              </div>
+              <h3 className="text-sm font-bold text-slate-600 line-clamp-1 group-hover:text-slate-900 transition-colors">{item.label}</h3>
+              <p className="text-2xl font-black text-slate-800 tabular-nums">{item.value}</p>
+              <p className="text-[10px] font-bold text-slate-400 group-hover:text-slate-500 transition-colors uppercase tracking-tight line-clamp-1">{item.subtitle}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Asset Valuation Section */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-slate-900 text-white rounded-lg shadow-md">
+            <Scale className="w-5 h-5" />
+          </div>
+          <h2 className="text-xl font-black text-slate-800 tracking-tight">Asset Valuation (Stock-in-Hand)</h2>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-indigo-100 hover:shadow-xl transition-all duration-500 flex items-center justify-between group overflow-hidden relative">
+            <div className="absolute top-0 right-0 p-8 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity rotate-12 group-hover:rotate-0 duration-700 pointer-events-none">
+              <Boxes className="w-32 h-32 text-indigo-900" />
+            </div>
+            <div className="space-y-1">
+              <span className="text-[10px] font-black text-indigo-500/80 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded-full mb-2 inline-block">Enterprise Stock</span>
+              <h3 className="text-base font-bold text-slate-600">Finished Goods Value</h3>
+              <p className="text-3xl font-black text-slate-900 tabular-nums">{formatCurrency(kpis?.assets?.finishedGoodsValue || 0)}</p>
+              <p className="text-xs font-medium text-slate-400">Calculated based on current ledger balance</p>
+            </div>
+            <div className="p-4 bg-indigo-50 rounded-2xl group-hover:bg-indigo-600 group-hover:text-white transition-all duration-500 shadow-inner">
+              <Boxes className="w-8 h-8 text-indigo-600 group-hover:text-white" />
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-emerald-100 hover:shadow-xl transition-all duration-500 flex items-center justify-between group overflow-hidden relative">
+            <div className="absolute top-0 right-0 p-8 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity rotate-12 group-hover:rotate-0 duration-700 pointer-events-none">
+              <Package className="w-32 h-32 text-emerald-900" />
+            </div>
+            <div className="space-y-1">
+              <span className="text-[10px] font-black text-emerald-500/80 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded-full mb-2 inline-block">Bale Inventory</span>
+              <h3 className="text-base font-bold text-slate-600">Available Bale Value</h3>
+              <p className="text-3xl font-black text-slate-900 tabular-nums">{formatCurrency(kpis?.assets?.baleValue || 0)}</p>
+              <p className="text-xs font-medium text-slate-400">Total value of ready-to-dispatch bales</p>
+            </div>
+            <div className="p-4 bg-emerald-50 rounded-2xl group-hover:bg-emerald-600 group-hover:text-white transition-all duration-500 shadow-inner">
+              <Package className="w-8 h-8 text-emerald-600 group-hover:text-white" />
+            </div>
           </div>
         </div>
       </div>

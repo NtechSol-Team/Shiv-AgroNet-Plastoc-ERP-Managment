@@ -25,7 +25,11 @@ import {
 import { eq, sql, desc, and, lt, inArray } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { getAllRawMaterialsWithStock } from '../services/inventory.service';
-import { getInventorySummary, getDashboardKPIs } from '../services/precomputed.service';
+import {
+    getDashboardKPIs,
+    getInventorySummary,
+    getProfitabilityMetrics
+} from '../services/precomputed.service';
 import { cache as cacheService } from '../services/cache.service';
 
 const router = Router();
@@ -137,9 +141,31 @@ router.get('/kpis', async (req: Request, res: Response, next: NextFunction) => {
                 supplierOutstanding: kpis.supplierOutstanding.toFixed(2),
                 netPosition: (kpis.customerOutstanding - kpis.supplierOutstanding).toFixed(2),
             },
+            profitability: kpis.profitability,
+            assets: kpis.assets
         };
 
         res.json(successResponse(responseData));
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * GET /dashboard/profitability
+ * Get dynamic profitability metrics for a date range
+ */
+router.get('/profitability', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { start, end } = req.query;
+        let startDate: Date | undefined;
+        let endDate: Date | undefined;
+
+        if (start) startDate = new Date(start as string);
+        if (end) endDate = new Date(end as string);
+
+        const metrics = await getProfitabilityMetrics(startDate, endDate);
+        res.json(successResponse(metrics));
     } catch (error) {
         next(error);
     }
