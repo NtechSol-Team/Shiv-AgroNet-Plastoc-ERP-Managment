@@ -328,10 +328,17 @@ export const productionApi = {
             method: 'POST',
             body: JSON.stringify(data),
         }),
-    deleteBatch: (id: string) =>
-        fetchApi<any>(`/production/batches/${id}`, { method: 'DELETE' }),
+    deleteBatch: (id: string, force = false) =>
+        fetchApi<any>(`/production/batches/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
     getStats: () => fetchApi<any>('/production/stats'),
+    resetAll: () => fetchApi<any>('/production/reset-all', { method: 'POST' }),
+    reduceFgStock: (data: { finishedProductId: string; quantityToReduce: number; reason?: string }) =>
+        fetchApi<any>('/production/reduce-fg-stock', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
 };
+
 
 // ==================== SALES API ====================
 export const salesApi = {

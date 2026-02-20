@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, Loader2, Package, Edit2, Trash2, X, Plus, Settings2 } from 'lucide-react';
-import { inventoryApi, mastersApi } from '../lib/api';
+import { Search, Filter, Loader2, Package, Edit2, Trash2, X, Plus, Settings2, ArrowDownCircle, CheckCircle } from 'lucide-react';
+import { inventoryApi, mastersApi, productionApi } from '../lib/api';
 
 import { BellInventory } from './BellInventory';
 import { QuickProductionEntry } from './QuickProductionEntry';
@@ -32,6 +32,13 @@ export function Inventory() {
     quantity: '',
     reason: ''
   });
+
+  // Return to Production (FIFO Reduce) State
+  const [showReduceModal, setShowReduceModal] = useState(false);
+  const [reduceItem, setReduceItem] = useState<any>(null);
+  const [reduceQty, setReduceQty] = useState('');
+  const [reduceResult, setReduceResult] = useState<any>(null);
+  const [reducing, setReducing] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -103,6 +110,35 @@ export function Inventory() {
       setError('Failed to adjust stock');
     }
     setSaving(false);
+  };
+
+  const openReduceModal = (item: any) => {
+    setReduceItem(item);
+    setReduceQty('');
+    setReduceResult(null);
+    setShowReduceModal(true);
+  };
+
+  const handleReduceFgStock = async () => {
+    if (!reduceQty || parseFloat(reduceQty) <= 0) return;
+    setReducing(true);
+    setError(null);
+    try {
+      const result = await productionApi.reduceFgStock({
+        finishedProductId: reduceItem.id,
+        quantityToReduce: parseFloat(reduceQty),
+        reason: `Manual FG reduction via Return to Production`,
+      });
+      if (result.error) {
+        setError(result.error);
+      } else {
+        setReduceResult(result.data);
+        fetchData();
+      }
+    } catch (err) {
+      setError('Failed to reduce FG stock');
+    }
+    setReducing(false);
   };
 
   const handleDelete = async (id: string) => {
@@ -272,6 +308,13 @@ export function Inventory() {
                                 title="Edit Product"
                               >
                                 <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => openReduceModal(item)}
+                                className="p-1 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded transition-all"
+                                title="Return to Production (FIFO reduce FG stock)"
+                              >
+                                <ArrowDownCircle className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={() => openAdjustmentModal(item, 'finished_product')}
@@ -459,6 +502,117 @@ export function Inventory() {
                   <span>Save Changes</span>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Return to Production Modal */}
+      {showReduceModal && reduceItem && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center p-4 border-b border-gray-100 bg-orange-50">
+              <h3 className="font-bold text-lg text-gray-800 flex items-center">
+                <ArrowDownCircle className="w-5 h-5 mr-2 text-orange-600" />
+                Return to Production
+              </h3>
+              <button onClick={() => { setShowReduceModal(false); setReduceResult(null); }} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {!reduceResult ? (
+                <>
+                  <div className="bg-orange-50 p-3 rounded-lg border border-orange-100">
+                    <p className="text-sm font-bold text-orange-800">{reduceItem.name}</p>
+                    <p className="text-xs text-orange-600">Current Stock: {reduceItem.stock} kg</p>
+                  </div>
+
+                  <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700">
+                    ℹ️ This will reduce FG stock in <strong>FIFO order</strong> and restore production batches (including weight loss) back to <strong>In Progress</strong>.
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Quantity to Reduce (kg)</label>
+                    <input
+                      type="number"
+                      value={reduceQty}
+                      onChange={e => setReduceQty(e.target.value)}
+                      max={parseFloat(reduceItem.stock)}
+                      min={0.01}
+                      step={0.01}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 font-bold text-lg"
+                      placeholder="0.00"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="flex justify-end space-x-3 pt-2">
+                    <button
+                      onClick={() => setShowReduceModal(false)}
+                      className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleReduceFgStock}
+                      disabled={reducing || !reduceQty || parseFloat(reduceQty) <= 0 || parseFloat(reduceQty) > parseFloat(reduceItem.stock)}
+                      className="px-6 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 font-bold transition-all flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {reducing ? <><Loader2 className="w-4 h-4 animate-spin" /><span>Processing...</span></> : <span>Reduce & Restore Batches</span>}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                // Success: show affected batches
+                <>
+                  <div className="flex items-center space-x-2 text-emerald-700 mb-2">
+                    <CheckCircle className="w-5 h-5" />
+                    <span className="font-bold">{reduceResult.message}</span>
+                  </div>
+
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="bg-gray-100 px-3 py-2 text-xs font-bold text-gray-600 uppercase">Production Batches Restored (FIFO)</div>
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-gray-200 text-gray-500">
+                          <th className="px-3 py-2 text-left font-medium">Batch</th>
+                          <th className="px-3 py-2 text-right font-medium">FG Reversed</th>
+                          <th className="px-3 py-2 text-right font-medium">Raw Restored</th>
+                          <th className="px-3 py-2 text-right font-medium">Loss Restored</th>
+                          <th className="px-3 py-2 text-center font-medium">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {reduceResult.affectedBatches?.map((b: any, i: number) => (
+                          <tr key={i} className="hover:bg-gray-50">
+                            <td className="px-3 py-2 font-mono font-bold text-blue-700">{b.batchCode}</td>
+                            <td className="px-3 py-2 text-right text-red-700 font-mono">-{b.fgReversed} kg</td>
+                            <td className="px-3 py-2 text-right text-emerald-700 font-mono">+{b.rawCapacityRestored} kg</td>
+                            <td className="px-3 py-2 text-right text-amber-700 font-mono">+{b.lossRestored} kg</td>
+                            <td className="px-3 py-2 text-center">
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${b.newStatus === 'in-progress' ? 'bg-blue-100 text-blue-700' :
+                                  b.newStatus === 'partially-completed' ? 'bg-amber-100 text-amber-700' :
+                                    'bg-green-100 text-green-700'
+                                }`}>{b.newStatus.replace('-', ' ').toUpperCase()}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => { setShowReduceModal(false); setReduceResult(null); }}
+                      className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold transition-all"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

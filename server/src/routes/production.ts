@@ -986,6 +986,7 @@ router.get('/stats', async (req: Request, res: Response, next: NextFunction) => 
 router.delete('/batches/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
+        const force = req.query.force === 'true'; // Force delete: skip FG stock validation
 
         // Get the batch
         const [batch] = await db.select().from(productionBatches).where(eq(productionBatches.id, id));
@@ -993,7 +994,7 @@ router.delete('/batches/:id', async (req: Request, res: Response, next: NextFunc
 
         // Allow deletion of completed batches (Reversal Logic)
         if (batch.status === 'completed' || batch.status === 'partially-completed') {
-            console.log(`↺ Reverse-Deleting batch ${batch.code} (Status: ${batch.status})`);
+            console.log(`↺ Reverse-Deleting batch ${batch.code} (Status: ${batch.status}, Force: ${force})`);
 
             // 1. Reverse Output (FG_OUT)
             // Get all outputs for this batch
@@ -1002,10 +1003,13 @@ router.delete('/batches/:id', async (req: Request, res: Response, next: NextFunc
             for (const output of outputs) {
                 if (output.outputQuantity && parseFloat(output.outputQuantity) > 0) {
                     const reversQty = parseFloat(output.outputQuantity);
-                    // CHECK: Is the finished good stock still available to reverse?
-                    const stockCheck = await validateFinishedProductStock(output.finishedProductId, reversQty);
-                    if (!stockCheck.isValid) {
-                        throw createError(`Cannot delete batch: Produced stock (${reversQty}kg) has already been consumed or sold. Current stock: ${stockCheck.currentStock}kg`, 400);
+
+                    if (!force) {
+                        // CHECK: Is the finished good stock still available to reverse?
+                        const stockCheck = await validateFinishedProductStock(output.finishedProductId, reversQty);
+                        if (!stockCheck.isValid) {
+                            throw createError(`Cannot delete batch: Produced stock (${reversQty}kg) has already been consumed or sold. Current stock: ${stockCheck.currentStock}kg. Use force delete to override.`, 400);
+                        }
                     }
 
                     // Create FG_OUT movement to remove the produced goods
@@ -1020,7 +1024,7 @@ router.delete('/batches/:id', async (req: Request, res: Response, next: NextFunc
                         referenceType: 'batch_delete',
                         referenceCode: batch.code,
                         referenceId: id,
-                        reason: `Batch ${batch.code} deleted - finished goods reversed`
+                        reason: `Batch ${batch.code} deleted - finished goods reversed${force ? ' (forced)' : ''}`
                     });
                     console.log(`✓ Reversed FG output for ${batch.code}: -${output.outputQuantity}kg`);
                 }
@@ -1033,6 +1037,7 @@ router.delete('/batches/:id', async (req: Request, res: Response, next: NextFunc
             // but for now let's stick to active/completed states.
             throw createError('Cannot delete cancelled batches', 400);
         }
+
 
         // Get batch inputs to reverse stock movements
         const batchInputs = await db.select().from(productionBatchInputs).where(eq(productionBatchInputs.batchId, id));
@@ -1555,6 +1560,271 @@ router.post('/batches/:id/reverse', async (req: Request, res: Response, next: Ne
     }
 });
 
+
+// ============================================================
+// RESET ALL PRODUCTION (ADMIN)
+// ============================================================
+
+/**
+ * POST /production/reset-all
+ * Admin operation: Reset production FG data (preserves direct trading purchases)
+ * 
+ * Deletes ONLY:
+ * - FG_IN where referenceType = 'production'  (from production batches)
+ * - FG_OUT where referenceType IN ('batch_delete', 'production_reversal')
+ * 
+ * Preserves:
+ * - FG_IN where referenceType = 'purchase'  (direct trading / bought FG stock)
+ * - FG_OUT where referenceType = 'sale' or other non-production types
+ * 
+ * This means: production FG stock → 0, but purchased FG stock stays intact.
+ */
+router.post('/reset-all', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        console.log('🔴 ADMIN: Starting production reset (preserving direct trading purchases)...');
+
+        // 1. Delete FG_IN from production ONLY (referenceType = 'production')
+        const deletedFgIn = await db.delete(stockMovements)
+            .where(
+                sql`${stockMovements.movementType} = 'FG_IN'
+                    AND ${stockMovements.referenceType} = 'production'`
+            )
+            .returning({ id: stockMovements.id });
+
+        console.log(`  ✓ Deleted ${deletedFgIn.length} production FG_IN movements`);
+
+        // 2. Delete production-related FG_OUT reversals only
+        //    (batch_delete = manual delete reversal, production_reversal = FIFO reduce)
+        const deletedFgOut = await db.delete(stockMovements)
+            .where(
+                sql`${stockMovements.movementType} = 'FG_OUT'
+                    AND ${stockMovements.referenceType} IN ('batch_delete', 'production_reversal')`
+            )
+            .returning({ id: stockMovements.id });
+
+        console.log(`  ✓ Deleted ${deletedFgOut.length} production-reversal FG_OUT movements`);
+
+        // 3. Delete all production batch outputs (completed output entries)
+        const deletedOutputs = await db.delete(productionBatchOutputs)
+            .returning({ id: productionBatchOutputs.id });
+
+        console.log(`  ✓ Deleted ${deletedOutputs.length} batch output records`);
+
+        // 4. Reset ALL production batches unconditionally
+        //    We do NOT filter by status because a batch can be 'in-progress'
+        //    yet still have a non-zero outputQuantity (e.g. after a partial/broken reversal).
+        //    Resetting all guarantees clean state regardless of what status they are in.
+        const resetBatches = await db.update(productionBatches)
+            .set({
+                status: 'in-progress',
+                outputQuantity: null,
+                completionDate: null,
+                lossQuantity: null,
+                lossPercentage: null,
+                lossExceeded: false,
+                updatedAt: new Date(),
+            })
+            .returning({ id: productionBatches.id, code: productionBatches.code });
+
+        console.log(`  ✓ Reset ${resetBatches.length} batches to in-progress`);
+        console.log('✅ Production reset complete (direct trading purchases preserved)');
+
+        res.json(successResponse({
+            message: `Production data reset. ${resetBatches.length} batches restored to in-progress. Direct trading purchase stock is preserved.`,
+            summary: {
+                fgInProductionDeleted: deletedFgIn.length,
+                fgOutReversalsDeleted: deletedFgOut.length,
+                batchOutputsDeleted: deletedOutputs.length,
+                batchesReset: resetBatches.length,
+                batchCodes: resetBatches.map(b => b.code),
+            }
+        }));
+    } catch (error) {
+        next(error);
+    }
+});
+
+
+// ============================================================
+// REDUCE FG STOCK (FIFO PRODUCTION REVERSAL)
+// ============================================================
+
+/**
+ * POST /production/reduce-fg-stock
+ * Smart FIFO reversal: reduce FG stock and restore production batches
+ * 
+ * When FG stock is reduced:
+ * 1. Finds all batch outputs for the product, ordered FIFO (oldest batch first)
+ * 2. Reverses output quantities from each batch proportionally
+ * 3. Restores raw capacity consumed (including weight loss portion)
+ * 4. Resets batch status to 'in-progress' or 'partially-completed'
+ * 5. Creates FG_OUT stock movement
+ * 
+ * Weight loss restoration:
+ * - FG output = rawConsumed * (1 - lossPercent/100)
+ * - Therefore: rawConsumed = fgOutput / (1 - lossPercent/100)
+ * - When reversing X kg FG: restore X / (1 - lossPercent/100) raw capacity
+ */
+router.post('/reduce-fg-stock', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { finishedProductId, quantityToReduce, reason } = req.body;
+
+        if (!finishedProductId) throw createError('finishedProductId is required', 400);
+        const reduceQty = parseFloat(quantityToReduce);
+        if (isNaN(reduceQty) || reduceQty <= 0) throw createError('quantityToReduce must be a positive number', 400);
+
+        // Validate current FG stock
+        const { getFinishedProductStock } = await import('../services/inventory.service');
+        const currentStock = await getFinishedProductStock(finishedProductId);
+        if (currentStock < reduceQty) {
+            throw createError(`Insufficient FG stock. Current: ${currentStock.toFixed(2)} kg, Requested: ${reduceQty.toFixed(2)} kg`, 400);
+        }
+
+        // Fetch all batch outputs for this product, FIFO (oldest batch first)
+        // Join with production batches to get allocation date and loss %
+        const batchOutputs = await db.query.productionBatchOutputs.findMany({
+            where: (outputs, { eq }) => eq(outputs.finishedProductId, finishedProductId),
+            with: {
+                batch: true
+            }
+        });
+
+        // Filter to only batches that have actual output (> 0) and sort FIFO
+        const validOutputs = batchOutputs
+            .filter(o => o.outputQuantity && parseFloat(o.outputQuantity) > 0)
+            .sort((a, b) => new Date(a.batch.allocationDate).getTime() - new Date(b.batch.allocationDate).getTime());
+
+        if (validOutputs.length === 0) {
+            throw createError('No production output found for this product to reverse', 404);
+        }
+
+        let remainingToReduce = reduceQty;
+        const affectedBatches: any[] = [];
+
+        for (const batchOutput of validOutputs) {
+            if (remainingToReduce <= 0.001) break;
+
+            const fgProducedFromBatch = parseFloat(batchOutput.outputQuantity || '0');
+            const batchInputQty = parseFloat(batchOutput.batch.inputQuantity || '0');
+            const batchRawConsumedTotal = parseFloat(batchOutput.batch.outputQuantity || '0');
+            // ^ productionBatches.outputQuantity = total raw material consumed (including all loss)
+            //   across ALL production runs on this batch
+
+            // How much FG to reverse from this batch (FIFO)
+            const fgToReverse = Math.min(remainingToReduce, fgProducedFromBatch);
+
+            // CORRECT raw capacity restoration formula:
+            // batch.outputQuantity = total raw consumed (including loss) from this batch
+            // We need the TOTAL FG produced from this batch (across all products) to compute ratio.
+            // Fetch all outputs for this batch to get total FG produced
+            const allOutputsForBatch = await db.select()
+                .from(productionBatchOutputs)
+                .where(eq(productionBatchOutputs.batchId, batchOutput.batchId));
+
+            const totalFgFromBatch = allOutputsForBatch.reduce(
+                (sum, o) => sum + parseFloat(o.outputQuantity || '0'), 0
+            );
+
+            // rawConsumedPerFgKg = total raw consumed / total FG produced
+            // This correctly captures the loss factor (e.g. at 5% loss → ratio = 1.0526)
+            const rawPerFg = totalFgFromBatch > 0
+                ? batchRawConsumedTotal / totalFgFromBatch
+                : 1;
+
+            const rawCapacityToRestore = fgToReverse * rawPerFg;
+            const lossRestoredKg = rawCapacityToRestore - fgToReverse;
+
+            // New batch output quantities
+            const newFgFromBatch = fgProducedFromBatch - fgToReverse;
+            const newBatchRawConsumed = Math.max(0, batchRawConsumedTotal - rawCapacityToRestore);
+
+            // Determine new batch status
+            const isFullyReversed = newFgFromBatch <= 0.001;
+            const newStatus = isFullyReversed ? 'in-progress' :
+                (newBatchRawConsumed < batchInputQty - 0.01 ? 'partially-completed' : 'completed');
+
+            // Update or delete the batch output record
+            if (isFullyReversed) {
+                await db.delete(productionBatchOutputs)
+                    .where(eq(productionBatchOutputs.id, batchOutput.id));
+            } else {
+                await db.update(productionBatchOutputs)
+                    .set({ outputQuantity: String(newFgFromBatch) })
+                    .where(eq(productionBatchOutputs.id, batchOutput.id));
+            }
+
+            // Update batch header: restore raw capacity and reset status
+            const updateData: any = {
+                outputQuantity: String(newBatchRawConsumed),
+                updatedAt: new Date(),
+                status: newStatus,
+            };
+
+            if (isFullyReversed) {
+                // Fully reversed: clear all completion data
+                updateData.completionDate = null;
+                updateData.lossQuantity = null;
+                updateData.lossPercentage = null;
+                updateData.lossExceeded = false;
+            } else {
+                // Partially reversed: recalculate loss fields
+                const newTotalFg = totalFgFromBatch - fgToReverse;
+                const newLossQty = Math.max(0, newBatchRawConsumed - newTotalFg);
+                const newLossPercent = batchInputQty > 0 ? (newLossQty / batchInputQty) * 100 : 0;
+                updateData.lossQuantity = String(newLossQty);
+                updateData.lossPercentage = String(newLossPercent);
+                updateData.lossExceeded = newLossPercent > 5;
+            }
+
+            await db.update(productionBatches)
+                .set(updateData)
+                .where(eq(productionBatches.id, batchOutput.batchId));
+
+            affectedBatches.push({
+                batchCode: batchOutput.batch.code,
+                fgReversed: fgToReverse.toFixed(2),
+                rawCapacityRestored: rawCapacityToRestore.toFixed(2),
+                lossRestored: lossRestoredKg.toFixed(2),
+                newStatus,
+                wasFullyReversed: isFullyReversed,
+            });
+
+            console.log(`  ✓ Batch ${batchOutput.batch.code}: reversed ${fgToReverse.toFixed(2)} kg FG, restored ${rawCapacityToRestore.toFixed(2)} kg (incl. ${lossRestoredKg.toFixed(2)} kg loss) → ${newStatus}`);
+
+            remainingToReduce -= fgToReverse;
+        }
+
+        if (remainingToReduce > 0.001) {
+            throw createError(`Could only reverse ${(reduceQty - remainingToReduce).toFixed(2)} kg of ${reduceQty} kg. Insufficient production records.`, 400);
+        }
+
+        // Create FG_OUT stock movement
+        await db.insert(stockMovements).values({
+            date: new Date(),
+            movementType: 'FG_OUT',
+            itemType: 'finished_product',
+            finishedProductId,
+            quantityIn: '0',
+            quantityOut: String(reduceQty),
+            runningBalance: '0',
+            referenceType: 'production_reversal',
+            referenceCode: `FG-REV-${Date.now().toString().slice(-6)}`,
+            referenceId: affectedBatches.length > 0 ? finishedProductId : finishedProductId,
+            reason: reason || `FIFO production reversal: ${affectedBatches.length} batch(es) restored`,
+        });
+
+        console.log(`✅ FIFO Reduce FG: ${reduceQty} kg reversed across ${affectedBatches.length} production batch(es)`);
+
+        res.json(successResponse({
+            message: `${reduceQty} kg FG stock removed. ${affectedBatches.length} production batch(es) restored.`,
+            affectedBatches,
+            totalReduced: reduceQty,
+            remainingStock: (currentStock - reduceQty).toFixed(2),
+        }));
+    } catch (error) {
+        next(error);
+    }
+});
 
 export default router;
 

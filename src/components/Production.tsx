@@ -19,6 +19,8 @@ export function Production() {
   const [expandedBatches, setExpandedBatches] = useState<string[]>([]);
   const [batchOptions, setBatchOptions] = useState<Record<string, any[]>>({}); // Map: rawMaterialId -> Batch[]
   const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const toggleBatch = (id: string) => {
     setExpandedBatches(prev =>
@@ -222,6 +224,23 @@ export function Production() {
     setSaving(false);
   };
 
+  const handleResetAll = async () => {
+    setResetting(true);
+    setError(null);
+    try {
+      const result = await productionApi.resetAll();
+      if (result.error) {
+        setError(result.error);
+      } else {
+        setShowResetConfirm(false);
+        fetchData();
+      }
+    } catch (err) {
+      setError('Failed to reset production data');
+    }
+    setResetting(false);
+  };
+
   const pendingBatches = productionBatches.filter(b => b.isActive || b.status === 'in-progress' || (b.status === 'partially-completed' && (parseFloat(b.inputQuantity) - parseFloat(b.outputQuantity || '0') > 0)));
   const completedBatches = productionBatches.filter(b => b.status === 'completed');
   const exceededBatches = completedBatches.filter(b => b.lossExceeded);
@@ -245,6 +264,13 @@ export function Production() {
         </div>
         <div className="flex items-center space-x-3">
           <button
+            onClick={() => setShowResetConfirm(true)}
+            className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-xl hover:bg-red-100 transition-all flex items-center space-x-2 font-medium text-sm"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Reset Production</span>
+          </button>
+          <button
             onClick={() => {
               setEditingBatchId(null);
               setAllocationForm({
@@ -262,6 +288,49 @@ export function Production() {
           </button>
         </div>
       </div>
+
+      {/* Reset Production Confirmation Modal */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 animate-in zoom-in-95 duration-200 border border-red-200">
+            <div className="flex items-center space-x-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Reset Production Data</h2>
+                <p className="text-sm text-slate-500">This action cannot be undone</p>
+              </div>
+            </div>
+            <div className="bg-red-50 border border-red-100 rounded-xl p-4 mb-6">
+              <p className="text-sm text-red-700 font-medium mb-2">The following will be permanently cleared:</p>
+              <ul className="text-sm text-red-600 space-y-1 list-disc list-inside">
+                <li>All Finished Goods stock movements (production + sales + adjustments)</li>
+                <li>All completed production batch output records</li>
+                <li>All batches reset back to "In Progress"</li>
+                <li><strong>All FG stock will become exactly 0 kg</strong></li>
+              </ul>
+              <p className="text-sm text-red-700 font-semibold mt-3">Raw material stock and batch allocations are NOT affected.</p>
+            </div>
+            <div className="flex items-center justify-end space-x-3">
+              <button
+                onClick={() => setShowResetConfirm(false)}
+                className="px-5 py-2.5 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition-all font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleResetAll}
+                disabled={resetting}
+                className="px-5 py-2.5 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-all font-bold flex items-center space-x-2 disabled:opacity-50"
+              >
+                {resetting && <Loader2 className="w-4 h-4 animate-spin" />}
+                <span>Yes, Reset All Production</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       {error && (
