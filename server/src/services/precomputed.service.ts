@@ -153,7 +153,8 @@ async function computeInventorySummary(): Promise<InventorySummary> {
 
     let fpTotalStock = 0;
     fpItems.forEach(fp => {
-        fpTotalStock += fpStockMap.get(fp.id) || 0;
+        const stock = fpStockMap.get(fp.id) || 0;
+        fpTotalStock += Math.max(0, stock); // clamp per-product to avoid negative totals
     });
 
     const summary: InventorySummary = {

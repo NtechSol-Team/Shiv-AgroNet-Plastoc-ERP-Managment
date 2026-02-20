@@ -304,7 +304,7 @@ export function Purchase() {
         mastersApi.getGeneralItems(),
         purchaseApi.getSummary(),
         mastersApi.getAccounts(),
-        accountsApi.getTransactions({ type: 'PAYMENT', partyType: 'supplier' }), // Fetch payments for suppliers only
+        accountsApi.getTransactions({ type: 'PAYMENT', partyType: 'supplier' }, 1, 500), // Fetch all supplier payments (high limit to avoid pagination cutoff)
       ]);
 
       if (billsRes.data) {

@@ -23,9 +23,8 @@ import {
     purchaseBills, purchaseBillItems, suppliers, rawMaterials, paymentTransactions,
     billPaymentAllocations, bankCashAccounts, generalLedger, rawMaterialBatches,
     finishedProducts, expenseHeads, productionBatchInputs, rawMaterialRolls,
-    purchaseBillAdjustments, generalItems
+    purchaseBillAdjustments, generalItems, stockMovements
 } from '../db/schema';
-// Removed stockMovements from imports as we use the service now
 
 // ... (inside the route)
 
@@ -309,11 +308,29 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
                     hsnCode = material.hsnCode || '3901';
                     rawMaterialId = item.rawMaterialId;
                 } else if (type === 'FINISHED_GOODS') {
-                    const [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
-                    if (!product) throw createError(`Product not found: ${item.finishedProductId}`, 404);
+                    let product: any = null;
+
+                    // Try by exact ID first
+                    [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+
+                    if (!product) {
+                        // The ID might be stale (e.g. product was deleted/recreated).
+                        // List available products to help diagnose.
+                        const available = await db.select({ id: finishedProducts.id, name: finishedProducts.name, code: finishedProducts.code })
+                            .from(finishedProducts);
+                        const names = available.map(p => `${p.name} (${p.code})`).join(', ');
+                        throw createError(
+                            `Finished product not found. The selected product may have been deleted and recreated. ` +
+                            `Please close this form, refresh the page, and re-select the product. ` +
+                            `Available products: ${names || 'none'}`,
+                            404
+                        );
+                    }
+
                     materialName = product.name;
                     hsnCode = product.hsnCode || '5608';
                     finishedProductId = item.finishedProductId;
+
                 } else if (type === 'GENERAL') {
                     let gItemId = item.generalItemId;
                     if (!gItemId && item.generalItemName) {
@@ -946,22 +963,28 @@ router.delete('/bills/:id', async (req: Request, res: Response, next: NextFuncti
 
         // If bill was confirmed, reverse stock movements and supplier outstanding
         if (bill.status === 'Confirmed') {
-            // Reverse stock for each item
-            for (const item of billItems) {
-                if (bill.type === 'FINISHED_GOODS' && item.finishedProductId) {
-                    await createStockMovement({
-                        date: new Date(),
-                        movementType: 'FG_OUT',
-                        itemType: 'finished_product',
-                        finishedProductId: item.finishedProductId,
-                        quantityOut: parseFloat(item.quantity || '0'),
-                        referenceType: 'purchase_delete',
-                        referenceCode: bill.code,
-                        referenceId: id,
-                        reason: `Reversed: Bill ${bill.code} deleted`
-                    });
+            // If bill was FINISHED_GOODS, remove the original FG_IN stock movement.
+            // We NEVER create a FG_OUT reversal blindly — that causes negative stock
+            // if the original FG_IN was already deleted (e.g. by Reset Production).
+            // Instead, directly delete the original FG_IN movement for this bill.
+            if (bill.type === 'FINISHED_GOODS') {
+                for (const item of billItems) {
+                    if (item.finishedProductId) {
+                        // Delete the original FG_IN that this bill created
+                        const deleted = await db.delete(stockMovements)
+                            .where(
+                                sql`${stockMovements.referenceType} = 'purchase'
+                                        AND ${stockMovements.referenceId} = ${id}
+                                        AND ${stockMovements.finishedProductId} = ${item.finishedProductId}
+                                        AND ${stockMovements.movementType} = 'FG_IN'`
+                            )
+                            .returning({ id: stockMovements.id });
+
+                        console.log(`✓ Removed ${deleted.length} FG_IN stock movement(s) for ${item.finishedProductId} (bill ${bill.code})`);
+                    }
                 }
             }
+
 
             // Update supplier outstanding
             const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, bill.supplierId));
