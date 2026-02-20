@@ -82,7 +82,7 @@ router.get('/kpis', async (req: Request, res: Response, next: NextFunction) => {
             getDashboardKPIs(),
             // Still need production stats for in-progress count (more volatile)
             db.select({
-                inProgress: sql<number>`COUNT(*) FILTER (WHERE ${productionBatches.status} = 'in-progress')`,
+                inProgress: sql<number>`COUNT(*) FILTER (WHERE ${productionBatches.status} IN ('in-progress', 'partially-completed'))`,
                 completed: sql<number>`COUNT(*) FILTER (WHERE ${productionBatches.status} = 'completed')`,
                 totalBatches: sql<number>`COUNT(*)`,
                 totalOutput: sql<string>`COALESCE(SUM(${productionBatches.outputQuantity}::numeric), 0)`,
@@ -99,6 +99,13 @@ router.get('/kpis', async (req: Request, res: Response, next: NextFunction) => {
                 lowStockItems: inventorySummary.rawMaterials.lowStockCount,
                 finishedGoodsStock: inventorySummary.finishedProducts.totalStock,
                 finishedProductItems: inventorySummary.finishedProducts.totalItems,
+                stockInProcess: inventorySummary.stockInProcess || 0,
+                stockInBell: inventorySummary.stockInBell || 0,
+                rawStockPurchased: inventorySummary.rawStockPurchased || 0,
+                tradingStockPurchased: inventorySummary.tradingStockPurchased || 0,
+                pendingRawStock: inventorySummary.pendingRawStock || 0,
+                totalWeightLoss: inventorySummary.totalLoss || 0,
+                avgProductionLoss: inventorySummary.avgProductionLoss || 0,
             },
             production: {
                 inProgress: Number(production?.inProgress || 0),

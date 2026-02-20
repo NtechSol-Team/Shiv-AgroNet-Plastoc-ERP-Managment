@@ -325,6 +325,8 @@ export function Purchase() {
       if (paymentsRes.data) {
         const payments = Array.isArray(paymentsRes.data) ? paymentsRes.data : ((paymentsRes.data as any).data || []);
         setPurchasePayments(payments);
+      } else if (paymentsRes.error) {
+        setError(`Failed to fetch payments: ${paymentsRes.error}`);
       }
 
       console.log('✅ FRONTEND: fetchData - SUCCESS\n');
@@ -1268,16 +1270,30 @@ export function Purchase() {
                             <span className={`text-[10px] font-bold px-1 rounded uppercase ${bill.paymentStatus === 'Paid' ? 'text-green-700 bg-green-100' : bill.paymentStatus === 'Partial' ? 'text-orange-700 bg-orange-100' : 'text-red-700 bg-red-100'}`}>
                               {bill.paymentStatus}
                             </span>
-                            {/* Roll Status Badge */}
-                            {bill.type === 'RAW_MATERIAL' && (
-                              <div className={`mt-1 text-[9px] font-bold px-1 rounded border text-center uppercase ${bill.rollEntryStatus === 'Completed' ? 'border-green-200 text-green-600 bg-green-50' :
-                                bill.rollEntryStatus === 'Partial' ? 'border-orange-200 text-orange-600 bg-orange-50' :
-                                  'border-gray-200 text-gray-500 bg-gray-50'
-                                }`}>
-                                {bill.rollEntryStatus === 'Pending' ? 'No Rolls' : bill.rollEntryStatus}
-                                {parseFloat(bill.totalRollWeight || '0') > 0 && ` (${bill.totalRollWeight}kg)`}
-                              </div>
-                            )}
+                            {/* Roll Status Badge & Difference */}
+                            {bill.type === 'RAW_MATERIAL' && (() => {
+                              const invoiceQty = bill.items?.reduce((sum: number, i: any) => sum + parseFloat(i.quantity || '0'), 0) || 0;
+                              const rollWeight = parseFloat(bill.totalRollWeight || '0');
+                              const diff = rollWeight - invoiceQty;
+                              const hasDiff = Math.abs(diff) > 0.01;
+
+                              return (
+                                <div className="mt-1 flex flex-col items-center">
+                                  <div className={`text-[9px] font-bold px-1 rounded border text-center uppercase ${bill.rollEntryStatus === 'Completed' ? 'border-green-200 text-green-600 bg-green-50' :
+                                    bill.rollEntryStatus === 'Partial' ? 'border-orange-200 text-orange-600 bg-orange-50' :
+                                      'border-gray-200 text-gray-500 bg-gray-50'
+                                    }`}>
+                                    {bill.rollEntryStatus === 'Pending' ? 'No Rolls' : bill.rollEntryStatus}
+                                    {rollWeight > 0 && ` (${rollWeight}kg)`}
+                                  </div>
+                                  {hasDiff && (
+                                    <div className="text-[10px] font-bold text-red-600 mt-0.5 bg-red-50 px-1 border border-red-100 rounded-sm">
+                                      Diff: {diff > 0 ? '+' : ''}{diff.toFixed(2)}kg
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="px-4 py-1.5 text-center">
                             <div className="flex items-center justify-center space-x-2">

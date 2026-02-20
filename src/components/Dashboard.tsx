@@ -7,8 +7,9 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Package, TrendingUp, AlertTriangle, DollarSign, Boxes, Loader2,
-  ArrowUpRight, ArrowDownRight, CreditCard, Wallet, Users, Truck, CheckCircle
+  Package, TrendingUp, AlertTriangle, Boxes, Loader2,
+  ArrowDownRight, CreditCard, Wallet,
+  Activity, History, ShoppingCart, Target, Scale
 } from 'lucide-react';
 import { dashboardApi } from '../lib/api';
 import { CCDashboardWidget } from './CCDashboardWidget';
@@ -24,6 +25,13 @@ interface KpiData {
     lowStockItems: number;
     finishedGoodsStock: string;
     finishedProductItems: number;
+    stockInProcess: number;
+    stockInBell: number;
+    rawStockPurchased: number;
+    tradingStockPurchased: number;
+    pendingRawStock: number;
+    totalWeightLoss: number;
+    avgProductionLoss: number;
   };
   production: {
     inProgress: number;
@@ -57,13 +65,6 @@ interface KpiData {
   };
 }
 
-interface Alert {
-  type: string;
-  severity: string;
-  title: string;
-  message: string;
-  itemId: string;
-}
 
 // ============================================================
 // COMPONENT
@@ -73,347 +74,267 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [kpis, setKpis] = useState<KpiData | null>(null);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [machineEfficiency, setMachineEfficiency] = useState<any[]>([]);
 
   useEffect(() => {
     fetchDashboardData();
   }, []);
 
-  /**
-   * Fetch all dashboard data from APIs
-   */
   const fetchDashboardData = async () => {
     setLoading(true);
     setError(null);
-
     try {
-      const [kpisResult, alertsResult, efficiencyResult] = await Promise.all([
+      const [kpisResult, efficiencyResult] = await Promise.all([
         dashboardApi.getKpis(),
-        dashboardApi.getAlerts(),
         dashboardApi.getMachineEfficiency(),
       ]);
-
       if (kpisResult.data) setKpis(kpisResult.data);
-      if (alertsResult.data) setAlerts(alertsResult.data);
       if (efficiencyResult.data) setMachineEfficiency(efficiencyResult.data);
     } catch (err) {
       console.error('Dashboard error:', err);
       setError('Failed to load dashboard data');
     }
-
     setLoading(false);
   };
 
-  // ============================================================
-  // RENDER STATES
-  // ============================================================
+  const formatQuantity = (value: string | number) => {
+    const num = typeof value === 'string' ? parseFloat(value) : value;
+    return isNaN(num) ? '0 kg' : `${num.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kg`;
+  };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-        <span className="ml-2 text-gray-600">Loading dashboard...</span>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-6">
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-          {error}
-        </div>
-      </div>
-    );
-  }
-
-  // ============================================================
-  // HELPER FUNCTIONS
-  // ============================================================
-
-  /**
-   * Format number as Indian currency
-   */
-  const formatCurrency = (value: string | number) => {
+  const formatCurrency = (value: number | string) => {
     const num = typeof value === 'string' ? parseFloat(value) : value;
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
       currency: 'INR',
-      minimumFractionDigits: 0,
       maximumFractionDigits: 0,
-    }).format(num || 0);
+    }).format(num);
   };
 
-  /**
-   * Format quantity with kg suffix
-   */
-  const formatQuantity = (value: string | number) => {
-    const num = typeof value === 'string' ? parseFloat(value) : value;
-    return `${Math.round(num || 0)} kg`;
-  };
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-32 space-y-4">
+        <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
+        <span className="text-slate-500 font-medium animate-pulse">Initializing enterprise data...</span>
+      </div>
+    );
+  }
 
-  /**
-   * Get color classes for KPI cards
-   */
-  const getColorClasses = (color: string) => {
-    const colors: Record<string, string> = {
-      blue: 'bg-blue-50 text-blue-600',
-      teal: 'bg-teal-50 text-teal-600',
-      green: 'bg-green-50 text-green-600',
-      orange: 'bg-orange-50 text-orange-600',
-      red: 'bg-red-50 text-red-600',
-      purple: 'bg-purple-50 text-purple-600',
-    };
-    return colors[color] || colors.blue;
-  };
-
-  // ============================================================
-  // KPI DATA CONFIGURATION
-  // ============================================================
-
-  const inventoryKpis = [
-    {
-      title: 'Raw Material Stock',
-      value: formatQuantity(kpis?.inventory?.rawMaterialStock || '0'),
-      icon: Package,
-      color: 'blue',
-      subtitle: `${kpis?.inventory?.rawMaterialItems || 0} items`,
-      alert: (kpis?.inventory?.lowStockItems || 0) > 0,
-    },
-    {
-      title: 'Finished Goods Stock',
-      value: formatQuantity(kpis?.inventory?.finishedGoodsStock || '0'),
-      icon: Boxes,
-      color: 'teal',
-      subtitle: `${kpis?.inventory?.finishedProductItems || 0} products`,
-    },
-  ];
-
-  const productionKpis = [
-    {
-      title: 'Production Output',
-      value: formatQuantity(kpis?.production?.totalOutput || '0'),
-      icon: TrendingUp,
-      color: 'green',
-      subtitle: `${kpis?.production?.completed || 0} batches completed`,
-    },
-    {
-      title: 'In Progress',
-      value: kpis?.production?.inProgress || 0,
-      icon: Loader2,
-      color: 'blue',
-      subtitle: 'Active batches',
-    },
-  ];
-
-  const financialKpis = [
-    {
-      title: 'Total Sales',
-      value: formatCurrency(kpis?.sales?.total || '0'),
-      icon: ArrowUpRight,
-      color: 'green',
-      subtitle: `${kpis?.sales?.invoiceCount || 0} invoices`,
-    },
-    {
-      title: 'Receivables',
-      value: formatCurrency(kpis?.sales?.pendingReceivables || '0'),
-      icon: Users,
-      color: 'orange',
-      subtitle: 'From customers',
-    },
-    {
-      title: 'Total Purchases',
-      value: formatCurrency(kpis?.purchases?.total || '0'),
-      icon: ArrowDownRight,
-      color: 'red',
-      subtitle: `${kpis?.purchases?.billCount || 0} bills`,
-    },
-    {
-      title: 'Payables',
-      value: formatCurrency(kpis?.purchases?.pendingPayables || '0'),
-      icon: Truck,
-      color: 'purple',
-      subtitle: 'To suppliers',
-    },
-  ];
-
-  const accountKpis = [
-    {
-      title: 'Bank Balance',
-      value: formatCurrency(kpis?.accounts?.bankBalance || '0'),
-      icon: CreditCard,
-      color: 'blue',
-      subtitle: 'All bank accounts',
-    },
-    {
-      title: 'Cash Balance',
-      value: formatCurrency(kpis?.accounts?.cashBalance || '0'),
-      icon: Wallet,
-      color: 'green',
-      subtitle: 'Cash in hand',
-    },
-  ];
-
-  // Filter alerts by type
-  const lowStockAlerts = alerts.filter(a => a.type === 'low_stock');
-  const lossExceededAlerts = alerts.filter(a => a.type === 'loss_exceeded');
-  const overdueAlerts = alerts.filter(a => a.type === 'overdue_payment');
-
-  // ============================================================
-  // RENDER
-  // ============================================================
 
   return (
-    <div className="space-y-4 p-2">
-      {/* Page Header - Minimal */}
-      <div className="flex items-center justify-between border-b border-gray-200 pb-2 mb-4">
-        <h1 className="text-xl font-bold text-gray-800 uppercase tracking-tight">Executive Dashboard</h1>
-        <span className="text-xs text-gray-500 font-mono">Last Updated: {new Date().toLocaleTimeString()}</span>
+    <div className="p-6 space-y-8 animate-in bg-slate-50/50 min-h-screen">
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">Enterprise Dashboard</h1>
+          <p className="text-slate-500 mt-1 font-medium flex items-center">
+            <Activity className="w-4 h-4 mr-2 text-indigo-500" />
+            Operational overview for Shiv AgroNet Plastoc
+          </p>
+        </div>
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={fetchDashboardData}
+            className="flex items-center px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-all shadow-sm"
+          >
+            <History className="w-4 h-4 mr-2" />
+            Refresh Data
+          </button>
+          <div className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-indigo-200 shadow-lg">
+            {new Date().toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+          </div>
+        </div>
       </div>
 
-      {/* CC Account Widget */}
-      <CCDashboardWidget />
+      {/* Primary KPI Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {[
+          {
+            label: 'Net Payables',
+            value: formatCurrency(kpis?.ledgers.supplierOutstanding || 0),
+            subtitle: `${kpis?.purchases.billCount} Outstanding Bills`,
+            icon: CreditCard,
+            color: 'text-rose-600',
+            bg: 'bg-rose-50',
+            trend: 'Liability'
+          },
+          {
+            label: 'Pending Receivables',
+            value: formatCurrency(kpis?.ledgers.customerOutstanding || 0),
+            subtitle: `${kpis?.sales.invoiceCount} Unpaid Invoices`,
+            icon: ArrowDownRight,
+            color: 'text-indigo-600',
+            bg: 'bg-indigo-50',
+            trend: 'Assets'
+          },
+          {
+            label: 'Net Position',
+            value: formatCurrency(Math.abs(parseFloat(kpis?.ledgers.netPosition || '0'))),
+            subtitle: parseFloat(kpis?.ledgers.netPosition || '0') >= 0 ? 'Surplus (Net Owed)' : 'Liability (Net Owed)',
+            icon: Scale,
+            color: parseFloat(kpis?.ledgers.netPosition || '0') >= 0 ? 'text-emerald-600' : 'text-rose-600',
+            bg: parseFloat(kpis?.ledgers.netPosition || '0') >= 0 ? 'bg-emerald-50' : 'bg-rose-50',
+            trend: parseFloat(kpis?.ledgers.netPosition || '0') >= 0 ? 'Positive' : 'Negative'
+          },
+          {
+            label: 'Treasury Balance',
+            value: formatCurrency(kpis?.accounts.totalBalance || 0),
+            subtitle: 'Consolidated Bank & Cash',
+            icon: Wallet,
+            color: 'text-emerald-600',
+            bg: 'bg-emerald-50',
+            trend: 'Available'
+          },
+          {
+            label: 'Production Output',
+            value: formatQuantity(kpis?.production.totalOutput || 0),
+            subtitle: `${kpis?.production.completed} Batches Finalized`,
+            icon: Boxes,
+            color: 'text-indigo-600',
+            bg: 'bg-indigo-50',
+            trend: 'Total Yield'
+          },
+          {
+            label: 'Resource Loss',
+            value: formatQuantity(kpis?.inventory.totalWeightLoss || 0),
+            subtitle: `${kpis?.production.exceededLoss} Threshold Breaches`,
+            icon: AlertTriangle,
+            color: 'text-amber-600',
+            bg: 'bg-amber-50',
+            trend: 'Wastage'
+          },
+        ].map((item, i) => (
+          <div key={i} className="group bg-white p-5 rounded-3xl border border-slate-200 shadow-sm hover:shadow-lg transition-all duration-300 relative overflow-hidden flex flex-col justify-between min-h-[160px]">
+            <div className={`absolute -top-4 -right-4 w-24 h-24 ${item.bg} opacity-10 rounded-full transition-all group-hover:scale-110`} />
 
-      {/* KPI Grid - High Density */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {financialKpis.map((kpi, index) => (
-          <div key={index} className="bg-white border border-gray-300 p-3 rounded-sm shadow-sm hover:shadow-md transition-shadow">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">{kpi.title}</p>
-                <h3 className="text-2xl font-bold text-gray-900 leading-none tracking-tight">{kpi.value}</h3>
+            <div className="flex justify-between items-start mb-2 relative z-10">
+              <div className={`p-2.5 rounded-xl ${item.bg} ${item.color}`}>
+                <item.icon className="w-5 h-5" />
               </div>
-              <kpi.icon className="w-4 h-4 text-gray-400" />
+              <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-lg ${item.bg} ${item.color} border border-current opacity-80`}>
+                {item.trend}
+              </span>
             </div>
-            <p className="text-xs text-gray-600 mt-2 font-medium">{kpi.subtitle}</p>
+
+            <div className="relative z-10">
+              <h3 className="text-slate-500 text-xs font-bold uppercase tracking-wider">{item.label}</h3>
+              <div className="text-xl font-black text-slate-900 mt-1 truncate">{item.value}</div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-50 relative z-10 mt-auto">
+              <p className="text-[11px] text-slate-400 font-medium">{item.subtitle}</p>
+            </div>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left Column: Operations (8 cols) */}
-        <div className="col-span-1 lg:col-span-8 space-y-4">
+      <CCDashboardWidget />
 
-          {/* Inventory Status - Dense Table-like Grid */}
-          <div className="bg-white border border-gray-300 rounded-sm overflow-hidden">
-            <div className="bg-gray-50 px-3 py-2 border-b border-gray-200 flex justify-between items-center">
-              <h2 className="text-sm font-bold text-gray-800 uppercase">Inventory Overview</h2>
-              <button className="text-xs font-bold text-blue-700 hover:underline">Full Report</button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-gray-200">
-              {inventoryKpis.map((kpi, index) => (
-                <div key={index} className="p-3">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs font-bold text-gray-700">{kpi.title}</span>
-                    {kpi.alert && <span className="text-[10px] font-bold text-white bg-red-600 px-1.5 py-0.5 rounded-sm">LOW STOCK</span>}
-                  </div>
-                  <div className="flex items-baseline space-x-2">
-                    <span className="text-xl font-bold text-gray-900">{kpi.value}</span>
-                    <span className="text-xs text-gray-500">{kpi.subtitle}</span>
-                  </div>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        {/* Main Operational Panels */}
+        <div className="lg:col-span-8 space-y-8">
+
+          {/* Inventory Intelligence Card */}
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+            <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <div className="flex items-center">
+                <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg mr-3">
+                  <Package className="w-5 h-5" />
                 </div>
-              ))}
+                <h2 className="text-lg font-bold text-slate-800">Inventory & Logistics</h2>
+              </div>
+              <div className="flex space-x-2">
+                <span className="px-3 py-1 bg-white border border-slate-200 rounded-full text-[10px] font-bold text-slate-500 uppercase">Live Metrics</span>
+              </div>
+            </div>
+
+            <div className="p-1">
+              {/* Primary Stock Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 p-2">
+                <div className="p-6 bg-slate-50 rounded-2xl border border-transparent hover:border-indigo-100 transition-colors">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-tight">Raw Materials</span>
+                    {(kpis?.inventory?.lowStockItems || 0) > 0 && <span className="bg-rose-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-sm">CRITICAL</span>}
+                  </div>
+                  <div className="text-2xl font-black text-slate-900 leading-none">{formatQuantity(kpis?.inventory.rawMaterialStock || 0)}</div>
+                  <div className="text-[11px] text-slate-400 mt-2 font-semibold">{kpis?.inventory.rawMaterialItems} Distinct Items</div>
+                </div>
+
+                <div className="p-6 bg-slate-50 rounded-2xl border border-transparent hover:border-emerald-100 transition-colors">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-tight">Finished Goods</span>
+                  </div>
+                  <div className="text-2xl font-black text-slate-900 leading-none">{formatQuantity(kpis?.inventory.finishedGoodsStock || 0)}</div>
+                  <div className="text-[11px] text-slate-400 mt-2 font-semibold tracking-wide uppercase">{kpis?.inventory.finishedProductItems} Active SKUs</div>
+                </div>
+
+                <div className="p-6 bg-slate-50 rounded-2xl border border-transparent hover:border-purple-100 transition-colors">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-tight">Consigned (Bell)</span>
+                  </div>
+                  <div className="text-2xl font-black text-slate-900 leading-none">{formatQuantity(kpis?.inventory.stockInBell || 0)}</div>
+                  <div className="text-[11px] text-slate-400 mt-2 font-semibold">Ready for Dispatch</div>
+                </div>
+              </div>
+
+              {/* Secondary Metrics Row */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-4 border-t border-slate-100 bg-white/50">
+                {[
+                  { label: 'Work In Process', val: kpis?.inventory.stockInProcess, sub: `${kpis?.production.inProgress} Active Batches`, color: 'text-amber-600' },
+                  { label: 'Total Raw Purchased', val: kpis?.inventory.rawStockPurchased, sub: 'All Confirmed Bills', color: 'text-indigo-600' },
+                  { label: 'Pending Raw Stock', val: kpis?.inventory.pendingRawStock, sub: 'Invoice vs Rolls', color: 'text-rose-600' },
+                  { label: 'Trading Purchase', val: kpis?.inventory.tradingStockPurchased, sub: 'Finished Stock', color: 'text-emerald-600' },
+                ].map((m, i) => (
+                  <div key={i} className="space-y-1">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">{m.label}</p>
+                    <p className={`text-base font-black ${m.color}`}>{formatQuantity(m.val || 0)}</p>
+                    <p className="text-[10px] text-slate-400 font-medium">{m.sub}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
-          {/* Production Status - Condensed */}
-          <div className="bg-white border border-gray-300 rounded-sm overflow-hidden">
-            <div className="bg-gray-50 px-3 py-2 border-b border-gray-200">
-              <h2 className="text-sm font-bold text-gray-800 uppercase">Production Floor</h2>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-gray-200">
-              {productionKpis.map((kpi, index) => (
-                <div key={index} className="p-3 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-medium text-gray-500 uppercase">{kpi.title}</p>
-                    <p className="text-lg font-bold text-gray-900">{kpi.value}</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs font-bold text-gray-700 block">Status</span>
-                    <span className="text-xs text-gray-600">{kpi.subtitle}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Accounts - Dense List */}
-          <div className="bg-white border border-gray-300 rounded-sm overflow-hidden">
-            <div className="bg-gray-50 px-3 py-2 border-b border-gray-200">
-              <h2 className="text-sm font-bold text-gray-800 uppercase">Liquidity Position</h2>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-gray-200">
-              {accountKpis.map((kpi, index) => (
-                <div key={index} className="p-3">
-                  <p className="text-xs font-medium text-gray-500 uppercase mb-1">{kpi.title}</p>
-                  <p className="text-xl font-mono font-bold text-gray-900">{kpi.value}</p>
-                  <p className="text-xs text-gray-500 mt-1">{kpi.subtitle}</p>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
 
-        {/* Right Column: Alerts & Financials (4 cols) */}
-        <div className="col-span-1 lg:col-span-4 space-y-4">
+        {/* Right Sidebar: Alerts & Recent Activity (4 cols) */}
+        <div className="lg:col-span-4 space-y-8">
 
-          {/* System Alerts - List View */}
-          <div className="bg-white border border-gray-300 rounded-sm shadow-sm">
-            <div className="bg-gray-100 px-3 py-2 border-b border-gray-200 flex justify-between items-center">
-              <h2 className="text-sm font-bold text-gray-800 uppercase">System Alerts</h2>
-              <span className="bg-red-100 text-red-800 text-[10px] font-bold px-1.5 py-0.5 border border-red-200 rounded-sm">{alerts.length} Active</span>
+
+          {/* Average Production Loss Card */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-sm font-bold text-slate-800 flex items-center uppercase tracking-wider">
+                <Target className="w-4 h-4 mr-2 text-indigo-500" />
+                Production Quality
+              </h3>
             </div>
-            <div className="max-h-[200px] overflow-y-auto">
-              {alerts.length === 0 ? (
-                <div className="p-4 text-center text-xs text-gray-500">No active alerts</div>
-              ) : (
-                <ul className="divide-y divide-gray-100">
-                  {lowStockAlerts.map((alert, i) => (
-                    <li key={`stock-${i}`} className="p-2 hover:bg-red-50 border-l-2 border-red-500 transition-colors">
-                      <p className="text-xs font-bold text-gray-900">Low Stock</p>
-                      <p className="text-[10px] text-gray-600 truncate">{alert.title}</p>
-                    </li>
-                  ))}
-                  {lossExceededAlerts.map((alert, i) => (
-                    <li key={`loss-${i}`} className="p-2 hover:bg-orange-50 border-l-2 border-orange-500 transition-colors">
-                      <p className="text-xs font-bold text-gray-900">Production Loss</p>
-                      <p className="text-[10px] text-gray-600 truncate">{alert.title}</p>
-                    </li>
-                  ))}
-                  {overdueAlerts.map((alert, i) => (
-                    <li key={`due-${i}`} className="p-2 hover:bg-purple-50 border-l-2 border-purple-500 transition-colors">
-                      <p className="text-xs font-bold text-gray-900">Overdue Payment</p>
-                      <p className="text-[10px] text-gray-600 truncate">{alert.message}</p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-
-          {/* Net Position Summary */}
-          <div className="bg-white border border-gray-300 rounded-sm p-3 shadow-sm">
-            <h2 className="text-xs font-bold text-gray-500 uppercase mb-3 border-b border-gray-100 pb-2">Financial Net Position</h2>
-
-            <div className="space-y-3">
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-gray-600">Receivables</span>
-                <span className="font-bold text-green-700 font-mono">{formatCurrency(kpis?.ledgers?.customerOutstanding || '0')}</span>
-              </div>
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-gray-600">Payables</span>
-                <span className="font-bold text-red-700 font-mono">{formatCurrency(kpis?.ledgers?.supplierOutstanding || '0')}</span>
-              </div>
-              <div className="border-t border-gray-200 mt-2 pt-2 flex justify-between items-center">
-                <span className="text-xs font-bold text-gray-800 uppercase">Net Balance</span>
-                <span className={`text-sm font-bold font-mono ${parseFloat(kpis?.ledgers?.netPosition || '0') >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
-                  {formatCurrency(kpis?.ledgers?.netPosition || '0')}
+            <div className="space-y-6">
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-slate-500 font-bold uppercase text-[10px]">Avg Production Loss</span>
+                <span className={`font-black text-lg ${parseFloat(kpis?.inventory.avgProductionLoss?.toString() || '0') > 5 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                  {parseFloat(kpis?.inventory.avgProductionLoss?.toString() || '0').toFixed(2)}%
                 </span>
               </div>
+              <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full shadow-sm transition-all duration-1000 ${parseFloat(kpis?.inventory.avgProductionLoss?.toString() || '0') > 5 ? 'bg-rose-500' : 'bg-emerald-500'}`}
+                  style={{ width: `${Math.min(100, (parseFloat(kpis?.inventory.avgProductionLoss?.toString() || '0') / 10) * 100)}%` }}
+                />
+              </div>
+              <div className="pt-4 border-t border-slate-50">
+                <p className="text-[10px] text-slate-400 font-bold uppercase mb-2">Efficiency Rating</p>
+                <div className="flex items-center">
+                  <div className={`p-1.5 rounded-lg mr-3 ${parseFloat(kpis?.inventory.avgProductionLoss?.toString() || '0') <= 5 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                    <Activity className="w-4 h-4" />
+                  </div>
+                  <span className={`text-xs font-bold ${parseFloat(kpis?.inventory.avgProductionLoss?.toString() || '0') <= 5 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    {parseFloat(kpis?.inventory.avgProductionLoss?.toString() || '0') <= 5 ? 'Excellent Efficiency' : 'Action Required'}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
-
         </div>
       </div>
     </div>

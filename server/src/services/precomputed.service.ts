@@ -15,9 +15,10 @@ import { db } from '../db';
 import {
     stockMovements, rawMaterials, finishedProducts,
     invoices, purchaseBills, customers, suppliers,
-    paymentTransactions, rawMaterialRolls, bankCashAccounts
+    paymentTransactions, rawMaterialRolls, bankCashAccounts,
+    productionBatches, bellItems, purchaseBillItems
 } from '../db/schema';
-import { eq, sum, sql, and, count } from 'drizzle-orm';
+import { eq, sum, sql, and, count, inArray } from 'drizzle-orm';
 import { cache } from './cache.service';
 
 // ============================================================
@@ -35,6 +36,13 @@ export interface InventorySummary {
         totalStock: number;
         lowStockCount: number;
     };
+    stockInProcess: number;  // WIP from production floor
+    stockInBell: number;     // Packaged stock ready for dispatch
+    rawStockPurchased: number; // Total quantity of raw material purchased
+    tradingStockPurchased: number; // Total quantity of finished goods purchased
+    pendingRawStock: number; // Invoice qty - roll weight difference
+    totalLoss: number; // Total loss quantity from production batches
+    avgProductionLoss: number; // Average loss percentage from completed batches
     updatedAt: Date;
 }
 
@@ -157,6 +165,100 @@ async function computeInventorySummary(): Promise<InventorySummary> {
         fpTotalStock += Math.max(0, stock); // clamp per-product to avoid negative totals
     });
 
+    // 4. Calculate WIP (Stock in Process)
+    // Formula: input - output for all in-progress and partial batches
+    // (Loss is finalized at completion, so we keep it in WIP until then)
+    const wipResult = await db
+        .select({
+            total: sql<string>`COALESCE(SUM(
+                (${productionBatches.inputQuantity}::numeric) - 
+                (COALESCE(${productionBatches.outputQuantity}::numeric, 0))
+            ), 0)`
+        })
+        .from(productionBatches)
+        .where(inArray(productionBatches.status, ['in-progress', 'partially-completed']));
+
+    // 4b. Calculate Total Loss (Cumulative)
+    const lossResult = await db
+        .select({
+            total: sql<string>`COALESCE(SUM(${productionBatches.lossQuantity}::numeric), 0)`
+        })
+        .from(productionBatches);
+
+    // 4c. Calculate Average Loss from Completed Batches
+    const completedBatchStats = await db
+        .select({
+            totalLoss: sql<string>`COALESCE(SUM(${productionBatches.lossQuantity}::numeric), 0)`,
+            totalInput: sql<string>`COALESCE(SUM(${productionBatches.inputQuantity}::numeric), 0)`,
+        })
+        .from(productionBatches)
+        .where(eq(productionBatches.status, 'completed'));
+
+    const totalCompletedInput = parseFloat(completedBatchStats[0]?.totalInput || '0');
+    const totalCompletedLoss = parseFloat(completedBatchStats[0]?.totalLoss || '0');
+    const avgProductionLoss = totalCompletedInput > 0 ? (totalCompletedLoss / totalCompletedInput) * 100 : 0;
+
+    // 5. Calculate Bell Stock
+    const bellStockResult = await db
+        .select({
+            total: sql<string>`COALESCE(SUM(${bellItems.grossWeight}), 0)`
+        })
+        .from(bellItems)
+        .where(eq(bellItems.status, 'Available'));
+
+    // 6. Calculate Purchase Quantities
+    const rawPurchaseResult = await db
+        .select({
+            total: sql<string>`COALESCE(SUM(${purchaseBillItems.quantity}), 0)`
+        })
+        .from(purchaseBillItems)
+        .innerJoin(purchaseBills, eq(purchaseBillItems.billId, purchaseBills.id))
+        .where(and(
+            eq(purchaseBills.type, 'RAW_MATERIAL'),
+            eq(purchaseBills.status, 'Confirmed')
+        ));
+
+    const tradingPurchaseResult = await db
+        .select({
+            total: sql<string>`COALESCE(SUM(${purchaseBillItems.quantity}), 0)`
+        })
+        .from(purchaseBillItems)
+        .innerJoin(purchaseBills, eq(purchaseBillItems.billId, purchaseBills.id))
+        .where(and(
+            eq(purchaseBills.type, 'FINISHED_GOODS'),
+            eq(purchaseBills.status, 'Confirmed')
+        ));
+
+    // 7. Calculate Pending Raw Stock (Invoice Qty - Roll Weight)
+    const pendingRawStockResult = await db
+        .select({
+            total: sql<string>`COALESCE(SUM(
+                (${purchaseBillItems.quantity}::numeric)
+            ), 0)`,
+            totalRollWeight: sql<string>`COALESCE(SUM(
+                DISTINCT (${purchaseBills.totalRollWeight}::numeric)
+            ), 0)`
+        })
+        .from(purchaseBillItems)
+        .innerJoin(purchaseBills, eq(purchaseBillItems.billId, purchaseBills.id))
+        .where(and(
+            eq(purchaseBills.type, 'RAW_MATERIAL'),
+            eq(purchaseBills.status, 'Confirmed')
+        ));
+
+    // For pending raw stock, we need to be careful with the SUM of DISTINCT for roll weight 
+    // because one bill has many items. 
+    // A better way is to query bills directly for total roll weight.
+    const billsWeightResult = await db
+        .select({
+            total: sql<string>`COALESCE(SUM(${purchaseBills.totalRollWeight}::numeric), 0)`
+        })
+        .from(purchaseBills)
+        .where(and(
+            eq(purchaseBills.type, 'RAW_MATERIAL'),
+            eq(purchaseBills.status, 'Confirmed')
+        ));
+
     const summary: InventorySummary = {
         rawMaterials: {
             totalItems: rmItems.length,
@@ -168,6 +270,13 @@ async function computeInventorySummary(): Promise<InventorySummary> {
             totalStock: fpTotalStock,
             lowStockCount: 0, // FG doesn't have reorder levels
         },
+        stockInProcess: parseFloat(wipResult[0]?.total || '0'),
+        stockInBell: parseFloat(bellStockResult[0]?.total || '0'),
+        rawStockPurchased: parseFloat(rawPurchaseResult[0]?.total || '0'),
+        tradingStockPurchased: parseFloat(tradingPurchaseResult[0]?.total || '0'),
+        pendingRawStock: parseFloat(rawPurchaseResult[0]?.total || '0') - parseFloat(billsWeightResult[0]?.total || '0'),
+        totalLoss: parseFloat(lossResult[0]?.total || '0'),
+        avgProductionLoss: avgProductionLoss,
         updatedAt: new Date(),
     };
 

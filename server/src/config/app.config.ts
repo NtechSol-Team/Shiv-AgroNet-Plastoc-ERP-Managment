@@ -159,7 +159,7 @@ export const SERVER_CONFIG = {
     /** Maximum requests per window */
     maxRequests: 1000,
     /** Maximum requests for auth endpoints */
-    authMaxRequests: 50,
+    authMaxRequests: 200,
     /** Skip rate limiting in development */
     skipInDev: true,
   },
