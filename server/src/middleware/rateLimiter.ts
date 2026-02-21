@@ -142,6 +142,7 @@ export const strictRateLimiter = createRateLimiter({
   windowMs: SERVER_CONFIG.rateLimit.windowMs,
   maxRequests: SERVER_CONFIG.rateLimit.authMaxRequests,
   message: 'Too many requests for this operation, please try again later.',
+  skip: (req) => req.method === 'GET',
 });
 
 /**
