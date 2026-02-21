@@ -83,6 +83,13 @@ async function fetchApi<T>(
 // ==================== GST API ====================
 export const gstApi = {
     search: (gstin: string) => fetchApi<any>(`/gst/search?gstin=${gstin}`),
+    getDashboard: (startDate?: string, endDate?: string) => {
+        const params = new URLSearchParams();
+        if (startDate) params.append('startDate', startDate);
+        if (endDate) params.append('endDate', endDate);
+        const query = params.toString();
+        return fetchApi<any>(`/gst/dashboard${query ? `?${query}` : ''}`);
+    },
 };
 
 // ==================== MASTERS API ====================

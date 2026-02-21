@@ -9,6 +9,7 @@ import { Accounts } from './components/Accounts';
 import { Finance } from './components/Finance';
 import { Samples } from './components/Samples'; // NEW
 import { Reports } from './components/Reports';
+import { GstDashboard } from './components/GstDashboard';
 // import { Header } from './components/Header'; // Deprecated
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
@@ -39,6 +40,8 @@ export default function App() {
         return <Samples />;
       case 'reports':
         return <Reports />;
+      case 'gst-dashboard':
+        return <GstDashboard />;
       default:
         return <Dashboard />;
     }
