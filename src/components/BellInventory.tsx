@@ -46,7 +46,7 @@ interface NewBellItem {
     weightLoss: string;  // User enters this in grams
 }
 
-export function BellInventory() {
+export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
     const [batches, setBatches] = useState<BellBatch[]>([]);
     const [loading, setLoading] = useState(true);
     const [products, setProducts] = useState<Product[]>([]);
@@ -60,6 +60,7 @@ export function BellInventory() {
     const [filterProduct, setFilterProduct] = useState('');
     const [filterSize, setFilterSize] = useState('');
     const [filterGsm, setFilterGsm] = useState('');
+    const [filterStatus, setFilterStatus] = useState('Available');
 
     // Create Form State
     const [selectedProductId, setSelectedProductId] = useState('');
@@ -198,6 +199,7 @@ export function BellInventory() {
                 setBatchCode('');
                 setBellItems([]);
                 fetchData();
+                if (onSuccess) onSuccess();
             } else if (res.error) {
                 setError(res.error);
             }
@@ -212,6 +214,7 @@ export function BellInventory() {
         try {
             await bellInventoryApi.deleteBell(id);
             fetchData();
+            if (onSuccess) onSuccess();
         } catch (err) {
             alert('Failed to delete batch');
         }
@@ -223,6 +226,7 @@ export function BellInventory() {
             const res = await bellInventoryApi.deleteBaleItem(baleId);
             if (res.data) {
                 fetchData();
+                if (onSuccess) onSuccess();
             } else {
                 setError(res.error || 'Failed to delete bale');
             }
@@ -251,6 +255,7 @@ export function BellInventory() {
             });
             if (result.error) throw new Error(result.error);
             fetchData();
+            if (onSuccess) onSuccess();
             setEditingBellItem(null);
         } catch (err: any) {
             setError(err.message || 'Failed to update bell item');
@@ -274,18 +279,41 @@ export function BellInventory() {
         // 1. Hide Deleted Batches (backend does this, but safely check)
         if (batch.status === 'Deleted') return false;
 
-        // 2. Hide Empty Batches or Batches where ALL items are Issued/Deleted
-        // We only want to show batches that have at least one 'Available' item
-        const availableItems = batch.items?.filter(i => i.status === 'Available') || [];
-        if (availableItems.length === 0) return false;
+        // 2. Filter items within the batch based on the Status Filter
+        // If Status is 'All', consider all items except 'Deleted'
+        // Otherwise, only consider items matching the filterStatus
+        const relevantItems = batch.items?.filter(i =>
+            i.status !== 'Deleted' &&
+            (filterStatus === 'All' || i.status === filterStatus)
+        ) || [];
 
-        // 3. Apply Filters
-        // Check if ANY *Available* item in the batch matches ALL selected filters
-        const matchesProduct = !filterProduct || availableItems.some(i => i.finishedProduct?.name === filterProduct);
-        const matchesSize = !filterSize || availableItems.some(i => i.size === filterSize);
-        const matchesGsm = !filterGsm || availableItems.some(i => i.gsm === filterGsm);
+        // If the batch has no relevant items matching the status filter, hide the batch
+        if (relevantItems.length === 0) return false;
+
+        // 3. Apply Product/Size/Shade Filters
+        // Check if ANY *relevant* item in the batch matches ALL selected filters
+        const matchesProduct = !filterProduct || relevantItems.some(i => i.finishedProduct?.name === filterProduct);
+        const matchesSize = !filterSize || relevantItems.some(i => i.size === filterSize);
+        const matchesGsm = !filterGsm || relevantItems.some(i => i.gsm === filterGsm);
 
         return matchesProduct && matchesSize && matchesGsm;
+    });
+
+    // Calculate Totals based on Filtered Batches AND Filtered Items
+    let totalFilteredWeight = 0;
+    let totalFilteredPieces = 0;
+
+    filteredBatches.forEach(batch => {
+        const relevantItems = batch.items?.filter(i =>
+            i.status !== 'Deleted' &&
+            (filterStatus === 'All' || i.status === filterStatus) &&
+            (!filterProduct || i.finishedProduct?.name === filterProduct) &&
+            (!filterSize || i.size === filterSize) &&
+            (!filterGsm || i.gsm === filterGsm)
+        ) || [];
+
+        totalFilteredPieces += relevantItems.reduce((sum, item) => sum + (parseInt(item.pieceCount) || 0), 0);
+        totalFilteredWeight += relevantItems.reduce((sum, item) => sum + (parseFloat(item.netWeight) || 0), 0);
     });
 
     return (
@@ -299,11 +327,11 @@ export function BellInventory() {
                 <div className="flex items-center space-x-3">
                     <button
                         onClick={() => setShowFilters(!showFilters)}
-                        className={`px-3 py-2 border rounded-lg flex items-center shadow-sm transition-all text-sm font-medium ${showFilters || filterProduct || filterSize || filterGsm ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                        className={`px-3 py-2 border rounded-lg flex items-center shadow-sm transition-all text-sm font-medium ${showFilters || filterProduct || filterSize || filterGsm || filterStatus !== 'Available' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
                     >
                         <Search className="w-4 h-4 mr-2" />
                         {showFilters ? 'Hide Filters' : 'Filters'}
-                        {(filterProduct || filterSize || filterGsm) && <span className="ml-2 w-2 h-2 bg-blue-600 rounded-full"></span>}
+                        {(filterProduct || filterSize || filterGsm || filterStatus !== 'Available') && <span className="ml-2 w-2 h-2 bg-blue-600 rounded-full"></span>}
                     </button>
                     <button
                         onClick={() => setShowCreateModal(true)}
@@ -317,57 +345,95 @@ export function BellInventory() {
 
             {/* Filter Bar */}
             {showFilters && (
-                <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm flex flex-wrap gap-4 items-end animate-in fade-in slide-in-from-top-2 duration-200">
-                    <div className="flex-1 min-w-[200px]">
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">Filter by Product</label>
-                        <div className="relative">
-                            <select
-                                value={filterProduct}
-                                onChange={(e) => setFilterProduct(e.target.value)}
-                                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
-                            >
-                                <option value="">All Products</option>
-                                {uniqueProducts.map(p => <option key={String(p)} value={String(p)}>{p}</option>)}
-                            </select>
-                            <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                <div className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200 mb-6">
+                    {/* Filters Row */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                        <div>
+                            <label className="block text-xs font-semibold text-gray-500 mb-1">Filter by Product</label>
+                            <div className="relative">
+                                <select
+                                    value={filterProduct}
+                                    onChange={(e) => setFilterProduct(e.target.value)}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
+                                >
+                                    <option value="">All Products</option>
+                                    {uniqueProducts.map(p => <option key={String(p)} value={String(p)}>{p}</option>)}
+                                </select>
+                                <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-gray-500 mb-1">Filter by Size</label>
+                            <div className="relative">
+                                <select
+                                    value={filterSize}
+                                    onChange={(e) => setFilterSize(e.target.value)}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
+                                >
+                                    <option value="">All Sizes</option>
+                                    {uniqueSizes.map(s => <option key={String(s)} value={String(s)}>{s}</option>)}
+                                </select>
+                                <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-gray-500 mb-1">Filter by Shade</label>
+                            <div className="relative">
+                                <select
+                                    value={filterGsm}
+                                    onChange={(e) => setFilterGsm(e.target.value)}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
+                                >
+                                    <option value="">All Shade</option>
+                                    {uniqueGsms.map(g => <option key={String(g)} value={String(g)}>{g}</option>)}
+                                </select>
+                                <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-gray-500 mb-1">Status</label>
+                            <div className="relative">
+                                <select
+                                    value={filterStatus}
+                                    onChange={(e) => setFilterStatus(e.target.value)}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none appearance-none font-medium"
+                                >
+                                    <option value="All">All Status</option>
+                                    <option value="Available">Available Only</option>
+                                    <option value="Issued">Issued Only</option>
+                                </select>
+                                <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                            </div>
                         </div>
                     </div>
-                    <div className="w-40">
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">Filter by Size</label>
-                        <div className="relative">
-                            <select
-                                value={filterSize}
-                                onChange={(e) => setFilterSize(e.target.value)}
-                                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
-                            >
-                                <option value="">All Sizes</option>
-                                {uniqueSizes.map(s => <option key={String(s)} value={String(s)}>{s}</option>)}
-                            </select>
-                            <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+
+                    {/* Active Totals Banner & Actions */}
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-blue-50/50 border border-blue-100 rounded-md p-3">
+                        <div className="flex items-center gap-6 mb-3 sm:mb-0">
+                            <div>
+                                <span className="text-xs font-semibold text-blue-800 uppercase tracking-wider block">Filtered Totals</span>
+                                <span className="text-xs text-blue-600">Aggregate of matching items</span>
+                            </div>
+                            <div className="h-8 w-px bg-blue-200 hidden sm:block"></div>
+                            <div>
+                                <span className="text-xs font-medium text-blue-600 block">Total Pieces</span>
+                                <span className="text-base font-bold text-blue-900">{totalFilteredPieces}</span>
+                            </div>
+                            <div>
+                                <span className="text-xs font-medium text-blue-600 block">Total Net Weight</span>
+                                <span className="text-base font-bold text-blue-900">{totalFilteredWeight.toFixed(2)} kg</span>
+                            </div>
                         </div>
-                    </div>
-                    <div className="w-40">
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">Filter by Shade</label>
-                        <div className="relative">
-                            <select
-                                value={filterGsm}
-                                onChange={(e) => setFilterGsm(e.target.value)}
-                                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
+
+                        {(filterProduct || filterSize || filterGsm || filterStatus !== 'Available') && (
+                            <button
+                                onClick={() => { setFilterProduct(''); setFilterSize(''); setFilterGsm(''); setFilterStatus('Available'); }}
+                                className="px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 hover:text-red-700 rounded-md transition-colors font-medium border border-transparent hover:border-red-200"
                             >
-                                <option value="">All Shade</option>
-                                {uniqueGsms.map(g => <option key={String(g)} value={String(g)}>{g}</option>)}
-                            </select>
-                            <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
-                        </div>
+                                Clear Filters
+                            </button>
+                        )}
                     </div>
-                    {(filterProduct || filterSize || filterGsm) && (
-                        <button
-                            onClick={() => { setFilterProduct(''); setFilterSize(''); setFilterGsm(''); }}
-                            className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-md transition-colors font-medium"
-                        >
-                            Clear Filters
-                        </button>
-                    )}
                 </div>
             )}
 
@@ -377,8 +443,6 @@ export function BellInventory() {
                     {error}
                 </div>
             )}
-
-            {/* Batch List */}
             <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
                 <table className="w-full text-left">
                     <thead className="bg-gray-50 border-b border-gray-200">
@@ -459,8 +523,14 @@ export function BellInventory() {
                                                                 </tr>
                                                             </thead>
                                                             <tbody className="divide-y divide-gray-100">
-                                                                {batch.items?.map((item) => (
-                                                                    <tr key={item.id}>
+                                                                {batch.items?.filter(i =>
+                                                                    i.status !== 'Deleted' &&
+                                                                    (filterStatus === 'All' || i.status === filterStatus) &&
+                                                                    (!filterProduct || i.finishedProduct?.name === filterProduct) &&
+                                                                    (!filterSize || i.size === filterSize) &&
+                                                                    (!filterGsm || i.gsm === filterGsm)
+                                                                ).map((item) => (
+                                                                    <tr key={item.id} className={item.status === 'Issued' ? 'bg-gray-50/50' : ''}>
                                                                         <td className="px-4 py-2 font-mono text-xs text-blue-600">{item.code}</td>
                                                                         <td className="px-4 py-2 font-medium text-gray-900">{item.finishedProduct?.name || 'Unknown Product'}</td>
                                                                         <td className="px-4 py-2 text-gray-600">{item.size} | {item.gsm} Shade</td>

@@ -26,8 +26,8 @@ import { cache as cacheService } from '../services/cache.service';
 
 const router = Router();
 
-// Company state code for GST calculation (Maharashtra)
-const COMPANY_STATE_CODE = '27';
+// Company state code for GST calculation (Gujarat)
+const COMPANY_STATE_CODE = '24';
 
 // ============================================================
 // TYPE DEFINITIONS
@@ -185,7 +185,7 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
             if (!customerId) throw createError('Customer required for B2B invoice', 400);
             [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
             if (!customer) throw createError('Customer not found', 404);
-            isInterState = (customer.stateCode || '27') !== COMPANY_STATE_CODE;
+            isInterState = (customer.stateCode || '24') !== COMPANY_STATE_CODE;
             finalCustomerName = customer.name;
         }
 

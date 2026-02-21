@@ -92,7 +92,7 @@ export function Sales() {
     dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     customerId: '',
     invoiceType: 'B2B',
-    placeOfSupply: 'Gujarat',
+    placeOfSupply: '24',
     billingAddress: '',
     shippingAddress: '',
     sameAsBilling: true,
@@ -150,7 +150,7 @@ export function Sales() {
     gstNo: '',
     phone: '',
     email: '',
-    stateCode: '27',
+    stateCode: '24', // Default to Gujarat
     address: ''
   });
 
@@ -392,10 +392,13 @@ export function Sales() {
     const taxableAmount = subtotal - totalDiscount;
     const totalTax = invoiceItems.reduce((sum, item) => (item.taxableAmount * item.taxPercent) / 100, 0);
 
-    const isInterstate = invoiceForm.placeOfSupply !== '27'; // Use company state code (MH)
-    const cgst = isInterstate ? 0 : totalTax / 2;
-    const sgst = isInterstate ? 0 : totalTax / 2;
-    const igst = isInterstate ? totalTax : 0;
+    const COMPANY_STATE_CODE = '24';
+    // Handle both state code ('24') and state name ('Gujarat') stored in placeOfSupply
+    const pos = invoiceForm.placeOfSupply || '';
+    const isIntraState = pos === COMPANY_STATE_CODE || pos.toLowerCase() === 'gujarat';
+    const cgst = isIntraState ? totalTax / 2 : 0;
+    const sgst = isIntraState ? totalTax / 2 : 0;
+    const igst = isIntraState ? 0 : totalTax;
 
     const grandTotal = taxableAmount + totalTax;
     const roundOff = Math.round(grandTotal) - grandTotal;
@@ -479,7 +482,7 @@ export function Sales() {
       dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       customerId: '',
       invoiceType: 'B2B',
-      placeOfSupply: 'Gujarat',
+      placeOfSupply: '24',
       billingAddress: '',
       shippingAddress: '',
       sameAsBilling: true,
@@ -644,7 +647,7 @@ export function Sales() {
       dueDate: invoice.dueDate?.split('T')[0] || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       customerId: invoice.customerId || '',
       invoiceType: invoice.invoiceType || 'B2B',
-      placeOfSupply: invoice.placeOfSupply || '27',
+      placeOfSupply: invoice.placeOfSupply || '24',
       billingAddress: invoice.billingAddress || '',
       shippingAddress: invoice.shippingAddress || '',
       sameAsBilling: true,
@@ -1571,9 +1574,18 @@ export function Sales() {
                   <div className="flex space-x-2 mt-1">
                     <input
                       type="text"
-                      maxLength={15}
                       value={quickAddCustomerForm.gstNo}
-                      onChange={e => setQuickAddCustomerForm({ ...quickAddCustomerForm, gstNo: e.target.value.toUpperCase() })}
+                      onChange={(e) => {
+                        const value = e.target.value.toUpperCase();
+                        setQuickAddCustomerForm((prev) => ({ ...prev, gstNo: value }));
+                        if (value.length >= 2) {
+                          const prefix = value.substring(0, 2);
+                          if (/^\d{2}$/.test(prefix)) {
+                            setQuickAddCustomerForm((prev) => ({ ...prev, stateCode: prefix }));
+                          }
+                        }
+                      }}
+                      onBlur={handleQuickGstSearch}
                       className="flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 uppercase font-mono"
                       placeholder="Enter GSTIN..."
                     />

@@ -102,8 +102,8 @@ interface PurchaseBill {
   totalRollWeight?: string;
 }
 
-// Company state code (Maharashtra)
-const COMPANY_STATE_CODE = '27';
+// Company state code (Gujarat)
+const COMPANY_STATE_CODE = '24';
 
 // Indian states for Place of Supply
 // GST State Codes for Mapping
@@ -207,7 +207,7 @@ export function Purchase() {
     gstNo: '',
     contact: '', // Suppliers use 'contact' instead of 'phone' in some parts of this codebase's masters, let's verify
     address: '',
-    stateCode: '27'
+    stateCode: '24' // default to Gujarat
   });
   const [deleteConfirmation, setDeleteConfirmation] = useState<{ isOpen: boolean; id: string | null; error?: string }>({ isOpen: false, id: null });
   const [showRollModal, setShowRollModal] = useState(false);
@@ -1641,7 +1641,11 @@ export function Purchase() {
                                             const amount = qty * rate;
                                             const gstAmount = amount * (gst / 100);
 
-                                            // Determine GST split
+                                            // Determine GST split based on Supplier stateCode matching Company stateCode (24 for Gujarat)
+                                            const COMPANY_STATE_CODE = '24';
+                                            const supplierStateCode = selectedSupplier?.stateCode || COMPANY_STATE_CODE;
+                                            const isInterState = supplierStateCode !== COMPANY_STATE_CODE;
+
                                             let cgst = 0, sgst = 0, igst = 0;
                                             if (isInterState) {
                                               igst = gstAmount;

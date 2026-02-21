@@ -147,9 +147,16 @@ export function Reports() {
   const downloadCSV = (data: any[], filename: string, headers: string[]) => {
     let csv = headers.join(',') + '\n';
     data.forEach(row => {
-      csv += Object.values(row).join(',') + '\n';
+      const rowValues = Object.values(row).map(val => {
+        const str = String(val ?? '');
+        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      });
+      csv += rowValues.join(',') + '\n';
     });
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -315,7 +322,20 @@ export function Reports() {
                       <p className="text-sm text-gray-600">All sales invoices with payment details</p>
                     </div>
                     <button
-                      onClick={() => downloadCSV(getFilteredSalesData(), 'sales_report', ['Invoice', 'Date', 'Customer', 'Items', 'Qty', 'Amount', 'Status'])}
+                      onClick={() => {
+                        const exportData = getFilteredSalesData().map(sale => ({
+                          code: sale.code,
+                          date: new Date(sale.date).toLocaleDateString(),
+                          customer: sale.customer,
+                          items: sale.items?.map((i: any) => i.name).join(' | ') || '-',
+                          qty: sale.items?.map((i: any) => i.quantity).join(' | ') || '-',
+                          amount: sale.subtotal || 0,
+                          gst: sale.gst || 0,
+                          total: sale.total || 0,
+                          status: sale.status
+                        }));
+                        downloadCSV(exportData, 'sales_report', ['Invoice', 'Date', 'Customer', 'Items', 'Qty', 'Amount', 'GST', 'Total', 'Status'])
+                      }}
                       className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                     >
                       <Download className="w-4 h-4 mr-2" />
@@ -429,7 +449,20 @@ export function Reports() {
                       <p className="text-sm text-gray-600">All purchase bills with payment details</p>
                     </div>
                     <button
-                      onClick={() => downloadCSV(getFilteredPurchaseData(), 'purchase_report', ['Bill', 'Date', 'Supplier', 'Items', 'Qty', 'Amount', 'GST', 'Total', 'Status'])}
+                      onClick={() => {
+                        const exportData = getFilteredPurchaseData().map(purchase => ({
+                          code: purchase.code,
+                          date: new Date(purchase.date).toLocaleDateString(),
+                          supplier: purchase.supplier,
+                          items: purchase.items?.map((i: any) => i.name).join(' | ') || '-',
+                          qty: purchase.items?.map((i: any) => i.quantity).join(' | ') || '-',
+                          amount: purchase.amount || 0,
+                          gst: purchase.gst || 0,
+                          total: purchase.total || 0,
+                          status: purchase.status
+                        }));
+                        downloadCSV(exportData, 'purchase_report', ['Bill', 'Date', 'Supplier', 'Items', 'Qty', 'Amount', 'GST', 'Total', 'Status'])
+                      }}
                       className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                     >
                       <Download className="w-4 h-4 mr-2" />

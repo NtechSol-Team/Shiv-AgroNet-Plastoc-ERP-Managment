@@ -452,7 +452,16 @@ export function Masters() {
                 <input
                   type="text"
                   value={formData.gstNo || ''}
-                  onChange={(e) => setFormData({ ...formData, gstNo: e.target.value.toUpperCase() })}
+                  onChange={(e) => {
+                    const value = e.target.value.toUpperCase();
+                    setFormData({ ...formData, gstNo: value });
+                    if (value.length >= 2) {
+                      const prefix = value.substring(0, 2);
+                      if (/^\d{2}$/.test(prefix)) {
+                        setFormData((prev: any) => ({ ...prev, gstNo: value, stateCode: prefix }));
+                      }
+                    }
+                  }}
                   onBlur={handleGstSearch}
                   maxLength={15}
                   className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${gstLoading ? 'bg-slate-50 border-blue-200' : 'border-gray-300'}`}
@@ -508,7 +517,16 @@ export function Masters() {
                 <input
                   type="text"
                   value={formData.gstNo || ''}
-                  onChange={(e) => setFormData({ ...formData, gstNo: e.target.value.toUpperCase() })}
+                  onChange={(e) => {
+                    const value = e.target.value.toUpperCase();
+                    setFormData({ ...formData, gstNo: value });
+                    if (value.length >= 2) {
+                      const prefix = value.substring(0, 2);
+                      if (/^\d{2}$/.test(prefix)) {
+                        setFormData((prev: any) => ({ ...prev, gstNo: value, stateCode: prefix }));
+                      }
+                    }
+                  }}
                   onBlur={handleGstSearch}
                   maxLength={15}
                   className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${gstLoading ? 'bg-slate-50 border-blue-200' : 'border-gray-300'}`}

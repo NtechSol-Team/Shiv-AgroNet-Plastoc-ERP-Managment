@@ -269,7 +269,7 @@ export function Inventory() {
         {/* Tab Content - Dense Tables */}
         <div className={`bg-white border border-gray-300 rounded-sm overflow-hidden min-h-[400px] ${activeTab === 'bells' ? 'p-4 border-none' : ''}`}>
           {activeTab === 'bells' ? (
-            <BellInventory />
+            <BellInventory onSuccess={fetchData} />
           ) : (
             <>
               {activeTab === 'finished-goods' && (
@@ -365,7 +365,15 @@ export function Inventory() {
                         const isIn = parseFloat(movement.quantityIn) > 0;
                         return (
                           <tr key={index} className="hover:bg-blue-50 transition-colors">
-                            <td className="px-4 py-1.5 text-xs text-gray-600">{new Date(movement.date).toLocaleDateString()}</td>
+                            <td className="px-4 py-1.5 text-xs text-gray-600">
+                              {new Date(movement.date).toLocaleString('en-IN', {
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </td>
                             <td className="px-4 py-1.5">
                               <span className={`text-[10px] font-bold px-1 rounded ${isIn ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                                 {isIn ? 'STOCK IN' : 'STOCK OUT'}
@@ -593,8 +601,8 @@ export function Inventory() {
                             <td className="px-3 py-2 text-right text-amber-700 font-mono">+{b.lossRestored} kg</td>
                             <td className="px-3 py-2 text-center">
                               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${b.newStatus === 'in-progress' ? 'bg-blue-100 text-blue-700' :
-                                  b.newStatus === 'partially-completed' ? 'bg-amber-100 text-amber-700' :
-                                    'bg-green-100 text-green-700'
+                                b.newStatus === 'partially-completed' ? 'bg-amber-100 text-amber-700' :
+                                  'bg-green-100 text-green-700'
                                 }`}>{b.newStatus.replace('-', ' ').toUpperCase()}</span>
                             </td>
                           </tr>
