@@ -35,8 +35,8 @@ import { createError } from '../middleware/errorHandler';
 
 const router = Router();
 
-// Company state code for GST calculation (Maharashtra)
-const COMPANY_STATE_CODE = '27';
+// Company state code for GST calculation (Gujarat)
+const COMPANY_STATE_CODE = '24';
 
 // ============================================================
 // TYPE DEFINITIONS
@@ -201,7 +201,7 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
         }
 
         console.log(`✓ Supplier found: ${supplier.name} (${supplier.code})`);
-        const isInterState = (supplier.stateCode || '27') !== COMPANY_STATE_CODE;
+        const isInterState = (supplier.stateCode || '24') !== COMPANY_STATE_CODE;
 
         // Generate bill code by finding the maximum existing code
         const allBills = await db.select({ code: purchaseBills.code }).from(purchaseBills);
@@ -738,7 +738,7 @@ router.put('/bills/:id', async (req: Request, res: Response, next: NextFunction)
         const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, supplierId));
         if (!supplier) throw createError('Supplier not found', 404);
 
-        const isInterState = (supplier.stateCode || '27') !== COMPANY_STATE_CODE;
+        const isInterState = (supplier.stateCode || '24') !== COMPANY_STATE_CODE;
 
         // Calculate totals from items
         let subtotal = 0;

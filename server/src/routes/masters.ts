@@ -437,7 +437,7 @@ router.post('/customers', async (req: Request, res: Response, next: NextFunction
         const code = `C-${String(lastNum + 1).padStart(3, '0')}`;
 
         // Extract state code from GST number if not provided (first 2 digits)
-        const inferredStateCode = stateCode || (gstNo ? gstNo.substring(0, 2) : '27');
+        const inferredStateCode = stateCode || (gstNo ? gstNo.substring(0, 2) : '24');
 
         const [item] = await db.insert(customers).values({
             code, name, gstNo,
@@ -457,7 +457,7 @@ router.put('/customers/:id', async (req: Request, res: Response, next: NextFunct
     try {
         const { name, gstNo, stateCode, email, phone, address, outstanding } = req.body;
 
-        const inferredStateCode = stateCode || (gstNo ? gstNo.substring(0, 2) : '27');
+        const inferredStateCode = stateCode || (gstNo ? gstNo.substring(0, 2) : '24');
 
         const [item] = await db.update(customers)
             .set({
@@ -519,7 +519,7 @@ router.post('/suppliers', async (req: Request, res: Response, next: NextFunction
         const code = `S-${String(lastNum + 1).padStart(3, '0')}`;
 
         // Extract state code from GST number if not provided
-        const inferredStateCode = stateCode || (gstNo ? gstNo.substring(0, 2) : '27');
+        const inferredStateCode = stateCode || (gstNo ? gstNo.substring(0, 2) : '24');
 
         const [item] = await db.insert(suppliers).values({
             code, name, gstNo,
@@ -539,7 +539,7 @@ router.put('/suppliers/:id', async (req: Request, res: Response, next: NextFunct
     try {
         const { name, gstNo, stateCode, contact, address, outstanding } = req.body;
 
-        const inferredStateCode = stateCode || (gstNo ? gstNo.substring(0, 2) : '27');
+        const inferredStateCode = stateCode || (gstNo ? gstNo.substring(0, 2) : '24');
 
         const [item] = await db.update(suppliers)
             .set({

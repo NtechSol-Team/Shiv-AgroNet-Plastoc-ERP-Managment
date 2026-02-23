@@ -1006,7 +1006,7 @@ export function Accounts() {
                     {ledgerData.bills?.map((bill: any, i: number) => (
                       <tr key={i} className="border-b last:border-0">
                         <td className="px-4 py-2 text-sm">{new Date(bill.date).toLocaleDateString()}</td>
-                        <td className="px-4 py-2 text-sm font-medium">{bill.billNumber}</td>
+                        <td className="px-4 py-2 text-sm font-medium">{bill.code}</td>
                         <td className="px-4 py-2 text-sm text-right">₹{bill.grandTotal}</td>
                         <td className="px-4 py-2 text-sm text-right text-red-600 font-medium">₹{bill.balanceAmount}</td>
                       </tr>

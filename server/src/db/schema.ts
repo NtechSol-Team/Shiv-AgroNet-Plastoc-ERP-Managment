@@ -51,7 +51,7 @@ export const customers = pgTable('customers', {
     code: text('code').notNull().unique(),
     name: text('name').notNull(),
     gstNo: text('gst_no'),
-    stateCode: text('state_code').default('27'), // Maharashtra = 27
+    stateCode: text('state_code').default('24'), // Gujarat = 24
     email: text('email'),
     phone: text('phone').notNull(),
     address: text('address'),
@@ -66,7 +66,7 @@ export const suppliers = pgTable('suppliers', {
     code: text('code').notNull().unique(),
     name: text('name').notNull(),
     gstNo: text('gst_no'),
-    stateCode: text('state_code').default('27'), // For CGST/SGST vs IGST logic
+    stateCode: text('state_code').default('24'), // For CGST/SGST vs IGST logic
     contact: text('contact').notNull(),
     address: text('address'),
     outstanding: decimal('outstanding', { precision: 10, scale: 2 }).default('0'),

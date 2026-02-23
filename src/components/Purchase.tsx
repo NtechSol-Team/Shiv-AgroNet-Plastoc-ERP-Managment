@@ -481,10 +481,6 @@ export function Purchase() {
       updatedItem.cgst = gst.cgst;
       updatedItem.sgst = gst.sgst;
       updatedItem.igst = gst.igst;
-      updatedItem.amount = amount;
-      updatedItem.cgst = gst.cgst;
-      updatedItem.sgst = gst.sgst;
-      updatedItem.igst = gst.igst;
       updatedItem.total = gst.total;
 
       return updatedItem;
@@ -974,13 +970,13 @@ export function Purchase() {
       hsnCode: item.hsnCode || '',
       quantity: item.quantity?.toString() || '',
       rate: item.rate?.toString() || '',
-      gstPercent: item.gstPercent?.toString() || '18',
+      gstPercent: item.gstPercent ? parseFloat(item.gstPercent.toString()).toString() : '18',
       unit: item.unit || 'kg',
       amount: parseFloat(item.amount) || 0,
       cgst: parseFloat(item.cgst) || 0,
       sgst: parseFloat(item.sgst) || 0,
       igst: parseFloat(item.igst) || 0,
-      total: parseFloat(item.total) || 0
+      total: parseFloat(item.totalAmount || item.total) || 0
     })) || [];
 
     setItems(billItems);
