@@ -28,6 +28,7 @@ interface Transaction {
   account?: Account;
   remarks?: string;
   accountName?: string;
+  advanceBalance?: string;
 }
 
 interface Customer {
@@ -649,6 +650,11 @@ export function Accounts() {
                           <td className={`px-6 py-4 text-sm text-right font-bold ${txn.type === 'RECEIPT' || txn.type === 'LOAN_TAKEN' ? 'text-green-600' : 'text-red-600'
                             }`}>
                             {txn.type === 'RECEIPT' || txn.type === 'LOAN_TAKEN' ? '+' : '-'} ₹{parseFloat(txn.amount).toLocaleString()}
+                            {parseFloat(txn.advanceBalance || '0') > 0 && (
+                              <div className="text-[10px] text-blue-600 font-bold mt-0.5">
+                                (Inc. ₹{parseFloat(txn.advanceBalance || '0').toLocaleString()} Adv.)
+                              </div>
+                            )}
                           </td>
                         </tr>
                       ));
@@ -934,21 +940,19 @@ export function Accounts() {
                               <h2 class="font-bold border-b pb-2 mt-8 mb-4">Payments Made</h2>
                               <table class="w-full text-sm">
                                 <thead>
-                                  <tr class="text-left border-b-2 border-gray-800">
-                                    <th class="py-2">Date</th>
-                                    <th class="py-2">Ref #</th>
-                                    <th class="py-2">Mode</th>
                                     <th class="py-2 text-right">Amount</th>
+                                    <th class="py-2 text-right">Advance Bal.</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  ${!ledgerData.payments || ledgerData.payments.length === 0 ? '<tr><td colspan="4" class="py-4 text-center text-gray-500">No payments recorded</td></tr>' :
+                                  ${!ledgerData.payments || ledgerData.payments.length === 0 ? '<tr><td colspan="5" class="py-4 text-center text-gray-500">No payments recorded</td></tr>' :
                           ledgerData.payments.map((p: any) => `
                                     <tr class="border-b border-gray-200">
                                       <td class="py-2">${new Date(p.date).toLocaleDateString()}</td>
                                       <td class="py-2 font-mono">${p.code}</td>
                                       <td class="py-2">${p.mode}</td>
-                                      <td class="py-2 text-right font-bold text-green-600">₹${p.amount}</td>
+                                      <td class="py-2 text-right font-bold text-green-600">₹${parseFloat(p.amount).toLocaleString()}</td>
+                                      <td class="py-2 text-right ${parseFloat(p.advanceBalance || '0') > 0 ? 'text-blue-600 font-bold' : 'text-gray-400'}">₹${parseFloat(p.advanceBalance || '0').toLocaleString()}</td>
                                     </tr>
                                   `).join('')}
                                 </tbody>
@@ -1027,15 +1031,19 @@ export function Accounts() {
                       <th className="px-4 py-2 text-left text-xs text-gray-500">Ref #</th>
                       <th className="px-4 py-2 text-left text-xs text-gray-500">Mode</th>
                       <th className="px-4 py-2 text-right text-xs text-gray-500">Amount</th>
+                      <th className="px-4 py-2 text-right text-xs text-gray-500">Advance Bal.</th>
                     </tr>
                   </thead>
                   <tbody>
                     {ledgerData.payments?.map((pay: any, i: number) => (
-                      <tr key={i} className="border-b last:border-0">
+                      <tr key={i} className="border-b last:border-0 hover:bg-gray-50">
                         <td className="px-4 py-2 text-sm">{new Date(pay.date).toLocaleDateString()}</td>
-                        <td className="px-4 py-2 text-sm">{pay.code}</td>
+                        <td className="px-4 py-2 text-sm font-mono">{pay.code}</td>
                         <td className="px-4 py-2 text-sm">{pay.mode}</td>
-                        <td className="px-4 py-2 text-sm text-right text-green-600 font-medium">₹{pay.amount}</td>
+                        <td className="px-4 py-2 text-sm text-right text-green-600 font-medium">₹{parseFloat(pay.amount).toLocaleString()}</td>
+                        <td className={`px-4 py-2 text-sm text-right font-medium ${parseFloat(pay.advanceBalance || '0') > 0 ? 'text-blue-600' : 'text-gray-400'}`}>
+                          ₹{parseFloat(pay.advanceBalance || '0').toLocaleString()}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

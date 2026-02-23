@@ -197,6 +197,12 @@ export function Purchase() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [outstandingBills, setOutstandingBills] = useState<any[]>([]);
   const [allocations, setAllocations] = useState<{ [key: string]: number }>({});
+  const [paymentFilters, setPaymentFilters] = useState({
+    supplierId: '',
+    startDate: '',
+    endDate: '',
+    mode: ''
+  });
 
   // Quick Add Party State
   const [showQuickAddSupplier, setShowQuickAddSupplier] = useState(false);
@@ -852,7 +858,8 @@ export function Purchase() {
     try {
       const payload = {
         ...paymentForm,
-        allocations: allocationItems
+        allocations: allocationItems,
+        adjustmentAmount: paymentForm.useAdvancePayment ? totalAllocated : 0
       };
 
       const result = editingPaymentId
@@ -1797,10 +1804,66 @@ export function Purchase() {
       )}
 
       {/* ==================== PAYMENTS VIEW ==================== */}
-
-      {/* ==================== PAYMENTS VIEW ==================== */}
       {activeTab === 'payments' && (
-        <>
+        <div className="space-y-4">
+          {!showPaymentForm && (
+            <div className="bg-gray-50 p-3 border border-gray-300 rounded-sm flex flex-wrap gap-4 items-center sticky top-0 z-10 shadow-sm">
+              <div className="flex items-center space-x-2">
+                <Search className="w-4 h-4 text-gray-400" />
+                <select
+                  value={paymentFilters.supplierId}
+                  onChange={e => setPaymentFilters(prev => ({ ...prev, supplierId: e.target.value }))}
+                  className="px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 bg-white"
+                >
+                  <option value="">All Suppliers</option>
+                  {suppliers.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <span className="text-[10px] font-bold text-gray-500 uppercase">From:</span>
+                <input
+                  type="date"
+                  value={paymentFilters.startDate}
+                  onChange={e => setPaymentFilters(prev => ({ ...prev, startDate: e.target.value }))}
+                  className="px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 bg-white"
+                />
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <span className="text-[10px] font-bold text-gray-500 uppercase">To:</span>
+                <input
+                  type="date"
+                  value={paymentFilters.endDate}
+                  onChange={e => setPaymentFilters(prev => ({ ...prev, endDate: e.target.value }))}
+                  className="px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 bg-white"
+                />
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <span className="text-[10px] font-bold text-gray-500 uppercase">Mode:</span>
+                <select
+                  value={paymentFilters.mode}
+                  onChange={e => setPaymentFilters(prev => ({ ...prev, mode: e.target.value }))}
+                  className="px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 bg-white"
+                >
+                  <option value="">All Modes</option>
+                  <option value="Bank">Bank</option>
+                  <option value="Cash">Cash</option>
+                  <option value="Adjustment">Adjustment</option>
+                </select>
+              </div>
+
+              <button
+                onClick={() => setPaymentFilters({ supplierId: '', startDate: '', endDate: '', mode: '' })}
+                className="ml-auto text-xs text-blue-600 hover:text-blue-800 font-bold uppercase underline"
+              >
+                Clear
+              </button>
+            </div>
+          )}
           {!showPaymentForm ? (
             /* Payments List */
             <div className="bg-white border border-gray-300 rounded-sm overflow-hidden min-h-[500px]">
@@ -1817,12 +1880,28 @@ export function Purchase() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {purchasePayments.length === 0 ? (
-                      <tr><td colSpan={6} className="px-6 py-12 text-center text-sm text-gray-500 italic">No payments recorded.</td></tr>
-                    ) : (
-                      purchasePayments.map((payment) => (
+                    {(() => {
+                      const filtered = purchasePayments.filter(p => {
+                        const matchSupplier = !paymentFilters.supplierId || p.partyId === paymentFilters.supplierId;
+                        const matchMode = !paymentFilters.mode || p.mode === paymentFilters.mode;
+                        const paymentDate = new Date(p.date);
+                        const matchStart = !paymentFilters.startDate || paymentDate >= new Date(paymentFilters.startDate);
+                        const matchEnd = !paymentFilters.endDate || paymentDate <= new Date(paymentFilters.endDate + 'T23:59:59');
+                        return matchSupplier && matchMode && matchStart && matchEnd;
+                      });
+
+                      if (filtered.length === 0) {
+                        return <tr><td colSpan={6} className="px-6 py-12 text-center text-sm text-gray-500 italic">No payments match your filters.</td></tr>;
+                      }
+
+                      return filtered.map((payment) => (
                         <tr key={payment.id} className={`hover:bg-blue-50 transition-colors ${payment.status === 'Reversed' ? 'bg-red-50 opacity-70' : ''}`}>
-                          <td className="px-4 py-1.5 text-xs text-gray-600">{new Date(payment.date).toLocaleDateString()}</td>
+                          <td className="px-4 py-1.5 text-[11px] text-gray-600 leading-tight">
+                            {new Date(payment.date).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+                            <div className="text-[9px] text-gray-400 font-mono">
+                              {new Date(payment.date).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                            </div>
+                          </td>
                           <td className="px-4 py-1.5 text-xs font-mono font-bold text-blue-700">
                             {payment.code}
                             {payment.status === 'Reversed' && <span className="ml-2 text-[9px] bg-red-200 text-red-800 px-1 rounded">REVERSED</span>}
@@ -1856,13 +1935,13 @@ export function Purchase() {
                           </td>
                         </tr>
                       ))
-                    )}
+                    })()}
                   </tbody>
                 </table>
               </div>
             </div>
           ) : null}
-        </>
+        </div>
       )}
 
       {/* ==================== ADVANCES LIST (New) ==================== */}
@@ -2326,7 +2405,19 @@ export function Purchase() {
                       type="text"
                       maxLength={15}
                       value={quickAddSupplierForm.gstNo}
-                      onChange={e => setQuickAddSupplierForm({ ...quickAddSupplierForm, gstNo: e.target.value.toUpperCase() })}
+                      onChange={e => {
+                        const value = e.target.value.toUpperCase();
+                        if (value.length >= 2) {
+                          const prefix = value.substring(0, 2);
+                          if (/^\d{2}$/.test(prefix)) {
+                            setQuickAddSupplierForm(prev => ({ ...prev, gstNo: value, stateCode: prefix }));
+                          } else {
+                            setQuickAddSupplierForm(prev => ({ ...prev, gstNo: value }));
+                          }
+                        } else {
+                          setQuickAddSupplierForm(prev => ({ ...prev, gstNo: value }));
+                        }
+                      }}
                       className="flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 uppercase font-mono"
                       placeholder="Enter GSTIN..."
                     />

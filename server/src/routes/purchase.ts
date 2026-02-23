@@ -17,6 +17,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { db } from '../db/index';
 import { createStockMovement, getPendingBillQuantity } from '../services/inventory.service';
 import { cache as cacheService } from '../services/cache.service';
+import { syncSupplierOutstanding } from '../utils/balance';
 
 // ... (imports remain)
 import {
@@ -416,13 +417,7 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
 
         // Update supplier outstanding if confirmed
         if (status === 'Confirmed') {
-            const currentOutstanding = parseFloat(supplier.outstanding || '0');
-            const newOutstanding = currentOutstanding + grandTotal;
-
-            await db.update(suppliers)
-                .set({ outstanding: String(newOutstanding) })
-                .where(eq(suppliers.id, supplierId));
-
+            await syncSupplierOutstanding(supplierId);
             cacheService.del('masters:suppliers');
         }
 
@@ -616,7 +611,7 @@ router.get('/summary', async (req: Request, res: Response, next: NextFunction) =
 router.post('/bills/:id/payment', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
-        const { amount, paymentMode = 'Bank', reference, accountId } = req.body;
+        const { amount, paymentMode = 'Bank', reference, accountId, date } = req.body;
 
         if (!amount || amount <= 0) {
             throw createError('Valid payment amount required', 400);
@@ -682,7 +677,7 @@ router.post('/bills/:id/payment', async (req: Request, res: Response, next: Next
             const paymentCode = `PAY-${String(Date.now()).slice(-6)}`;
             await tx.insert(paymentTransactions).values({
                 code: paymentCode,
-                date: new Date(),
+                date: new Date(date || Date.now()),
                 type: 'PAYMENT',
                 referenceType: 'purchase',
                 referenceId: id,
@@ -987,15 +982,8 @@ router.delete('/bills/:id', async (req: Request, res: Response, next: NextFuncti
 
 
             // Update supplier outstanding
-            const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, bill.supplierId));
-            if (supplier) {
-                const newOutstanding = parseFloat(supplier.outstanding || '0') - parseFloat(bill.grandTotal || '0');
-                await db.update(suppliers)
-                    .set({ outstanding: String(Math.max(0, newOutstanding)) })
-                    .where(eq(suppliers.id, bill.supplierId));
-
-                cacheService.del('masters:suppliers');
-            }
+            await syncSupplierOutstanding(bill.supplierId);
+            cacheService.del('masters:suppliers');
         }
         // Invalidate dashboard cache
         cacheService.del('dashboard:kpis');
@@ -1057,7 +1045,8 @@ router.post('/payments', async (req: Request, res: Response, next: NextFunction)
             remarks,
             allocations, // Array of { billId, amount }
             useAdvancePayment,
-            selectedAdvanceId
+            selectedAdvanceId,
+            date
         } = req.body;
 
         const transactionId = crypto.randomUUID();
@@ -1083,7 +1072,7 @@ router.post('/payments', async (req: Request, res: Response, next: NextFunction)
             if (!advance) throw createError('Selected advance not found', 404);
 
             const currentAdvanceBalance = parseFloat(advance.advanceBalance || '0');
-            const adjustmentAmount = parseFloat(amount);
+            const adjustmentAmount = parseFloat(req.body.adjustmentAmount || amount);
 
             if (currentAdvanceBalance < adjustmentAmount) {
                 throw createError('Insufficient advance balance', 400);
@@ -1108,13 +1097,38 @@ router.post('/payments', async (req: Request, res: Response, next: NextFunction)
             console.log(`✓ Adjusted Advance ${advance.code}: -${adjustmentAmount}, New Bal: ${currentAdvanceBalance - adjustmentAmount}`);
         }
 
-        // 1. Create Payment Transaction
-        const isAdvance = req.body.isAdvance || false;
+        // 1. Calculate Allocations and potential Advance
+        let totalAllocatedToBills = 0;
+        const processedAllocations = [];
+
+        if (allocations && allocations.length > 0) {
+            for (const allocation of allocations) {
+                const bill = (await db.select().from(purchaseBills).where(eq(purchaseBills.id, allocation.billId)))[0];
+                if (bill) {
+                    const billBalance = parseFloat(bill.balanceAmount || bill.grandTotal || '0');
+                    const appliedAmount = Math.min(Number(allocation.amount), billBalance);
+
+                    if (appliedAmount > 0) {
+                        totalAllocatedToBills += appliedAmount;
+                        processedAllocations.push({
+                            billId: allocation.billId,
+                            amount: appliedAmount,
+                            bill: bill
+                        });
+                    }
+                }
+            }
+        }
+
+        const isAdvanceRequested = req.body.isAdvance || false;
+        const calculatedAdvanceBalance = Number(amount) - totalAllocatedToBills;
+        const finalIsAdvance = isAdvanceRequested || calculatedAdvanceBalance > 0.01;
+        const finalAdvanceBalance = finalIsAdvance ? calculatedAdvanceBalance : 0;
 
         await db.insert(paymentTransactions).values({
             id: transactionId,
             code,
-            date: new Date(),
+            date: new Date(date || Date.now()),
             type: 'PAYMENT',
             referenceType: 'purchase',
             referenceId: transactionId, // Self-reference for multi-bill payments
@@ -1128,45 +1142,34 @@ router.post('/payments', async (req: Request, res: Response, next: NextFunction)
             bankReference: bankReference,
             remarks: useAdvancePayment ? `Adjusted against ${selectedAdvanceId}` : remarks,
             status: 'Completed',
-            isAdvance: isAdvance,
-            advanceBalance: isAdvance ? amount.toString() : '0'
+            isAdvance: finalIsAdvance,
+            advanceBalance: finalAdvanceBalance.toString()
         });
 
         // 2. Process Allocations (Updates Bills)
-        if (allocations && allocations.length > 0) {
-            for (const allocation of allocations) {
-                await db.insert(billPaymentAllocations).values({
-                    paymentId: transactionId,
-                    billId: allocation.billId,
-                    amount: allocation.amount.toString(),
-                });
+        for (const alloc of processedAllocations) {
+            await db.insert(billPaymentAllocations).values({
+                paymentId: transactionId,
+                billId: alloc.billId,
+                amount: alloc.amount.toString(),
+            });
 
-                // Update Bill
-                const bill = (await db.select().from(purchaseBills).where(eq(purchaseBills.id, allocation.billId)))[0];
-                if (bill) {
-                    const newPaid = parseFloat(bill.paidAmount || '0') + Number(allocation.amount);
-                    const newBalance = parseFloat(bill.grandTotal || '0') - newPaid;
+            const newPaid = parseFloat(alloc.bill.paidAmount || '0') + alloc.amount;
+            const newBalance = parseFloat(alloc.bill.grandTotal || '0') - newPaid;
 
-                    await db.update(purchaseBills)
-                        .set({
-                            paidAmount: newPaid.toString(),
-                            balanceAmount: newBalance.toString(),
-                            paymentStatus: newBalance <= 1 ? 'Paid' : 'Partial'
-                        })
-                        .where(eq(purchaseBills.id, allocation.billId));
-                }
-            }
+            await db.update(purchaseBills)
+                .set({
+                    paidAmount: newPaid.toString(),
+                    balanceAmount: newBalance.toString(),
+                    paymentStatus: newBalance <= 1 ? 'Paid' : 'Partial'
+                })
+                .where(eq(purchaseBills.id, alloc.billId));
         }
 
         // 3. Update Supplier Outstanding 
         // SKIP if Adjustment (Net effect is zero on outstanding as it was prepaid)
         if (!useAdvancePayment) {
-            const currentOutstanding = parseFloat(supplier.outstanding || '0');
-            const newOutstanding = Math.max(0, currentOutstanding - parseFloat(amount));
-
-            await db.update(suppliers)
-                .set({ outstanding: newOutstanding.toString() })
-                .where(eq(suppliers.id, supplierId));
+            await syncSupplierOutstanding(supplierId);
         }
 
         // 4. Update Bank/Cash Balance 
@@ -1184,7 +1187,7 @@ router.post('/payments', async (req: Request, res: Response, next: NextFunction)
         // 5. Create General Ledger Entries (Double Entry)
         // DEBIT: Supplier Account (Liability Decrease) - Always happen as Bill is Paid
         await db.insert(generalLedger).values({
-            transactionDate: new Date(),
+            transactionDate: new Date(date || Date.now()),
             voucherNumber: code,
             voucherType: 'PAYMENT',
             ledgerId: supplierId,
@@ -1202,7 +1205,7 @@ router.post('/payments', async (req: Request, res: Response, next: NextFunction)
             // So we insert a Credit entry for Supplier as well?
             // Yes, this reflects moving money from 'Advance' to 'Bill' within the same party ledger.
             await db.insert(generalLedger).values({
-                transactionDate: new Date(),
+                transactionDate: new Date(date || Date.now()),
                 voucherNumber: code,
                 voucherType: 'PAYMENT', // Or JOURNAL?
                 ledgerId: supplierId,
@@ -1215,7 +1218,7 @@ router.post('/payments', async (req: Request, res: Response, next: NextFunction)
         } else {
             // Standard Payment: Credit Bank
             await db.insert(generalLedger).values({
-                transactionDate: new Date(),
+                transactionDate: new Date(date || Date.now()),
                 voucherNumber: code,
                 voucherType: 'PAYMENT',
                 ledgerId: finalAccountId || 'cash',
@@ -1250,6 +1253,7 @@ router.get('/payments/:id', async (req, res, next) => {
             with: {
                 account: true
             }
+
         });
 
         if (!payment) throw createError('Payment not found', 404);
@@ -1364,6 +1368,9 @@ router.put('/payments/:id', async (req: Request, res: Response, next: NextFuncti
                 })
                 .where(eq(paymentTransactions.id, id));
 
+            // Variable to track new allocations for advance balance recalculation
+            let totalAllocatedInUpdate = 0;
+
             // 3. Update Supplier Outstanding (DECREASE it - We paid them)
             const [supplier] = await tx.select().from(suppliers).where(eq(suppliers.id, supplierId));
             if (!supplier) throw createError('Supplier not found', 404);
@@ -1415,6 +1422,7 @@ router.put('/payments/:id', async (req: Request, res: Response, next: NextFuncti
                 for (const alloc of allocations) { // { billId, amount }
                     const allocAmount = parseFloat(alloc.amount);
                     if (allocAmount <= 0) continue;
+                    totalAllocatedInUpdate += allocAmount;
 
                     // Create Allocation Record
                     await tx.insert(billPaymentAllocations).values({
@@ -1444,6 +1452,18 @@ router.put('/payments/:id', async (req: Request, res: Response, next: NextFuncti
             cacheService.del('dashboard:kpis');
             cacheService.del('masters:suppliers');
             cacheService.del('masters:accounts');
+
+            // 8. Recalculate Advance Balance for the updated payment
+            const calculatedAdvanceBalance = Math.max(0, parseFloat(amount) - totalAllocatedInUpdate);
+            const finalIsAdvance = req.body.isAdvance || calculatedAdvanceBalance > 0.01;
+            const finalAdvanceBalance = finalIsAdvance ? calculatedAdvanceBalance : 0;
+
+            await tx.update(paymentTransactions)
+                .set({
+                    isAdvance: finalIsAdvance,
+                    advanceBalance: finalAdvanceBalance.toString()
+                })
+                .where(eq(paymentTransactions.id, id));
 
             res.json(successResponse({
                 message: 'Payment updated successfully',
@@ -1483,15 +1503,9 @@ router.delete('/payments/:id', async (req, res, next) => {
             }
         }
 
-        // 2. Revert Supplier Outstanding (INCREASE it back)
+        // 2. Revert Supplier Outstanding
         if (payment.partyId && payment.partyType === 'supplier') {
-            const supplier = (await db.select().from(suppliers).where(eq(suppliers.id, payment.partyId)))[0];
-            if (supplier) {
-                const newOutstanding = parseFloat(supplier.outstanding || '0') + parseFloat(payment.amount);
-                await db.update(suppliers)
-                    .set({ outstanding: newOutstanding.toString() })
-                    .where(eq(suppliers.id, payment.partyId));
-            }
+            await syncSupplierOutstanding(payment.partyId);
         }
 
         // 3. Revert Bank Balance (INCREASE it back - Money In)

@@ -33,6 +33,7 @@ import {
 import { eq, desc, sql, and, count as countFn, inArray } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
+import { syncSupplierOutstanding, syncCustomerOutstanding } from '../utils/balance';
 import { validateRequest } from '../middleware/validation';
 import { createExpenseSchema, recordPaymentSchema } from '../schemas/accounts';
 import { cache } from '../services/cache.service';
@@ -55,6 +56,7 @@ interface RecordPaymentRequest {
     bankReference?: string;
     remarks?: string;
     isAdvance?: boolean; // New
+    date?: string;
 }
 
 interface CreateExpenseRequest {
@@ -615,62 +617,67 @@ router.post('/transactions', validateRequest(recordPaymentSchema), async (req: R
             bankReference,
             remarks,
             isAdvance,
+            date
         } = req.body as RecordPaymentRequest;
 
         await db.transaction(async (tx) => {
             let partyNewOutstanding = '0';
             let newBalance = '0';
-            let newTx = null;
+            let newTx: any = null;
+            let finalAdvanceBalance = 0;
+            let finalIsAdvance = Boolean(isAdvance);
+            let appliedToRef = 0;
 
-            // 1. Update Party Outstanding
-            if (partyType === 'customer') {
-                const [updatedCustomer] = await tx.update(customers)
-                    .set({
-                        outstanding: sql`GREATEST(0, ${customers.outstanding} - ${amount})`,
-                        updatedAt: new Date()
-                    })
-                    .where(eq(customers.id, partyId))
-                    .returning({ newOutstanding: customers.outstanding });
-                partyNewOutstanding = updatedCustomer?.newOutstanding || '0';
-            } else {
-                const [updatedSupplier] = await tx.update(suppliers)
-                    .set({
-                        outstanding: sql`GREATEST(0, ${suppliers.outstanding} - ${amount})`, // For Supplier: Payment reduces outstanding (Payable)
-                        updatedAt: new Date()
-                    })
-                    .where(eq(suppliers.id, partyId))
-                    .returning({ newOutstanding: suppliers.outstanding });
-                partyNewOutstanding = updatedSupplier?.newOutstanding || '0';
-            }
+            // 1. Update Party Outstanding -> MOVED to Step 4.2 (Sync)
 
             // 2. Update Reference (Invoice/Bill) if exists
             let referenceCode = isAdvance ? 'ADVANCE' : 'Direct';
 
             if (referenceId && !isAdvance) {
                 if (partyType === 'customer') {
-                    const [invoice] = await tx.select({ num: invoices.invoiceNumber }).from(invoices).where(eq(invoices.id, referenceId));
-                    if (invoice) referenceCode = invoice.num;
+                    const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, referenceId));
+                    if (invoice) {
+                        referenceCode = invoice.invoiceNumber;
+                        const invBal = parseFloat(invoice.grandTotal || '0') - parseFloat(invoice.paidAmount || '0');
+                        const appliedToInv = Math.min(amount, invBal);
+                        appliedToRef = appliedToInv;
 
-                    await tx.update(invoices)
-                        .set({
-                            paidAmount: sql`${invoices.paidAmount} + ${amount}`,
-                            balanceAmount: sql`GREATEST(0, ${invoices.grandTotal} - (${invoices.paidAmount} + ${amount}))`,
-                            paymentStatus: sql`CASE WHEN (${invoices.paidAmount} + ${amount}) >= ${invoices.grandTotal} THEN 'Paid' ELSE 'Partial' END`,
-                            updatedAt: new Date(),
-                        })
-                        .where(eq(invoices.id, referenceId));
+                        await tx.update(invoices)
+                            .set({
+                                paidAmount: sql`${invoices.paidAmount} + ${appliedToInv}`,
+                                balanceAmount: sql`GREATEST(0, ${invoices.grandTotal} - (${invoices.paidAmount} + ${appliedToInv}))`,
+                                paymentStatus: sql`CASE WHEN (${invoices.paidAmount} + ${appliedToInv}) >= ${invoices.grandTotal} THEN 'Paid' ELSE 'Partial' END`,
+                                updatedAt: new Date(),
+                            })
+                            .where(eq(invoices.id, referenceId));
+
+                        if (amount > appliedToInv) {
+                            finalAdvanceBalance = amount - appliedToInv;
+                            finalIsAdvance = true;
+                        }
+                    }
                 } else {
-                    const [bill] = await tx.select({ code: purchaseBills.code }).from(purchaseBills).where(eq(purchaseBills.id, referenceId));
-                    if (bill) referenceCode = bill.code;
+                    const [bill] = await tx.select().from(purchaseBills).where(eq(purchaseBills.id, referenceId));
+                    if (bill) {
+                        referenceCode = bill.code;
+                        const billBal = parseFloat(bill.grandTotal || '0') - parseFloat(bill.paidAmount || '0');
+                        const appliedToBill = Math.min(amount, billBal);
+                        appliedToRef = appliedToBill;
 
-                    await tx.update(purchaseBills)
-                        .set({
-                            paidAmount: sql`${purchaseBills.paidAmount} + ${amount}`,
-                            balanceAmount: sql`GREATEST(0, ${purchaseBills.grandTotal} - (${purchaseBills.paidAmount} + ${amount}))`,
-                            paymentStatus: sql`CASE WHEN (${purchaseBills.paidAmount} + ${amount}) >= ${purchaseBills.grandTotal} THEN 'Paid' ELSE 'Partial' END`,
-                            updatedAt: new Date(),
-                        })
-                        .where(eq(purchaseBills.id, referenceId));
+                        await tx.update(purchaseBills)
+                            .set({
+                                paidAmount: sql`${purchaseBills.paidAmount} + ${appliedToBill}`,
+                                balanceAmount: sql`GREATEST(0, ${purchaseBills.grandTotal} - (${purchaseBills.paidAmount} + ${appliedToBill}))`,
+                                paymentStatus: sql`CASE WHEN (${purchaseBills.paidAmount} + ${appliedToBill}) >= ${purchaseBills.grandTotal} THEN 'Paid' ELSE 'Partial' END`,
+                                updatedAt: new Date(),
+                            })
+                            .where(eq(purchaseBills.id, referenceId));
+
+                        if (amount > appliedToBill) {
+                            finalAdvanceBalance = amount - appliedToBill;
+                            finalIsAdvance = true;
+                        }
+                    }
                 }
             }
 
@@ -703,7 +710,7 @@ router.post('/transactions', validateRequest(recordPaymentSchema), async (req: R
 
             const [createdTx] = await tx.insert(paymentTransactions).values({
                 code: transactionCode,
-                date: new Date(),
+                date: new Date(date || Date.now()),
                 type,
                 referenceType,
                 referenceId,
@@ -716,10 +723,65 @@ router.post('/transactions', validateRequest(recordPaymentSchema), async (req: R
                 amount: String(amount),
                 bankReference: bankReference || null,
                 remarks: remarks || null,
-                isAdvance: Boolean(isAdvance),
-                advanceBalance: isAdvance ? String(amount) : '0',
+                isAdvance: finalIsAdvance,
+                advanceBalance: String(isAdvance ? amount : finalAdvanceBalance),
             }).returning();
             newTx = createdTx;
+
+            // 4.1 Create Allocation Record if reference used
+            if (referenceId && !isAdvance && appliedToRef > 0) {
+                if (partyType === 'customer') {
+                    await tx.insert(invoicePaymentAllocations).values({
+                        paymentId: newTx.id,
+                        invoiceId: referenceId,
+                        amount: String(appliedToRef),
+                    });
+                } else {
+                    await tx.insert(billPaymentAllocations).values({
+                        paymentId: newTx.id,
+                        billId: referenceId,
+                        amount: String(appliedToRef),
+                    });
+                }
+            }
+
+            // 4.2 Update Party Outstanding (SYNC)
+            if (partyType === 'customer') {
+                await syncCustomerOutstanding(partyId, tx);
+                const [customer] = await tx.select({ outstanding: customers.outstanding }).from(customers).where(eq(customers.id, partyId));
+                partyNewOutstanding = customer?.outstanding || '0';
+            } else {
+                await syncSupplierOutstanding(partyId, tx);
+                const [supplier] = await tx.select({ outstanding: suppliers.outstanding }).from(suppliers).where(eq(suppliers.id, partyId));
+                partyNewOutstanding = supplier?.outstanding || '0';
+            }
+
+            // 5. Create General Ledger Entries (Double Entry)
+            // Entry 1: Party Account
+            await tx.insert(generalLedger).values({
+                transactionDate: new Date(date || Date.now()),
+                voucherNumber: transactionCode,
+                voucherType: type === 'RECEIPT' ? 'RECEIPT' : 'PAYMENT',
+                ledgerId: partyId,
+                ledgerType: partyType === 'customer' ? 'CUSTOMER' : 'SUPPLIER',
+                debitAmount: type === 'PAYMENT' ? String(amount) : '0',
+                creditAmount: type === 'RECEIPT' ? String(amount) : '0',
+                description: remarks || `${type === 'RECEIPT' ? 'Receipt from' : 'Payment to'} ${partyName}`,
+                referenceId: newTx.id
+            });
+
+            // Entry 2: Bank/Cash Account
+            await tx.insert(generalLedger).values({
+                transactionDate: new Date(date || Date.now()),
+                voucherNumber: transactionCode,
+                voucherType: type === 'RECEIPT' ? 'RECEIPT' : 'PAYMENT',
+                ledgerId: accountId,
+                ledgerType: 'BANK_CASH',
+                debitAmount: type === 'RECEIPT' ? String(amount) : '0',
+                creditAmount: type === 'PAYMENT' ? String(amount) : '0',
+                description: remarks || `${type === 'RECEIPT' ? 'Received from' : 'Paid to'} ${partyName}`,
+                referenceId: newTx.id
+            });
 
             res.json(successResponse({
                 transaction: newTx,
@@ -767,14 +829,12 @@ router.post('/adjust-advance', async (req: Request, res: Response, next: NextFun
                 if (!invoice) throw createError('Invoice not found', 404);
                 referenceCode = invoice.invoiceNumber;
 
-                // For Customer: Outstanding reduces when invoice is paid/adjusted
-                // Update Customer Outstanding
-                await tx.update(customers)
-                    .set({
-                        outstanding: sql`GREATEST(0, ${customers.outstanding} - ${amount})`,
-                        updatedAt: new Date()
-                    })
-                    .where(eq(customers.id, invoice.customerId || ''));
+                // Create Allocation record
+                await tx.insert(invoicePaymentAllocations).values({
+                    paymentId: paymentId,
+                    invoiceId: referenceId,
+                    amount: String(amount),
+                });
 
                 await tx.update(invoices)
                     .set({
@@ -784,18 +844,20 @@ router.post('/adjust-advance', async (req: Request, res: Response, next: NextFun
                         updatedAt: new Date(),
                     })
                     .where(eq(invoices.id, referenceId));
+
+                // SYNC
+                await syncCustomerOutstanding(invoice.customerId || '', tx);
             } else {
                 const [bill] = await tx.select().from(purchaseBills).where(eq(purchaseBills.id, referenceId));
                 if (!bill) throw createError('Purchase bill not found', 404);
                 referenceCode = bill.code;
 
-                // For Supplier: Outstanding reduces when bill is paid/adjusted
-                await tx.update(suppliers)
-                    .set({
-                        outstanding: sql`GREATEST(0, ${suppliers.outstanding} - ${amount})`,
-                        updatedAt: new Date()
-                    })
-                    .where(eq(suppliers.id, bill.supplierId));
+                // Create Allocation record
+                await tx.insert(billPaymentAllocations).values({
+                    paymentId: paymentId,
+                    billId: referenceId,
+                    amount: String(amount),
+                });
 
                 await tx.update(purchaseBills)
                     .set({
@@ -805,6 +867,9 @@ router.post('/adjust-advance', async (req: Request, res: Response, next: NextFun
                         updatedAt: new Date(),
                     })
                     .where(eq(purchaseBills.id, referenceId));
+
+                // SYNC
+                await syncSupplierOutstanding(bill.supplierId, tx);
             }
 
             // 3. Update Payment Advance Balance
@@ -850,7 +915,6 @@ router.get('/advances/:partyId', async (req: Request, res: Response, next: NextF
             .from(paymentTransactions)
             .where(and(
                 eq(paymentTransactions.partyId, partyId),
-                eq(paymentTransactions.isAdvance, true),
                 sql`${paymentTransactions.advanceBalance} > 0`
             ))
             .orderBy(desc(paymentTransactions.createdAt));
@@ -1032,6 +1096,8 @@ router.get('/transactions', async (req: Request, res: Response, next: NextFuncti
                     date: p.date,
                     type: p.type, // RECEIPT / PAYMENT
                     category: 'Trade',
+                    partyId: p.partyId,
+                    partyType: p.partyType,
                     partyName: p.partyName,
                     description: p.remarks || `Payment ${p.type === 'RECEIPT' ? 'from' : 'to'} ${p.partyName}`,
                     amount: parseFloat(p.amount),
@@ -1072,6 +1138,7 @@ router.get('/transactions', async (req: Request, res: Response, next: NextFuncti
                     date: f.transactionDate,
                     type: f.transactionType,
                     category: 'Finance',
+                    partyId: f.partyId,
                     partyName: entity?.name || 'Financial Entity',
                     description: f.remarks || (f.transactionType as string).replace(/_/g, ' '),
                     amount: parseFloat(f.amount),

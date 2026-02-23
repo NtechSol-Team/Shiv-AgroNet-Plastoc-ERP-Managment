@@ -159,9 +159,9 @@ export function Masters() {
       case 'machine':
         return { name: '', type: 'Net Extrusion', capacity: '', status: 'Active' };
       case 'customer':
-        return { name: '', gstNo: '', stateCode: '27', email: '', phone: '', address: '', outstanding: 0 };
+        return { name: '', gstNo: '', stateCode: '24', email: '', phone: '', address: '', outstanding: 0 };
       case 'supplier':
-        return { name: '', gstNo: '', stateCode: '27', contact: '', address: '', outstanding: 0 };
+        return { name: '', gstNo: '', stateCode: '24', contact: '', address: '', outstanding: 0 };
       case 'expense':
         return { name: '', category: 'Variable' };
       case 'accounts':
@@ -297,10 +297,13 @@ export function Masters() {
     try {
       const result = await gstApi.search(gstin);
       if (result.data) {
+        const gstinPrefix = gstin.substring(0, 2);
+        const stateCode = /^\d{2}$/.test(gstinPrefix) ? gstinPrefix : result.data.stateCode;
+
         setFormData((prev: any) => ({
           ...prev,
           name: result.data.name,
-          stateCode: result.data.stateCode,
+          stateCode: stateCode,
           address: result.data.address,
           gstVerifiedAt: result.data.gstVerifiedAt
         }));
@@ -454,12 +457,15 @@ export function Masters() {
                   value={formData.gstNo || ''}
                   onChange={(e) => {
                     const value = e.target.value.toUpperCase();
-                    setFormData({ ...formData, gstNo: value });
                     if (value.length >= 2) {
                       const prefix = value.substring(0, 2);
                       if (/^\d{2}$/.test(prefix)) {
                         setFormData((prev: any) => ({ ...prev, gstNo: value, stateCode: prefix }));
+                      } else {
+                        setFormData({ ...formData, gstNo: value });
                       }
+                    } else {
+                      setFormData({ ...formData, gstNo: value });
                     }
                   }}
                   onBlur={handleGstSearch}
@@ -519,12 +525,15 @@ export function Masters() {
                   value={formData.gstNo || ''}
                   onChange={(e) => {
                     const value = e.target.value.toUpperCase();
-                    setFormData({ ...formData, gstNo: value });
                     if (value.length >= 2) {
                       const prefix = value.substring(0, 2);
                       if (/^\d{2}$/.test(prefix)) {
                         setFormData((prev: any) => ({ ...prev, gstNo: value, stateCode: prefix }));
+                      } else {
+                        setFormData({ ...formData, gstNo: value });
                       }
+                    } else {
+                      setFormData({ ...formData, gstNo: value });
                     }
                   }}
                   onBlur={handleGstSearch}

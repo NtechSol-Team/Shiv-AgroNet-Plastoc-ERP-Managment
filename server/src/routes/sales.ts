@@ -23,6 +23,7 @@ import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
 import { createStockMovement, validateFinishedProductStock, getFinishedProductStock } from '../services/inventory.service';
 import { cache as cacheService } from '../services/cache.service';
+import { syncCustomerOutstanding } from '../utils/balance';
 
 const router = Router();
 
@@ -389,11 +390,7 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
 
         // Update customer outstanding if confirmed and B2B
         if (status === 'Confirmed' && customer) {
-            const currentOutstanding = parseFloat(customer.outstanding || '0');
-            await db.update(customers)
-                .set({ outstanding: String(currentOutstanding + grandTotal) })
-                .where(eq(customers.id, customer.id));
-
+            await syncCustomerOutstanding(customer.id);
             cacheService.del('masters:customers');
         }
 
@@ -470,15 +467,8 @@ router.post('/invoices/:id/payment', async (req: Request, res: Response, next: N
 
         // Update customer outstanding
         if (invoice.customerId) {
-            const [customer] = await db.select().from(customers).where(eq(customers.id, invoice.customerId));
-            if (customer) {
-                const newOutstanding = parseFloat(customer.outstanding || '0') - parseFloat(amount);
-                await db.update(customers)
-                    .set({ outstanding: String(Math.max(0, newOutstanding)) })
-                    .where(eq(customers.id, invoice.customerId));
-
-                cacheService.del('masters:customers');
-            }
+            await syncCustomerOutstanding(invoice.customerId);
+            cacheService.del('masters:customers');
         }
 
         res.json(successResponse({
@@ -560,18 +550,8 @@ router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFun
         }
 
         if (invoice.status === 'Confirmed' && invoice.paymentStatus !== 'Paid') {
-            const outstandingAmount = Number(invoice.balanceAmount || 0);
-
-            if (outstandingAmount > 0 && invoice.customerId) {
-                const [customer] = await db.select().from(customers).where(eq(customers.id, invoice.customerId));
-                if (customer) {
-                    const currentOutstanding = Number(customer.outstanding || 0);
-                    const newOutstanding = Math.max(0, currentOutstanding - outstandingAmount);
-
-                    await db.update(customers)
-                        .set({ outstanding: String(newOutstanding) })
-                        .where(eq(customers.id, invoice.customerId));
-                }
+            if (invoice.customerId) {
+                await syncCustomerOutstanding(invoice.customerId);
             }
         }
 
@@ -780,15 +760,7 @@ router.post('/receipts', async (req: Request, res: Response, next: NextFunction)
         }
 
         // 5. Update Customer Outstanding
-        // If Adjustment, we are reducing Outstanding (since we are paying invoices).
-        // Is this correct?
-        // Customer Outstanding = Receivables.
-        // If we adjust advance, we reduce Receivables.
-        // Yes, we reduce outstanding regardless of source (Bank or Advance).
-        const newOutstanding = parseFloat(customer.outstanding || '0') - parseFloat(amount);
-        await db.update(customers)
-            .set({ outstanding: newOutstanding.toString() })
-            .where(eq(customers.id, customerId));
+        await syncCustomerOutstanding(customerId);
 
         // 6. Update Bank/Cash Balance (only if NOT adjustment)
         if (finalAccountId && !useAdvanceReceipt) {

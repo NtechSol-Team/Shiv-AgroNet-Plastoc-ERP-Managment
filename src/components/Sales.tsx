@@ -206,7 +206,7 @@ export function Sales() {
           gstNo: '',
           phone: '',
           email: '',
-          stateCode: '27',
+          stateCode: '24',
           address: ''
         });
         setSuccess('Customer added and selected.');
@@ -264,7 +264,8 @@ export function Sales() {
       ...invoiceForm,
       customerId,
       billingAddress: customer?.address || '',
-      shippingAddress: invoiceForm.sameAsBilling ? (customer?.address || '') : invoiceForm.shippingAddress
+      shippingAddress: invoiceForm.sameAsBilling ? (customer?.address || '') : invoiceForm.shippingAddress,
+      placeOfSupply: customer?.stateCode || '24'
     });
   };
 
@@ -393,9 +394,8 @@ export function Sales() {
     const totalTax = invoiceItems.reduce((sum, item) => (item.taxableAmount * item.taxPercent) / 100, 0);
 
     const COMPANY_STATE_CODE = '24';
-    // Handle both state code ('24') and state name ('Gujarat') stored in placeOfSupply
     const pos = invoiceForm.placeOfSupply || '';
-    const isIntraState = pos === COMPANY_STATE_CODE || pos.toLowerCase() === 'gujarat';
+    const isIntraState = pos === COMPANY_STATE_CODE;
     const cgst = isIntraState ? totalTax / 2 : 0;
     const sgst = isIntraState ? totalTax / 2 : 0;
     const igst = isIntraState ? 0 : totalTax;
