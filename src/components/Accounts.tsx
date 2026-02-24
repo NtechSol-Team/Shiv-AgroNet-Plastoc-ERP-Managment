@@ -612,7 +612,7 @@ export function Accounts() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className={`text-lg font-bold font-mono ${selectedAccountId === acc.id ? 'text-blue-800' : 'text-gray-900'}`}>₹{parseFloat(acc.balance).toLocaleString()}</p>
+                      <p className={`text-lg font-bold font-mono ${selectedAccountId === acc.id ? 'text-blue-800' : 'text-gray-900'}`}>₹{acc.type === 'CC' ? getAvailableBalance(acc).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : parseFloat(acc.balance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                     </div>
                   </div>
                 ))}
@@ -633,7 +633,7 @@ export function Accounts() {
                     {accountLedgerData.account.name} - Statement
                   </h3>
                   <p className="text-xs text-blue-600 mt-1">
-                    Current Balance: <span className="font-bold text-lg">₹{parseFloat(accountLedgerData.summary.currentBalance).toLocaleString()}</span>
+                    Current Balance: <span className="font-bold text-lg">₹{(accountLedgerData.account.type === 'CC' ? getAvailableBalance(accountLedgerData.account) : parseFloat(accountLedgerData.summary.currentBalance)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </p>
                 </div>
                 <div className="text-right text-xs text-gray-500">
@@ -709,13 +709,13 @@ export function Accounts() {
                             </span>
                           </td>
                           <td className="px-6 py-4 text-sm text-right text-red-600">
-                            {txn.debit > 0 ? `₹${txn.debit.toLocaleString()}` : '-'}
+                            {txn.debit > 0 ? `₹${txn.debit.toLocaleString('en-IN')}` : '-'}
                           </td>
                           <td className="px-6 py-4 text-sm text-right text-green-600">
-                            {txn.credit > 0 ? `₹${txn.credit.toLocaleString()}` : '-'}
+                            {txn.credit > 0 ? `₹${txn.credit.toLocaleString('en-IN')}` : '-'}
                           </td>
                           <td className="px-6 py-4 text-sm text-right font-bold font-mono text-gray-900">
-                            ₹{txn.balance.toLocaleString()}
+                            ₹{txn.balance.toLocaleString('en-IN')}
                           </td>
                         </tr>
                       ));
@@ -804,10 +804,10 @@ export function Accounts() {
                           </td>
                           <td className={`px-6 py-4 text-sm text-right font-bold ${txn.type === 'RECEIPT' || txn.type === 'LOAN_TAKEN' ? 'text-green-600' : 'text-red-600'
                             }`}>
-                            {txn.type === 'RECEIPT' || txn.type === 'LOAN_TAKEN' ? '+' : '-'} ₹{parseFloat(txn.amount).toLocaleString()}
+                            {txn.type === 'RECEIPT' || txn.type === 'LOAN_TAKEN' ? '+' : '-'} ₹{parseFloat(txn.amount).toLocaleString('en-IN')}
                             {parseFloat(txn.advanceBalance || '0') > 0 && (
                               <div className="text-[10px] text-blue-600 font-bold mt-0.5">
-                                (Inc. ₹{parseFloat(txn.advanceBalance || '0').toLocaleString()} Adv.)
+                                (Inc. ₹{parseFloat(txn.advanceBalance || '0').toLocaleString('en-IN')} Adv.)
                               </div>
                             )}
                           </td>
@@ -1106,8 +1106,8 @@ export function Accounts() {
                                       <td class="py-2">${new Date(p.date).toLocaleDateString()}</td>
                                       <td class="py-2 font-mono">${p.code}</td>
                                       <td class="py-2">${p.mode}</td>
-                                      <td class="py-2 text-right font-bold text-green-600">₹${parseFloat(p.amount).toLocaleString()}</td>
-                                      <td class="py-2 text-right ${parseFloat(p.advanceBalance || '0') > 0 ? 'text-blue-600 font-bold' : 'text-gray-400'}">₹${parseFloat(p.advanceBalance || '0').toLocaleString()}</td>
+                                      <td class="py-2 text-right font-bold text-green-600">₹${parseFloat(p.amount).toLocaleString('en-IN')}</td>
+                                      <td class="py-2 text-right ${parseFloat(p.advanceBalance || '0') > 0 ? 'text-blue-600 font-bold' : 'text-gray-400'}">₹${parseFloat(p.advanceBalance || '0').toLocaleString('en-IN')}</td>
                                     </tr>
                                   `).join('')}
                                 </tbody>
@@ -1195,9 +1195,9 @@ export function Accounts() {
                         <td className="px-4 py-2 text-sm">{new Date(pay.date).toLocaleDateString()}</td>
                         <td className="px-4 py-2 text-sm font-mono">{pay.code}</td>
                         <td className="px-4 py-2 text-sm">{pay.mode}</td>
-                        <td className="px-4 py-2 text-sm text-right text-green-600 font-medium">₹{parseFloat(pay.amount).toLocaleString()}</td>
+                        <td className="px-4 py-2 text-sm text-right text-green-600 font-medium">₹{parseFloat(pay.amount).toLocaleString('en-IN')}</td>
                         <td className={`px-4 py-2 text-sm text-right font-medium ${parseFloat(pay.advanceBalance || '0') > 0 ? 'text-blue-600' : 'text-gray-400'}`}>
-                          ₹{parseFloat(pay.advanceBalance || '0').toLocaleString()}
+                          ₹{parseFloat(pay.advanceBalance || '0').toLocaleString('en-IN')}
                         </td>
                       </tr>
                     ))}
@@ -1235,7 +1235,7 @@ export function Accounts() {
                   <td className="px-6 py-4 text-sm font-medium">{exp.expenseHead?.name}</td>
                   <td className="px-6 py-4 text-sm text-gray-500">{exp.description}</td>
                   <td className="px-6 py-4 text-sm text-gray-500">{exp.account?.name}</td>
-                  <td className="px-6 py-4 text-sm text-right text-red-600 font-medium">- ₹{parseFloat(exp.amount).toLocaleString()}</td>
+                  <td className="px-6 py-4 text-sm text-right text-red-600 font-medium">- ₹{parseFloat(exp.amount).toLocaleString('en-IN')}</td>
                   <td className="px-6 py-4 text-right text-sm font-medium">
                     <button onClick={() => handleEditExpense(exp)} className="text-blue-600 hover:text-blue-900 mr-3">Edit</button>
                     <button onClick={() => handleDeleteExpense(exp.id)} className="text-red-600 hover:text-red-900">Delete</button>
@@ -1509,7 +1509,7 @@ export function Accounts() {
                 {supplierAdvanceData && (
                   <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between">
                     <span className="text-sm text-amber-800">Available Advance Balance</span>
-                    <span className="text-lg font-bold text-amber-700">₹{parseFloat(supplierAdvanceData.totalAdvanceBalance).toLocaleString()}</span>
+                    <span className="text-lg font-bold text-amber-700">₹{parseFloat(supplierAdvanceData.totalAdvanceBalance).toLocaleString('en-IN')}</span>
                   </div>
                 )}
                 {supplierRefundForm.supplierId && supplierAdvanceData && parseFloat(supplierAdvanceData.totalAdvanceBalance) === 0 && (
@@ -1527,7 +1527,7 @@ export function Accounts() {
                 >
                   <option value="">-- Select Account --</option>
                   {accounts.map(a => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.type}) — ₹{getAvailableBalance(a).toLocaleString()}</option>
+                    <option key={a.id} value={a.id}>{a.name} ({a.type}) — ₹{getAvailableBalance(a).toLocaleString('en-IN')}</option>
                   ))}
                 </select>
               </div>
@@ -1649,13 +1649,13 @@ export function Accounts() {
                 >
                   <option value="">-- Select Source Account --</option>
                   {accounts.map(a => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.type}) — Balance: ₹{getAvailableBalance(a).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</option>
+                    <option key={a.id} value={a.id}>{a.name} ({a.type}) — Balance: ₹{getAvailableBalance(a).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</option>
                   ))}
                 </select>
                 {bankTransferForm.fromAccountId && (
                   <div className="mt-1 text-xs text-gray-500 pl-1">
                     Available: <span className="font-semibold text-gray-700">
-                      ₹{getAvailableBalance(accounts.find(a => a.id === bankTransferForm.fromAccountId) || {}).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ₹{getAvailableBalance(accounts.find(a => a.id === bankTransferForm.fromAccountId) || {}).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                 )}
