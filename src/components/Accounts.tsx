@@ -214,8 +214,17 @@ export function Accounts() {
 
   const handleExpenseSubmit = async () => {
     try {
+      let finalDate = expenseForm.date;
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (finalDate === todayStr) {
+        finalDate = new Date().toISOString();
+      } else if (!finalDate.includes('T')) {
+        finalDate = new Date(finalDate + 'T12:00:00').toISOString();
+      }
+
       const payload = {
         ...expenseForm,
+        date: finalDate,
         amount: parseFloat(expenseForm.amount)
       };
 

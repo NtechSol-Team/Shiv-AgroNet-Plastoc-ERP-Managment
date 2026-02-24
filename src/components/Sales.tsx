@@ -570,8 +570,17 @@ export function Sales() {
 
     setSaving(true);
     try {
+      let finalDate = receiptForm.date;
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (finalDate === todayStr) {
+        finalDate = new Date().toISOString();
+      } else if (!finalDate.includes('T')) {
+        finalDate = new Date(finalDate + 'T12:00:00').toISOString();
+      }
+
       const payload = {
         ...receiptForm,
+        date: finalDate,
         allocations: allocationItems
       };
       const result = await salesApi.createReceipt(payload);

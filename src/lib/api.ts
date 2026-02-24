@@ -424,9 +424,9 @@ export const accountsApi = {
 export const inventoryApi = {
     getFinishedGoods: () => fetchApi<any[]>('/inventory/finished-goods'),
     getRawMaterials: () => fetchApi<any[]>('/inventory/raw-materials'),
-    getMovements: (params?: { itemType?: string; type?: string }) => {
-        const query = new URLSearchParams(params as any).toString();
-        return fetchApi<any[]>(`/inventory/movements${query ? `?${query}` : ''}`);
+    getMovements: (page = 1, limit = 50, params?: { itemType?: string; type?: string }) => {
+        const query = new URLSearchParams({ page: String(page), limit: String(limit), ...(params as any) }).toString();
+        return fetchApi<any>(`/inventory/movements?${query}`);
     },
     getSummary: () => fetchApi<any>('/inventory/summary'),
     getAvailableBatches: (rawMaterialId: string) => fetchApi<any[]>(`/inventory/raw-materials/${rawMaterialId}/batches`),

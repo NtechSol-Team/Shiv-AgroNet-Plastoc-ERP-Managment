@@ -12,8 +12,15 @@ export function Inventory() {
 
   const [finishedGoods, setFinishedGoods] = useState<any[]>([]);
   const [rawMaterials, setRawMaterials] = useState<any[]>([]);
-  const [stockMovements, setStockMovements] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>(null);
+
+  // Stock Ledger Pagination State
+  const [stockMovements, setStockMovements] = useState<any[]>([]);
+  const [ledgerPage, setLedgerPage] = useState(1);
+  const [ledgerTotal, setLedgerTotal] = useState(0);
+  const [ledgerTotalPages, setLedgerTotalPages] = useState(1);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const LEDGER_PAGE_SIZE = 50;
 
   // Edit Modal State
   const [showEditModal, setShowEditModal] = useState(false);
@@ -44,24 +51,46 @@ export function Inventory() {
     fetchData();
   }, []);
 
+  // When movements tab becomes active, load page 1 if not yet loaded
+  useEffect(() => {
+    if (activeTab === 'movements') {
+      fetchLedgerPage(1);
+    }
+  }, [activeTab]);
+
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [finishedResult, rawResult, movementsResult, summaryResult] = await Promise.all([
+      const [finishedResult, rawResult, summaryResult] = await Promise.all([
         inventoryApi.getFinishedGoods(),
         inventoryApi.getRawMaterials(),
-        inventoryApi.getMovements(),
         inventoryApi.getSummary(),
       ]);
 
       if (finishedResult.data) setFinishedGoods(finishedResult.data);
       if (rawResult.data) setRawMaterials(rawResult.data);
-      if (movementsResult.data) setStockMovements(movementsResult.data);
       if (summaryResult.data) setSummary(summaryResult.data);
     } catch (err) {
       setError('Failed to load inventory data');
     }
     setLoading(false);
+  };
+
+  const fetchLedgerPage = async (page: number) => {
+    setLedgerLoading(true);
+    setError(null);
+    try {
+      const result = await inventoryApi.getMovements(page, LEDGER_PAGE_SIZE);
+      if (result.data) {
+        setStockMovements(result.data.data || []);
+        setLedgerTotal(result.data.total || 0);
+        setLedgerTotalPages(result.data.totalPages || 1);
+        setLedgerPage(page);
+      }
+    } catch (err) {
+      setError('Failed to load stock ledger');
+    }
+    setLedgerLoading(false);
   };
 
   const formatCurrency = (value: number) => {
@@ -348,51 +377,117 @@ export function Inventory() {
               )}
 
               {activeTab === 'movements' && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead className="bg-gray-100 border-b border-gray-300">
-                      <tr>
-                        <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider w-32">Date</th>
-                        <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider w-24">Type</th>
-                        <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider">Item Name</th>
-                        <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider">Reference</th>
-                        <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-right">Qty</th>
-                        <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider">Reason/Remarks</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {stockMovements.map((movement: any, index: number) => {
-                        const isIn = parseFloat(movement.quantityIn) > 0;
-                        return (
-                          <tr key={index} className="hover:bg-blue-50 transition-colors">
-                            <td className="px-4 py-1.5 text-xs text-gray-600">
-                              {new Date(movement.date).toLocaleString('en-IN', {
-                                year: 'numeric',
-                                month: 'short',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })}
-                            </td>
-                            <td className="px-4 py-1.5">
-                              <span className={`text-[10px] font-bold px-1 rounded ${isIn ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                                {isIn ? 'STOCK IN' : 'STOCK OUT'}
-                              </span>
-                            </td>
-                            <td className="px-4 py-1.5 text-sm font-medium text-gray-900">{movement.rawMaterial?.name || movement.finishedProduct?.name || 'Unknown Item'}</td>
-                            <td className="px-4 py-1.5 text-xs font-mono text-gray-500">{movement.referenceCode || '-'}</td>
-                            <td className="px-4 py-1.5 text-sm font-mono font-bold text-right">
-                              <span className={isIn ? 'text-green-700' : 'text-red-700'}>
-                                {isIn ? '+' : '-'}{isIn ? movement.quantityIn : movement.quantityOut}
-                              </span>
-                            </td>
-                            <td className="px-4 py-1.5 text-xs text-gray-500 max-w-xs truncate">{movement.reason}</td>
-                          </tr>
-                        );
-                      })}
-                      {stockMovements.length === 0 && <tr><td colSpan={6} className="text-center py-6 text-gray-500 italic">No history found</td></tr>}
-                    </tbody>
-                  </table>
+                <div>
+                  {/* Ledger Header with count info */}
+                  <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-gray-50">
+                    <span className="text-xs text-gray-500">
+                      {ledgerLoading ? 'Loading...' : `Showing ${stockMovements.length ? ((ledgerPage - 1) * LEDGER_PAGE_SIZE + 1) : 0}–${Math.min(ledgerPage * LEDGER_PAGE_SIZE, ledgerTotal)} of ${ledgerTotal} entries`}
+                    </span>
+                    <span className="text-xs font-medium text-gray-600">Page {ledgerPage} of {ledgerTotalPages}</span>
+                  </div>
+
+                  <div className="overflow-x-auto relative">
+                    {ledgerLoading && (
+                      <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-10">
+                        <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+                      </div>
+                    )}
+                    <table className="w-full text-left">
+                      <thead className="bg-gray-100 border-b border-gray-300">
+                        <tr>
+                          <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider w-32">Date</th>
+                          <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider w-24">Type</th>
+                          <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider">Item Name</th>
+                          <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider">Reference</th>
+                          <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider text-right">Qty</th>
+                          <th className="px-4 py-2 text-xs font-bold text-slate-700 uppercase tracking-wider">Reason/Remarks</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {stockMovements.map((movement: any, index: number) => {
+                          const isIn = parseFloat(movement.quantityIn) > 0;
+                          return (
+                            <tr key={index} className="hover:bg-blue-50 transition-colors">
+                              <td className="px-4 py-1.5 text-xs text-gray-600">
+                                {new Date(movement.date).toLocaleString('en-IN', {
+                                  year: 'numeric',
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                                })}
+                              </td>
+                              <td className="px-4 py-1.5">
+                                <span className={`text-[10px] font-bold px-1 rounded ${isIn ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                  {isIn ? 'STOCK IN' : 'STOCK OUT'}
+                                </span>
+                              </td>
+                              <td className="px-4 py-1.5 text-sm font-medium text-gray-900">{movement.rawMaterial?.name || movement.finishedProduct?.name || 'Unknown Item'}</td>
+                              <td className="px-4 py-1.5 text-xs font-mono text-gray-500">{movement.referenceCode || '-'}</td>
+                              <td className="px-4 py-1.5 text-sm font-mono font-bold text-right">
+                                <span className={isIn ? 'text-green-700' : 'text-red-700'}>
+                                  {isIn ? '+' : '-'}{isIn ? movement.quantityIn : movement.quantityOut}
+                                </span>
+                              </td>
+                              <td className="px-4 py-1.5 text-xs text-gray-500 max-w-xs truncate">{movement.reason}</td>
+                            </tr>
+                          );
+                        })}
+                        {!ledgerLoading && stockMovements.length === 0 && (
+                          <tr><td colSpan={6} className="text-center py-6 text-gray-500 italic">No history found</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Pagination Controls */}
+                  {ledgerTotalPages > 1 && (
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
+                      <button
+                        onClick={() => fetchLedgerPage(ledgerPage - 1)}
+                        disabled={ledgerPage <= 1 || ledgerLoading}
+                        className="px-3 py-1.5 text-xs font-medium border border-gray-300 rounded hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        ← Previous
+                      </button>
+
+                      <div className="flex items-center space-x-1">
+                        {Array.from({ length: ledgerTotalPages }, (_, i) => i + 1)
+                          .filter(p => p === 1 || p === ledgerTotalPages || Math.abs(p - ledgerPage) <= 2)
+                          .reduce((acc: (number | string)[], p, idx, arr) => {
+                            if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) acc.push('...');
+                            acc.push(p);
+                            return acc;
+                          }, [])
+                          .map((p, i) =>
+                            p === '...' ? (
+                              <span key={`ellipsis-${i}`} className="px-1 text-gray-400 text-xs">…</span>
+                            ) : (
+                              <button
+                                key={p}
+                                onClick={() => fetchLedgerPage(p as number)}
+                                disabled={ledgerLoading}
+                                className={`w-7 h-7 text-xs font-medium rounded transition-colors ${p === ledgerPage
+                                    ? 'bg-blue-600 text-white'
+                                    : 'border border-gray-300 hover:bg-white text-gray-600'
+                                  }`}
+                              >
+                                {p}
+                              </button>
+                            )
+                          )
+                        }
+                      </div>
+
+                      <button
+                        onClick={() => fetchLedgerPage(ledgerPage + 1)}
+                        disabled={ledgerPage >= ledgerTotalPages || ledgerLoading}
+                        className="px-3 py-1.5 text-xs font-medium border border-gray-300 rounded hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </>

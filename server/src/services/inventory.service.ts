@@ -399,17 +399,27 @@ export async function getFinishedProductMovements(finishedProductId: string, lim
 /**
  * Get all movements with related material/product info
  * Used for the audit ledger view
- * optimized to use Relation queries
+ * Supports server-side pagination via limit + offset
  */
-export async function getAllMovementsWithDetails(limit: number = 100) {
-    return db.query.stockMovements.findMany({
-        orderBy: (movements, { desc }) => [desc(movements.date)],
+export async function getAllMovementsWithDetails(limit: number = 50, offset: number = 0) {
+    const [movements, totalResult] = await Promise.all([
+        db.query.stockMovements.findMany({
+            orderBy: (movements, { desc }) => [desc(movements.date)],
+            limit,
+            offset,
+            with: {
+                rawMaterial: true,
+                finishedProduct: true
+            }
+        }),
+        db.select({ count: sql<number>`count(*)::int` }).from(stockMovements)
+    ]);
+    return {
+        data: movements,
+        total: totalResult[0]?.count ?? 0,
         limit,
-        with: {
-            rawMaterial: true,
-            finishedProduct: true
-        }
-    });
+        offset,
+    };
 }
 
 // ============================================================

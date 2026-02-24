@@ -143,9 +143,17 @@ router.get('/summary', async (req: Request, res: Response, next: NextFunction) =
  */
 router.get('/movements', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const limit = parseInt(req.query.limit as string) || 100;
-        const movements = await getAllMovementsWithDetails(limit);
-        res.json(successResponse(movements));
+        const page = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
+        const offset = (page - 1) * limit;
+        const result = await getAllMovementsWithDetails(limit, offset);
+        res.json(successResponse({
+            data: result.data,
+            total: result.total,
+            page,
+            limit,
+            totalPages: Math.ceil(result.total / limit),
+        }));
     } catch (error) {
         next(error);
     }

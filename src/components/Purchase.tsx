@@ -279,17 +279,21 @@ export function Purchase() {
   };
   const [availableAdvances, setAvailableAdvances] = useState<any[]>([]); // For integrated adjustment
 
-  const [paymentForm, setPaymentForm] = useState({
-    supplierId: '',
-    date: new Date().toISOString().split('T')[0],
-    mode: 'Bank',
-    amount: '',
-    accountId: '',
-    reference: '',
-    remarks: '',
-    isAdvance: false,
-    useAdvancePayment: false, // NEW: Toggle to pay using advance
-    selectedAdvanceId: ''     // NEW: Selected advance ID for adjustment
+  const [paymentForm, setPaymentForm] = useState(() => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return {
+      supplierId: '',
+      date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`,
+      mode: 'Bank',
+      amount: '',
+      accountId: '',
+      reference: '',
+      remarks: '',
+      isAdvance: false,
+      useAdvancePayment: false,
+      selectedAdvanceId: ''
+    };
   });
 
   // ============================================================
@@ -760,7 +764,12 @@ export function Purchase() {
         // 1. Set Form
         setPaymentForm({
           supplierId,
-          date: new Date(p.date).toISOString().split('T')[0],
+          date: (() => {
+            const d = new Date(p.date);
+            // Format as yyyy-MM-ddTHH:mm for datetime-local input (preserves original time)
+            const pad = (n: number) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+          })(),
           mode: p.mode,
           amount: p.amount,
           accountId: p.accountId || '',
@@ -856,8 +865,20 @@ export function Purchase() {
 
     setSaving(true);
     try {
+      // Send the datetime-local value directly as a full ISO timestamp
+      // datetime-local gives us 'yyyy-MM-ddTHH:mm', just append :00.000Z offset
+      let finalDate: string;
+      if (paymentForm.date.includes('T')) {
+        // datetime-local format: convert to proper ISO string in local time
+        finalDate = new Date(paymentForm.date).toISOString();
+      } else {
+        // fallback: date only — use current time
+        finalDate = new Date().toISOString();
+      }
+
       const payload = {
         ...paymentForm,
+        date: finalDate,
         allocations: allocationItems,
         adjustmentAmount: paymentForm.useAdvancePayment ? totalAllocated : 0
       };
@@ -873,7 +894,11 @@ export function Purchase() {
         setEditingPaymentId(null);
         setPaymentForm({
           supplierId: '',
-          date: new Date().toISOString().split('T')[0],
+          date: (() => {
+            const d = new Date();
+            const pad = (n: number) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+          })(),
           mode: 'Bank',
           amount: '',
           accountId: '',
@@ -2040,7 +2065,7 @@ export function Purchase() {
             <div className="lg:col-span-4 space-y-4 border-r border-gray-200 pr-4">
               <div>
                 <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Payment Date</label>
-                <input type="date" value={paymentForm.date} onChange={e => setPaymentForm({ ...paymentForm, date: e.target.value })} className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-medium" />
+                <input type="datetime-local" value={paymentForm.date} onChange={e => setPaymentForm({ ...paymentForm, date: e.target.value })} className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-medium" />
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Supplier</label>
