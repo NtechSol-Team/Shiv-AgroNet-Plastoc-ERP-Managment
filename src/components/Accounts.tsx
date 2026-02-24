@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Plus, TrendingUp, TrendingDown, X, Loader2, Users, Truck,
-  CreditCard, Wallet, FileText, ArrowUpRight, ArrowDownRight, Search, Printer, MessageCircle, ChevronDown, Check
+  CreditCard, Wallet, FileText, ArrowUpRight, ArrowDownRight, Search, Printer, MessageCircle, ChevronDown, Check, ArrowLeftRight, RotateCcw
 } from 'lucide-react';
 import { accountsApi, mastersApi, financeApi } from '../lib/api';
 
@@ -119,6 +119,43 @@ export function Accounts() {
     accountId: '',
     paymentMode: 'Cash'
   });
+
+  // ── Supplier Advance Refund state ──
+  const [showSupplierRefundModal, setShowSupplierRefundModal] = useState(false);
+  const [supplierRefundLoading, setSupplierRefundLoading] = useState(false);
+  const [supplierAdvanceData, setSupplierAdvanceData] = useState<any>(null);
+  const [supplierRefundForm, setSupplierRefundForm] = useState({
+    supplierId: '',
+    accountId: '',
+    amount: '',
+    date: new Date().toISOString().split('T')[0],
+    reference: '',
+    remarks: ''
+  });
+  const [supplierRefundError, setSupplierRefundError] = useState<string | null>(null);
+
+  // ── Bank Transfer state ──
+  const [showBankTransferModal, setShowBankTransferModal] = useState(false);
+  const [bankTransferLoading, setBankTransferLoading] = useState(false);
+  const [bankTransferForm, setBankTransferForm] = useState({
+    fromAccountId: '',
+    toAccountId: '',
+    amount: '',
+    date: new Date().toISOString().split('T')[0],
+    reference: '',
+    remarks: ''
+  });
+  const [bankTransferError, setBankTransferError] = useState<string | null>(null);
+
+  // Helper to compute available balance for display
+  const getAvailableBalance = (a: any) => {
+    if (a.type === 'CC') {
+      const limit = parseFloat(a.sanctionedLimit || '0');
+      const utilized = Math.abs(parseFloat(a.balance || '0'));
+      return limit - utilized;
+    }
+    return parseFloat(a.balance || '0');
+  };
 
   // ============================================================
   // LOAD INITIAL DATA
@@ -295,6 +332,101 @@ export function Accounts() {
     }
   };
 
+  // ── Supplier Advance Refund handlers ──
+  const handleSupplierRefundSupplierChange = async (supplierId: string) => {
+    setSupplierRefundForm(f => ({ ...f, supplierId, amount: '' }));
+    setSupplierAdvanceData(null);
+    setSupplierRefundError(null);
+    if (!supplierId) return;
+    const res = await accountsApi.getSupplierAdvances(supplierId);
+    if (res.data) setSupplierAdvanceData(res.data);
+  };
+
+  const handleSupplierRefundSubmit = async () => {
+    setSupplierRefundError(null);
+    const { supplierId, accountId, amount } = supplierRefundForm;
+    if (!supplierId || !accountId || !amount || parseFloat(amount) <= 0) {
+      setSupplierRefundError('Please fill all required fields with a valid amount.');
+      return;
+    }
+    const available = parseFloat(supplierAdvanceData?.totalAdvanceBalance || '0');
+    if (parseFloat(amount) > available + 0.01) {
+      setSupplierRefundError(`Amount ₹${amount} exceeds available advance balance ₹${available.toFixed(2)}`);
+      return;
+    }
+    setSupplierRefundLoading(true);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const finalDate = supplierRefundForm.date === today
+        ? new Date().toISOString()
+        : new Date(supplierRefundForm.date + 'T12:00:00').toISOString();
+
+      const res = await accountsApi.createSupplierAdvanceRefund({
+        ...supplierRefundForm,
+        date: finalDate,
+        amount: parseFloat(supplierRefundForm.amount)
+      });
+      if (res.error) {
+        setSupplierRefundError(res.error);
+      } else {
+        setShowSupplierRefundModal(false);
+        setSupplierRefundForm({ supplierId: '', accountId: '', amount: '', date: new Date().toISOString().split('T')[0], reference: '', remarks: '' });
+        setSupplierAdvanceData(null);
+        fetchInitialData();
+        if (selectedAccountId) loadAccountLedger(selectedAccountId);
+      }
+    } catch {
+      setSupplierRefundError('Failed to record refund. Please try again.');
+    } finally {
+      setSupplierRefundLoading(false);
+    }
+  };
+
+  // ── Bank Transfer handlers ──
+  const handleBankTransferSubmit = async () => {
+    setBankTransferError(null);
+    const { fromAccountId, toAccountId, amount } = bankTransferForm;
+    if (!fromAccountId || !toAccountId || !amount || parseFloat(amount) <= 0) {
+      setBankTransferError('Please fill all required fields with a valid amount.');
+      return;
+    }
+    if (fromAccountId === toAccountId) {
+      setBankTransferError('From and To accounts cannot be the same.');
+      return;
+    }
+    const fromAcc = accounts.find(a => a.id === fromAccountId);
+    const fromBalance = getAvailableBalance(fromAcc || {});
+    if (parseFloat(amount) > fromBalance + 0.01) {
+      setBankTransferError(`Insufficient balance in ${fromAcc?.name}. Available: ₹${fromBalance.toFixed(2)}`);
+      return;
+    }
+    setBankTransferLoading(true);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const finalDate = bankTransferForm.date === today
+        ? new Date().toISOString()
+        : new Date(bankTransferForm.date + 'T12:00:00').toISOString();
+
+      const res = await accountsApi.createBankTransfer({
+        ...bankTransferForm,
+        date: finalDate,
+        amount: parseFloat(bankTransferForm.amount)
+      });
+      if (res.error) {
+        setBankTransferError(res.error);
+      } else {
+        setShowBankTransferModal(false);
+        setBankTransferForm({ fromAccountId: '', toAccountId: '', amount: '', date: new Date().toISOString().split('T')[0], reference: '', remarks: '' });
+        fetchInitialData();
+        if (selectedAccountId) loadAccountLedger(selectedAccountId);
+      }
+    } catch {
+      setBankTransferError('Failed to record bank transfer. Please try again.');
+    } finally {
+      setBankTransferLoading(false);
+    }
+  };
+
   // Helper to get color for transaction type
   const getTypeColor = (type: string) => {
     return type === 'RECEIPT' ? 'text-green-600' : 'text-red-600';
@@ -320,29 +452,43 @@ export function Accounts() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Accounts & Ledger</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">Accounts &amp; Ledger</h1>
           <p className="text-sm text-gray-600 mt-1">Manage cash flow, receivables, and payables</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-wrap">
           <button
-            onClick={() => setShowRecalculateConfirm(true)}
-            className="flex items-center px-4 py-2 bg-orange-50 border border-orange-200 rounded-lg text-orange-700 hover:bg-orange-100"
-            title="Fix discrepancies by recalculating from bills"
+            onClick={() => {
+              setSupplierRefundError(null);
+              setSupplierAdvanceData(null);
+              setSupplierRefundForm({ supplierId: '', accountId: '', amount: '', date: new Date().toISOString().split('T')[0], reference: '', remarks: '' });
+              setShowSupplierRefundModal(true);
+            }}
+            className="flex items-center px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 hover:bg-amber-100"
           >
-            <TrendingUp className="w-4 h-4 mr-2" />
-            Recalculate Balances
+            <RotateCcw className="w-4 h-4 mr-2" />
+            Supplier Refund
+          </button>
+          <button
+            onClick={() => {
+              setBankTransferError(null);
+              setBankTransferForm({ fromAccountId: '', toAccountId: '', amount: '', date: new Date().toISOString().split('T')[0], reference: '', remarks: '' });
+              setShowBankTransferModal(true);
+            }}
+            className="flex items-center px-4 py-2 bg-purple-50 border border-purple-200 rounded-lg text-purple-700 hover:bg-purple-100"
+          >
+            <ArrowLeftRight className="w-4 h-4 mr-2" />
+            Bank Transfer
           </button>
           <button
             onClick={() => {
               setShowExpenseModal(true);
-              setExpenseHeadSearch(''); // Ensure empty on new add
+              setExpenseHeadSearch('');
             }}
             className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
           >
             <TrendingDown className="w-4 h-4 mr-2" />
             Add Expense
           </button>
-
         </div>
       </div>
 
@@ -1318,6 +1464,309 @@ export function Accounts() {
           </div>
         </div>
       )}
+
+      {/* ============================================================ */}
+      {/* SUPPLIER ADVANCE REFUND MODAL */}
+      {/* ============================================================ */}
+      {showSupplierRefundModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-amber-100 bg-amber-50 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-100 rounded-lg">
+                  <RotateCcw className="w-5 h-5 text-amber-700" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-amber-900">Supplier Advance Refund</h3>
+                  <p className="text-xs text-amber-600">Record money received back from a supplier</p>
+                </div>
+              </div>
+              <button onClick={() => setShowSupplierRefundModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Accounting note */}
+            <div className="mx-6 mt-4 px-4 py-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+              <strong>Accounting:</strong> DR Bank/Cash Account &nbsp;|&nbsp; CR Supplier Ledger
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Supplier */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Supplier <span className="text-red-500">*</span></label>
+                <select
+                  className="w-full border-gray-300 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500"
+                  value={supplierRefundForm.supplierId}
+                  onChange={e => handleSupplierRefundSupplierChange(e.target.value)}
+                >
+                  <option value="">-- Select Supplier --</option>
+                  {suppliers.map(s => (
+                    <option key={s.id} value={s.id}>{s.name} ({s.code})</option>
+                  ))}
+                </select>
+                {supplierAdvanceData && (
+                  <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between">
+                    <span className="text-sm text-amber-800">Available Advance Balance</span>
+                    <span className="text-lg font-bold text-amber-700">₹{parseFloat(supplierAdvanceData.totalAdvanceBalance).toLocaleString()}</span>
+                  </div>
+                )}
+                {supplierRefundForm.supplierId && supplierAdvanceData && parseFloat(supplierAdvanceData.totalAdvanceBalance) === 0 && (
+                  <p className="mt-2 text-sm text-red-600 font-medium">⚠️ No advance balance available for this supplier.</p>
+                )}
+              </div>
+
+              {/* Received Into Account */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Received Into (Bank/Cash) <span className="text-red-500">*</span></label>
+                <select
+                  className="w-full border-gray-300 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500"
+                  value={supplierRefundForm.accountId}
+                  onChange={e => setSupplierRefundForm(f => ({ ...f, accountId: e.target.value }))}
+                >
+                  <option value="">-- Select Account --</option>
+                  {accounts.map(a => (
+                    <option key={a.id} value={a.id}>{a.name} ({a.type}) — ₹{getAvailableBalance(a).toLocaleString()}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Amount */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Refund Amount (₹) <span className="text-red-500">*</span></label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  placeholder="0.00"
+                  max={supplierAdvanceData?.totalAdvanceBalance || undefined}
+                  className="w-full border-gray-300 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500"
+                  value={supplierRefundForm.amount}
+                  onChange={e => setSupplierRefundForm(f => ({ ...f, amount: e.target.value }))}
+                />
+              </div>
+
+              {/* Date & Reference */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                  <input
+                    type="date"
+                    className="w-full border-gray-300 rounded-lg shadow-sm"
+                    value={supplierRefundForm.date}
+                    onChange={e => setSupplierRefundForm(f => ({ ...f, date: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Reference / Cheque No.</label>
+                  <input
+                    type="text"
+                    placeholder="UTR / Cheque No."
+                    className="w-full border-gray-300 rounded-lg shadow-sm"
+                    value={supplierRefundForm.reference}
+                    onChange={e => setSupplierRefundForm(f => ({ ...f, reference: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              {/* Remarks */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
+                <input
+                  type="text"
+                  placeholder="Optional note"
+                  className="w-full border-gray-300 rounded-lg shadow-sm"
+                  value={supplierRefundForm.remarks}
+                  onChange={e => setSupplierRefundForm(f => ({ ...f, remarks: e.target.value }))}
+                />
+              </div>
+
+              {/* Error */}
+              {supplierRefundError && (
+                <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  {supplierRefundError}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => setShowSupplierRefundModal(false)}
+                className="px-5 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
+                disabled={supplierRefundLoading}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSupplierRefundSubmit}
+                disabled={supplierRefundLoading || (supplierAdvanceData && parseFloat(supplierAdvanceData.totalAdvanceBalance) === 0)}
+                className="px-5 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 font-medium flex items-center"
+              >
+                {supplierRefundLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : 'Record Refund'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* BANK TRANSFER MODAL */}
+      {/* ============================================================ */}
+      {showBankTransferModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-purple-100 bg-purple-50 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-purple-100 rounded-lg">
+                  <ArrowLeftRight className="w-5 h-5 text-purple-700" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-purple-900">Bank / Cash Transfer</h3>
+                  <p className="text-xs text-purple-600">Internal fund movement between accounts</p>
+                </div>
+              </div>
+              <button onClick={() => setShowBankTransferModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Accounting note */}
+            <div className="mx-6 mt-4 px-4 py-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+              <strong>Accounting (CONTRA):</strong> DR Destination Account &nbsp;|&nbsp; CR Source Account &nbsp;—&nbsp; No P&amp;L impact
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* From Account */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">From Account <span className="text-red-500">*</span></label>
+                <select
+                  className="w-full border-gray-300 rounded-lg shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                  value={bankTransferForm.fromAccountId}
+                  onChange={e => setBankTransferForm(f => ({ ...f, fromAccountId: e.target.value, toAccountId: f.toAccountId === e.target.value ? '' : f.toAccountId }))}
+                >
+                  <option value="">-- Select Source Account --</option>
+                  {accounts.map(a => (
+                    <option key={a.id} value={a.id}>{a.name} ({a.type}) — Balance: ₹{getAvailableBalance(a).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</option>
+                  ))}
+                </select>
+                {bankTransferForm.fromAccountId && (
+                  <div className="mt-1 text-xs text-gray-500 pl-1">
+                    Available: <span className="font-semibold text-gray-700">
+                      ₹{getAvailableBalance(accounts.find(a => a.id === bankTransferForm.fromAccountId) || {}).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* To Account */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">To Account <span className="text-red-500">*</span></label>
+                <select
+                  className="w-full border-gray-300 rounded-lg shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                  value={bankTransferForm.toAccountId}
+                  onChange={e => setBankTransferForm(f => ({ ...f, toAccountId: e.target.value }))}
+                >
+                  <option value="">-- Select Destination Account --</option>
+                  {accounts.filter(a => a.id !== bankTransferForm.fromAccountId).map(a => (
+                    <option key={a.id} value={a.id}>{a.name} ({a.type})</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Transfer summary arrow */}
+              {bankTransferForm.fromAccountId && bankTransferForm.toAccountId && (
+                <div className="flex items-center justify-center gap-3 py-2">
+                  <span className="px-3 py-1 bg-red-50 border border-red-200 text-red-700 rounded-full text-sm font-medium">
+                    {accounts.find(a => a.id === bankTransferForm.fromAccountId)?.name}
+                  </span>
+                  <ArrowLeftRight className="w-5 h-5 text-purple-500" />
+                  <span className="px-3 py-1 bg-green-50 border border-green-200 text-green-700 rounded-full text-sm font-medium">
+                    {accounts.find(a => a.id === bankTransferForm.toAccountId)?.name}
+                  </span>
+                </div>
+              )}
+
+              {/* Amount */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Transfer Amount (₹) <span className="text-red-500">*</span></label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  placeholder="0.00"
+                  className="w-full border-gray-300 rounded-lg shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                  value={bankTransferForm.amount}
+                  onChange={e => setBankTransferForm(f => ({ ...f, amount: e.target.value }))}
+                />
+              </div>
+
+              {/* Date & Reference */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                  <input
+                    type="date"
+                    className="w-full border-gray-300 rounded-lg shadow-sm"
+                    value={bankTransferForm.date}
+                    onChange={e => setBankTransferForm(f => ({ ...f, date: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">UTR / Reference No.</label>
+                  <input
+                    type="text"
+                    placeholder="UTR / Transaction ID"
+                    className="w-full border-gray-300 rounded-lg shadow-sm"
+                    value={bankTransferForm.reference}
+                    onChange={e => setBankTransferForm(f => ({ ...f, reference: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              {/* Remarks */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
+                <input
+                  type="text"
+                  placeholder="Optional note"
+                  className="w-full border-gray-300 rounded-lg shadow-sm"
+                  value={bankTransferForm.remarks}
+                  onChange={e => setBankTransferForm(f => ({ ...f, remarks: e.target.value }))}
+                />
+              </div>
+
+              {/* Error */}
+              {bankTransferError && (
+                <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  {bankTransferError}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => setShowBankTransferModal(false)}
+                className="px-5 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
+                disabled={bankTransferLoading}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBankTransferSubmit}
+                disabled={bankTransferLoading}
+                className="px-5 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 font-medium flex items-center"
+              >
+                {bankTransferLoading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : 'Transfer Funds'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

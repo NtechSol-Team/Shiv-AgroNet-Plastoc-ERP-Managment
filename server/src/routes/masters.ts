@@ -27,7 +27,7 @@ import {
     expenses, financialTransactions, generalLedger,
     ccAccountDetails, generalItems,
 } from '../db/schema';
-import { eq, and, like, notLike, count as countFn, sql } from 'drizzle-orm';
+import { eq, and, like, notLike, count as countFn, sql, inArray } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
 import { getRawMaterialStock, getFinishedProductStock, getAllRawMaterialsWithStock, getAllFinishedProductsWithStock } from '../services/inventory.service';
@@ -754,6 +754,28 @@ router.get('/accounts', async (req: Request, res: Response, next: NextFunction) 
         if (cached) return res.json(successResponse(cached));
 
         const items = await db.select().from(bankCashAccounts).orderBy(bankCashAccounts.code);
+
+        // Fetch CC details to include sanctionedLimit for CC accounts
+        const ccAccounts = items.filter(a => a.type === 'CC');
+        if (ccAccounts.length > 0) {
+            const ccDetails = await db.select({
+                accountId: ccAccountDetails.accountId,
+                sanctionedLimit: ccAccountDetails.sanctionedLimit
+            }).from(ccAccountDetails)
+                .where(inArray(ccAccountDetails.accountId, ccAccounts.map(a => a.id)));
+
+            const ccDetailsMap = ccDetails.reduce((acc, detail) => {
+                acc[detail.accountId] = detail.sanctionedLimit;
+                return acc;
+            }, {} as Record<string, string>);
+
+            for (const item of items) {
+                if (item.type === 'CC') {
+                    (item as any).sanctionedLimit = ccDetailsMap[item.id] || '0';
+                }
+            }
+        }
+
         cache.set(cacheKey, items);
         res.json(successResponse(items));
     } catch (error) {

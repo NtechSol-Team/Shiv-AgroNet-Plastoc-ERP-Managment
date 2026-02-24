@@ -435,7 +435,7 @@ export async function getProfitabilityMetrics(startDate?: Date, endDate?: Date):
     // RM Costs (Production Input)
     const rmCosts = await db.select({
         productId: productionBatches.finishedProductId,
-        avgRMRate: sql<string>`AVG(pbi.rate::numeric)`
+        avgRMRate: sql<string>`AVG(${purchaseBillItems.rate}::numeric)`
     }).from(productionBatches)
         .innerJoin(productionBatchInputs, eq(productionBatchInputs.batchId, productionBatches.id))
         .innerJoin(purchaseBillItems, eq(purchaseBillItems.rawMaterialId, productionBatchInputs.rawMaterialId))

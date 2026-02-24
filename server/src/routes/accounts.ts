@@ -28,9 +28,9 @@ import {
     bankCashAccounts, paymentTransactions, expenses, expenseHeads,
     customers, suppliers, invoices, purchaseBills, paymentAdjustments,
     financialTransactions, financialEntities, billPaymentAllocations, invoicePaymentAllocations,
-    generalLedger
+    generalLedger, ccAccountDetails
 } from '../db/schema';
-import { eq, desc, sql, and, count as countFn, inArray } from 'drizzle-orm';
+import { eq, desc, sql, and, or, count as countFn, inArray } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
 import { syncSupplierOutstanding, syncCustomerOutstanding } from '../utils/balance';
@@ -1492,7 +1492,15 @@ router.get('/ledger/:accountId', async (req: Request, res: Response, next: NextF
         const paymentTxs = await db
             .select()
             .from(paymentTransactions)
-            .where(eq(paymentTransactions.accountId, accountId))
+            .where(
+                or(
+                    eq(paymentTransactions.accountId, accountId),
+                    and(
+                        eq(paymentTransactions.type, 'BANK_TRANSFER'),
+                        eq(paymentTransactions.partyId, accountId)
+                    )
+                )
+            )
             .orderBy(desc(paymentTransactions.createdAt));
 
         // 2. Get Expenses
@@ -1513,13 +1521,28 @@ router.get('/ledger/:accountId', async (req: Request, res: Response, next: NextF
 
         // 4. Calculate Summary (Inflow/Outflow)
 
-        // Payments
+        // Payments: classify by type
+        // INFLOW types: RECEIPT, SUPPLIER_ADVANCE_REFUND, BANK_TRANSFER (when this account is the destination)
+        // OUTFLOW types: PAYMENT, BANK_TRANSFER (when this account is the source)
+        const INFLOW_TYPES = ['RECEIPT', 'SUPPLIER_ADVANCE_REFUND'];
+        const OUTFLOW_TYPES = ['PAYMENT'];
+
         const paymentsInflow = paymentTxs
-            .filter(t => t.type === 'RECEIPT')
+            .filter(t => {
+                if (INFLOW_TYPES.includes(t.type)) return true;
+                // BANK_TRANSFER: inflow for destination (accountId = toAccount)
+                if (t.type === 'BANK_TRANSFER' && t.accountId === accountId) return true;
+                return false;
+            })
             .reduce((sum, t) => sum + parseFloat(t.amount || '0'), 0);
 
         const paymentsOutflow = paymentTxs
-            .filter(t => t.type === 'PAYMENT')
+            .filter(t => {
+                if (OUTFLOW_TYPES.includes(t.type)) return true;
+                // BANK_TRANSFER: outflow for source (partyId = fromAccount stored in partyId)
+                if (t.type === 'BANK_TRANSFER' && t.partyId === accountId) return true;
+                return false;
+            })
             .reduce((sum, t) => sum + parseFloat(t.amount || '0'), 0);
 
         // Expenses (Always Outflow)
@@ -1542,19 +1565,52 @@ router.get('/ledger/:accountId', async (req: Request, res: Response, next: NextF
 
         // 5. Unified History
         const history = [
-            ...paymentTxs.map(p => ({
-                id: p.id,
-                date: p.date,
-                type: p.type, // RECEIPT / PAYMENT
-                category: 'Trade',
-                description: p.remarks || (p.type === 'RECEIPT' ? `Receipt from ${p.partyName}` : `Payment to ${p.partyName}`),
-                amount: parseFloat(p.amount),
-                isCredit: p.type === 'RECEIPT', // Credit to Bank = Inflow
-                isDebit: p.type === 'PAYMENT',  // Debit to Bank = Outflow
-                partyName: p.partyName,
-                mode: p.mode,
-                details: p
-            })),
+            ...paymentTxs.map(p => {
+                // Determine if this is an inflow (credit to the account) or outflow (debit from the account)
+                let isCredit = false;
+                let isDebit = false;
+
+                if (p.type === 'RECEIPT' || p.type === 'SUPPLIER_ADVANCE_REFUND') {
+                    // Money received INTO this account
+                    isCredit = true;
+                } else if (p.type === 'PAYMENT') {
+                    // Money sent OUT from this account
+                    isDebit = true;
+                } else if (p.type === 'BANK_TRANSFER') {
+                    // Destination account (accountId = toAccount) → inflow
+                    // Source account (partyId = fromAccount) → outflow
+                    if (p.accountId === accountId) {
+                        isCredit = true;  // Money received into this account
+                    } else {
+                        isDebit = true;   // Money sent out from this account
+                    }
+                }
+
+                const typeLabel = p.type === 'SUPPLIER_ADVANCE_REFUND' ? 'SUPPLIER_ADVANCE_REFUND'
+                    : p.type === 'BANK_TRANSFER' ? 'BANK_TRANSFER'
+                        : p.type;
+
+                const descriptionLabel = p.remarks || (
+                    p.type === 'SUPPLIER_ADVANCE_REFUND' ? `Advance refund from ${p.partyName}`
+                        : p.type === 'BANK_TRANSFER' ? (isCredit ? `Transfer received from ${p.partyName}` : `Transfer sent to ${(p as any).toAccountName || 'account'}`)
+                            : p.type === 'RECEIPT' ? `Receipt from ${p.partyName}`
+                                : `Payment to ${p.partyName}`
+                );
+
+                return {
+                    id: p.id,
+                    date: p.date,
+                    type: typeLabel,
+                    category: p.type === 'BANK_TRANSFER' ? 'Transfer' : 'Trade',
+                    description: descriptionLabel,
+                    amount: parseFloat(p.amount),
+                    isCredit,
+                    isDebit,
+                    partyName: p.partyName,
+                    mode: p.mode,
+                    details: p
+                };
+            }),
             ...expenseTxs.map(row => {
                 const e = row.expenses;
                 const head = row.expense_heads;
@@ -1606,6 +1662,368 @@ router.get('/ledger/:accountId', async (req: Request, res: Response, next: NextF
                 transactionCount: history.length,
             }
         }));
+    } catch (error) {
+        next(error);
+    }
+});
+
+
+// ============================================================
+// SUPPLIER ADVANCE REFUND
+// ============================================================
+
+/**
+ * GET /accounts/supplier-advances/:supplierId
+ * Get all advance payment_transactions for a supplier with remaining balance
+ */
+router.get('/supplier-advances/:supplierId', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { supplierId } = req.params;
+
+        // Get all advance transactions for this supplier with remaining balance
+        const advances = await db
+            .select()
+            .from(paymentTransactions)
+            .where(and(
+                eq(paymentTransactions.partyId, supplierId),
+                eq(paymentTransactions.partyType, 'supplier'),
+                sql`${paymentTransactions.isAdvance} = true`,
+                sql`${paymentTransactions.advanceBalance}::numeric > 0`
+            ))
+            .orderBy(paymentTransactions.date); // FIFO order (oldest first)
+
+        // Calculate total available advance balance
+        const totalAdvanceBalance = advances.reduce(
+            (sum, adv) => sum + parseFloat(adv.advanceBalance || '0'),
+            0
+        );
+
+        res.json(successResponse({
+            advances,
+            totalAdvanceBalance: totalAdvanceBalance.toFixed(2)
+        }));
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * POST /accounts/supplier-advance-refund
+ * Record a supplier refunding an advance amount back to the company
+ *
+ * Double-Entry Accounting:
+ *   DR: Bank/Cash Account (asset increases — we received money)
+ *   CR: Supplier Ledger   (supplier liability reduces — advance recovered)
+ */
+router.post('/supplier-advance-refund', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { supplierId, accountId, amount, date, reference, remarks } = req.body;
+
+        if (!supplierId || !accountId || !amount || parseFloat(amount) <= 0) {
+            throw createError('Supplier, account, and a valid amount are required', 400);
+        }
+
+        const refundAmount = parseFloat(amount);
+
+        // 1. Validate supplier exists
+        const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, supplierId));
+        if (!supplier) throw createError('Supplier not found', 404);
+
+        // 2. Validate bank/cash account exists
+        const [account] = await db.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, accountId));
+        if (!account) throw createError('Bank/Cash account not found', 404);
+
+        // 3. Get all advances for this supplier (FIFO order)
+        const advances = await db
+            .select()
+            .from(paymentTransactions)
+            .where(and(
+                eq(paymentTransactions.partyId, supplierId),
+                eq(paymentTransactions.partyType, 'supplier'),
+                sql`${paymentTransactions.isAdvance} = true`,
+                sql`${paymentTransactions.advanceBalance}::numeric > 0`
+            ))
+            .orderBy(paymentTransactions.date);
+
+        const totalAvailable = advances.reduce((sum, adv) => sum + parseFloat(adv.advanceBalance || '0'), 0);
+
+        // 4. Validate refund does not exceed available advance balance
+        if (refundAmount > totalAvailable + 0.01) {
+            throw createError(
+                `Refund amount ₹${refundAmount.toFixed(2)} exceeds available advance balance ₹${totalAvailable.toFixed(2)}`,
+                400
+            );
+        }
+
+        await db.transaction(async (tx) => {
+            // 5. Reduce advance balances FIFO
+            let remaining = refundAmount;
+            for (const adv of advances) {
+                if (remaining <= 0) break;
+                const advBal = parseFloat(adv.advanceBalance || '0');
+                const deduct = Math.min(remaining, advBal);
+                remaining -= deduct;
+
+                await tx.update(paymentTransactions)
+                    .set({ advanceBalance: String((advBal - deduct).toFixed(2)) })
+                    .where(eq(paymentTransactions.id, adv.id));
+            }
+
+            // 6. Update bank/cash account balance (increase — we received money)
+            await tx.update(bankCashAccounts)
+                .set({
+                    balance: sql`${bankCashAccounts.balance}::numeric + ${refundAmount}`,
+                    updatedAt: new Date()
+                })
+                .where(eq(bankCashAccounts.id, accountId));
+
+            // 7. Create payment transaction record
+            const txCode = `SARFND-${Date.now().toString().slice(-6)}`;
+            const [createdTx] = await tx.insert(paymentTransactions).values({
+                code: txCode,
+                date: new Date(date || Date.now()),
+                type: 'SUPPLIER_ADVANCE_REFUND',
+                referenceType: 'supplier_advance_refund',
+                referenceId: supplierId,
+                referenceCode: supplier.code,
+                partyType: 'supplier',
+                partyId: supplierId,
+                partyName: supplier.name,
+                mode: account.type === 'Cash' ? 'Cash' : 'Bank',
+                accountId,
+                amount: String(refundAmount),
+                bankReference: reference || null,
+                remarks: remarks || `Advance refund from ${supplier.name}`,
+                isAdvance: false,
+                advanceBalance: '0',
+            }).returning();
+
+            // 8. Double-entry general ledger
+            // DR: Bank/Cash Account (asset increases)
+            await tx.insert(generalLedger).values({
+                transactionDate: new Date(date || Date.now()),
+                voucherNumber: txCode,
+                voucherType: 'RECEIPT',
+                ledgerId: accountId,
+                ledgerType: 'BANK_CASH',
+                debitAmount: String(refundAmount),
+                creditAmount: '0',
+                description: `Advance refund received from ${supplier.name}`,
+                referenceId: createdTx.id
+            });
+
+            // CR: Supplier Account (liability reduces)
+            await tx.insert(generalLedger).values({
+                transactionDate: new Date(date || Date.now()),
+                voucherNumber: txCode,
+                voucherType: 'RECEIPT',
+                ledgerId: supplierId,
+                ledgerType: 'SUPPLIER',
+                debitAmount: '0',
+                creditAmount: String(refundAmount),
+                description: `Advance refunded to us by ${supplier.name}`,
+                referenceId: createdTx.id
+            });
+
+            // 9. Sync supplier outstanding
+            await syncSupplierOutstanding(supplierId, tx);
+
+            cache.del('masters:suppliers');
+            cache.del('masters:accounts');
+
+            res.json(successResponse({
+                message: 'Supplier advance refund recorded successfully',
+                transaction: createdTx,
+                newAccountBalance: (parseFloat(account.balance || '0') + refundAmount).toFixed(2)
+            }));
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// ============================================================
+// BANK-TO-BANK TRANSFER
+// ============================================================
+
+/**
+ * GET /accounts/bank-transfers
+ * List all bank transfer transactions
+ */
+router.get('/bank-transfers', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const transfers = await db
+            .select({
+                id: paymentTransactions.id,
+                code: paymentTransactions.code,
+                date: paymentTransactions.date,
+                amount: paymentTransactions.amount,
+                remarks: paymentTransactions.remarks,
+                bankReference: paymentTransactions.bankReference,
+                referenceCode: paymentTransactions.referenceCode,
+                // From account info via partyId/partyName (we store fromAccount name as partyName)
+                fromAccountId: paymentTransactions.partyId,
+                fromAccountName: paymentTransactions.partyName,
+                // To account info via accountId
+                toAccountId: paymentTransactions.accountId,
+                toAccountName: bankCashAccounts.name,
+                createdAt: paymentTransactions.createdAt
+            })
+            .from(paymentTransactions)
+            .leftJoin(bankCashAccounts, eq(paymentTransactions.accountId, bankCashAccounts.id))
+            .where(eq(paymentTransactions.type, 'BANK_TRANSFER'))
+            .orderBy(desc(paymentTransactions.date));
+
+        res.json(successResponse(transfers));
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * POST /accounts/bank-transfer
+ * Transfer funds between two bank/cash accounts (internal movement)
+ *
+ * Double-Entry Accounting (CONTRA voucher — Tally standard):
+ *   DR: Destination Account (asset increases)
+ *   CR: Source Account      (asset decreases)
+ * No P&L impact. Trial Balance stays balanced.
+ */
+router.post('/bank-transfer', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { fromAccountId, toAccountId, amount, date, reference, remarks } = req.body;
+
+        if (!fromAccountId || !toAccountId || !amount || parseFloat(amount) <= 0) {
+            throw createError('From account, To account, and a valid amount are required', 400);
+        }
+
+        // 1. Cannot transfer to same account
+        if (fromAccountId === toAccountId) {
+            throw createError('From and To accounts cannot be the same', 400);
+        }
+
+        const transferAmount = parseFloat(amount);
+
+        await db.transaction(async (tx) => {
+            // 2. Validate source account
+            const [fromAccount] = await tx.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, fromAccountId));
+            if (!fromAccount) throw createError('Source account not found', 404);
+
+            // 3. Check sufficient available balance — handle CC accounts differently
+            // CC accounts: balance is stored as negative (outstanding debt)
+            //   Available credit = sanctionedLimit - abs(balance)
+            // Regular accounts: balance is the available amount directly
+            let availableBalance: number;
+            if (fromAccount.type === 'CC') {
+                const ccDetailsRes = await tx
+                    .select({ sanctionedLimit: ccAccountDetails.sanctionedLimit })
+                    .from(ccAccountDetails)
+                    .where(eq(ccAccountDetails.accountId, fromAccountId));
+
+                const ccDetails = ccDetailsRes[0];
+                console.log('[DEBUG BANK TRANSFER] fromAccountId:', fromAccountId);
+                console.log('[DEBUG BANK TRANSFER] ccDetails fetched:', ccDetailsRes);
+
+                const sanctionedLimit = parseFloat(ccDetails?.sanctionedLimit || '0');
+                const utilized = Math.abs(parseFloat(fromAccount.balance || '0'));
+                availableBalance = sanctionedLimit - utilized;
+            } else {
+                availableBalance = parseFloat(fromAccount.balance || '0');
+            }
+
+            if (transferAmount > availableBalance + 0.01) {
+                throw createError(
+                    `Insufficient balance in ${fromAccount.name}. Available: ₹${availableBalance.toFixed(2)}`,
+                    400
+                );
+            }
+
+            // 4. Validate destination account
+            const [toAccount] = await tx.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, toAccountId));
+            if (!toAccount) throw createError('Destination account not found', 404);
+
+            // 5. Deduct from source account
+            await tx.update(bankCashAccounts)
+                .set({
+                    balance: sql`${bankCashAccounts.balance}::numeric - ${transferAmount}`,
+                    updatedAt: new Date()
+                })
+                .where(eq(bankCashAccounts.id, fromAccountId));
+
+            // 6. Add to destination account
+            await tx.update(bankCashAccounts)
+                .set({
+                    balance: sql`${bankCashAccounts.balance}::numeric + ${transferAmount}`,
+                    updatedAt: new Date()
+                })
+                .where(eq(bankCashAccounts.id, toAccountId));
+
+            // 7. Create payment transaction record
+            // We store: fromAccount info in partyId/partyName, toAccount in accountId
+            const txCode = `BNKTFR-${Date.now().toString().slice(-6)}`;
+            const [createdTx] = await tx.insert(paymentTransactions).values({
+                code: txCode,
+                date: new Date(date || Date.now()),
+                type: 'BANK_TRANSFER',
+                referenceType: 'bank_transfer',
+                referenceId: fromAccountId,
+                referenceCode: `${fromAccount.name} → ${toAccount.name}`,
+                partyType: 'account',
+                partyId: fromAccountId,
+                partyName: fromAccount.name,
+                mode: 'Bank',
+                accountId: toAccountId,
+                amount: String(transferAmount),
+                bankReference: reference || null,
+                remarks: remarks || `Transfer: ${fromAccount.name} → ${toAccount.name}`,
+                isAdvance: false,
+                advanceBalance: '0',
+            }).returning();
+
+            // 8. Double-entry general ledger (CONTRA voucher — Tally standard)
+            // DR: Destination Account (asset increases)
+            await tx.insert(generalLedger).values({
+                transactionDate: new Date(date || Date.now()),
+                voucherNumber: txCode,
+                voucherType: 'CONTRA',
+                ledgerId: toAccountId,
+                ledgerType: 'BANK_CASH',
+                debitAmount: String(transferAmount),
+                creditAmount: '0',
+                description: `Fund transfer received from ${fromAccount.name}`,
+                referenceId: createdTx.id
+            });
+
+            // CR: Source Account (asset decreases)
+            await tx.insert(generalLedger).values({
+                transactionDate: new Date(date || Date.now()),
+                voucherNumber: txCode,
+                voucherType: 'CONTRA',
+                ledgerId: fromAccountId,
+                ledgerType: 'BANK_CASH',
+                debitAmount: '0',
+                creditAmount: String(transferAmount),
+                description: `Fund transfer sent to ${toAccount.name}`,
+                referenceId: createdTx.id
+            });
+
+            cache.del('masters:accounts');
+
+            res.json(successResponse({
+                message: 'Bank transfer recorded successfully',
+                transaction: createdTx,
+                fromAccount: {
+                    id: fromAccountId,
+                    name: fromAccount.name,
+                    newBalance: (availableBalance - transferAmount).toFixed(2)
+                },
+                toAccount: {
+                    id: toAccountId,
+                    name: toAccount.name,
+                    newBalance: (parseFloat(toAccount.balance || '0') + transferAmount).toFixed(2)
+                }
+            }));
+        });
     } catch (error) {
         next(error);
     }

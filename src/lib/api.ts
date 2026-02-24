@@ -418,6 +418,20 @@ export const accountsApi = {
             method: 'POST',
             body: JSON.stringify(data),
         }),
+    // Supplier Advance Refund
+    getSupplierAdvances: (supplierId: string) => fetchApi<any>(`/accounts/supplier-advances/${supplierId}`),
+    createSupplierAdvanceRefund: (data: any) =>
+        fetchApi<any>('/accounts/supplier-advance-refund', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
+    // Bank-to-Bank Transfer
+    getBankTransfers: () => fetchApi<any[]>('/accounts/bank-transfers'),
+    createBankTransfer: (data: any) =>
+        fetchApi<any>('/accounts/bank-transfer', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
 };
 
 // ==================== INVENTORY API ====================
