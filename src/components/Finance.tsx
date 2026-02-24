@@ -334,7 +334,7 @@ export function Finance() {
                                             <h3 className="text-sm font-semibold text-slate-600 uppercase tracking-wider">Total Loans Taken</h3>
                                         </div>
                                         <div className="flex items-baseline gap-1">
-                                            <span className="text-3xl font-bold text-slate-900">₹{totalLoansTaken.toLocaleString()}</span>
+                                            <span className="text-3xl font-bold text-slate-900">₹{totalLoansTaken.toLocaleString('en-IN')}</span>
                                         </div>
                                         <p className="text-sm text-slate-500 mt-2">Current Outstanding Liabilities</p>
                                     </div>
@@ -354,7 +354,7 @@ export function Finance() {
                                             <h3 className="text-sm font-semibold text-slate-600 uppercase tracking-wider">Total Investments</h3>
                                         </div>
                                         <div className="flex items-baseline gap-1">
-                                            <span className="text-3xl font-bold text-slate-900">₹{totalInvestments.toLocaleString()}</span>
+                                            <span className="text-3xl font-bold text-slate-900">₹{totalInvestments.toLocaleString('en-IN')}</span>
                                         </div>
                                         <p className="text-sm text-slate-500 mt-2">Capital Injection (Equity/Owner)</p>
                                     </div>
@@ -374,7 +374,7 @@ export function Finance() {
                                             <h3 className="text-sm font-semibold text-slate-600 uppercase tracking-wider">Loans Given</h3>
                                         </div>
                                         <div className="flex items-baseline gap-1">
-                                            <span className="text-3xl font-bold text-slate-900">₹{totalLoansGiven.toLocaleString()}</span>
+                                            <span className="text-3xl font-bold text-slate-900">₹{totalLoansGiven.toLocaleString('en-IN')}</span>
                                         </div>
                                         <p className="text-sm text-slate-500 mt-2">Assets & Receivables</p>
                                     </div>
@@ -454,7 +454,7 @@ export function Finance() {
                                     </div>
                                     <div className="ml-auto pl-4 border-l border-slate-100 hidden md:block">
                                         <p className="text-xs text-slate-400">Total Filtered Amount</p>
-                                        <p className="text-xl font-bold text-slate-900">₹{filteredTotal.toLocaleString()}</p>
+                                        <p className="text-xl font-bold text-slate-900">₹{filteredTotal.toLocaleString('en-IN')}</p>
                                     </div>
                                 </div>
 
@@ -493,7 +493,7 @@ export function Finance() {
                                                             {tx.remarks || '-'}
                                                         </td>
                                                         <td className="px-6 py-4 text-right font-bold text-slate-900 whitespace-nowrap">
-                                                            ₹{parseFloat(tx.amount).toLocaleString()}
+                                                            ₹{parseFloat(tx.amount).toLocaleString('en-IN')}
                                                         </td>
                                                         <td className="px-6 py-4 text-right">
                                                             <button
@@ -690,20 +690,20 @@ export function Finance() {
                                     <div className="mt-4 bg-white rounded-lg border border-blue-200 p-3 shadow-sm">
                                         <div className="flex justify-between items-center text-sm mb-2 pb-2 border-b border-blue-50">
                                             <span className="text-slate-500">Net Outstanding</span>
-                                            <span className="font-bold text-blue-700">₹{(partyStats.totalTaken - partyStats.totalPrincipalRepaid).toLocaleString()}</span>
+                                            <span className="font-bold text-blue-700">₹{(partyStats.totalTaken - partyStats.totalPrincipalRepaid).toLocaleString('en-IN')}</span>
                                         </div>
                                         <div className="grid grid-cols-3 gap-2 text-xs">
                                             <div className="text-center">
                                                 <div className="text-slate-400">Token</div>
-                                                <div className="font-medium">₹{partyStats.totalTaken.toLocaleString()}</div>
+                                                <div className="font-medium">₹{partyStats.totalTaken.toLocaleString('en-IN')}</div>
                                             </div>
                                             <div className="text-center border-l border-slate-100">
                                                 <div className="text-slate-400">Paid (P)</div>
-                                                <div className="font-medium text-green-600">₹{partyStats.totalPrincipalRepaid.toLocaleString()}</div>
+                                                <div className="font-medium text-green-600">₹{partyStats.totalPrincipalRepaid.toLocaleString('en-IN')}</div>
                                             </div>
                                             <div className="text-center border-l border-slate-100">
                                                 <div className="text-slate-400">Paid (I)</div>
-                                                <div className="font-medium text-orange-600">₹{partyStats.totalInterestPaid.toLocaleString()}</div>
+                                                <div className="font-medium text-orange-600">₹{partyStats.totalInterestPaid.toLocaleString('en-IN')}</div>
                                             </div>
                                         </div>
                                     </div>
@@ -937,7 +937,7 @@ export function Finance() {
                                                     {tx.account?.name || 'Cash'}
                                                 </td>
                                                 <td className="px-6 py-3 text-right font-medium text-slate-900">
-                                                    ₹{parseFloat(tx.amount).toLocaleString()}
+                                                    ₹{parseFloat(tx.amount).toLocaleString('en-IN')}
                                                 </td>
                                             </tr>
                                         ))}
