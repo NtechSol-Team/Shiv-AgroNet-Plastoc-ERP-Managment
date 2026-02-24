@@ -549,11 +549,8 @@ router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFun
             throw createError('Cannot delete a paid invoice. Please reverse payments first.', 400);
         }
 
-        if (invoice.status === 'Confirmed' && invoice.paymentStatus !== 'Paid') {
-            if (invoice.customerId) {
-                await syncCustomerOutstanding(invoice.customerId);
-            }
-        }
+        // Save customerId before deletion
+        const affectedCustomerId = invoice.customerId;
 
         await db.transaction(async (tx) => {
             // 1. Restore bell items to Available status
@@ -565,22 +562,24 @@ router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFun
                 }
             }
 
-            // 2. Create reversal stock movements for FG items
-            for (const item of invoice.items || []) {
-                if (item.finishedProductId) {
-                    await tx.insert(stockMovements).values({
-                        id: crypto.randomUUID(),
-                        date: new Date(),
-                        movementType: 'SI_REVERSAL',
-                        itemType: 'finished_product',
-                        finishedProductId: item.finishedProductId,
-                        quantityIn: String(item.quantity), // Restore stock
-                        quantityOut: '0',
-                        referenceType: 'sales_invoice_reversal',
-                        referenceId: invoice.id,
-                        referenceCode: invoice.invoiceNumber,
-                        reason: `Reversal of deleted invoice ${invoice.invoiceNumber}`,
-                    });
+            // 2. Create reversal stock movements for FG items (only if confirmed)
+            if (invoice.status === 'Confirmed') {
+                for (const item of invoice.items || []) {
+                    if (item.finishedProductId) {
+                        await tx.insert(stockMovements).values({
+                            id: crypto.randomUUID(),
+                            date: new Date(),
+                            movementType: 'SI_REVERSAL',
+                            itemType: 'finished_product',
+                            finishedProductId: item.finishedProductId,
+                            quantityIn: String(item.quantity), // Restore stock
+                            quantityOut: '0',
+                            referenceType: 'sales_invoice_reversal',
+                            referenceId: invoice.id,
+                            referenceCode: invoice.invoiceNumber,
+                            reason: `Reversal of deleted invoice ${invoice.invoiceNumber}`,
+                        });
+                    }
                 }
             }
 
@@ -591,8 +590,15 @@ router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFun
             await tx.delete(salesInvoices).where(eq(salesInvoices.id, id));
         });
 
-        // Invalidate dashboard cache
+        // Recalculate customer outstanding AFTER the invoice is deleted from DB
+        // (previously this ran before deletion — causing the outstanding to not update)
+        if (affectedCustomerId) {
+            await syncCustomerOutstanding(affectedCustomerId);
+        }
+
+        // Invalidate caches
         cacheService.del('dashboard:kpis');
+        cacheService.del('masters:customers');
 
         res.json(successResponse({ message: 'Invoice deleted successfully' }));
     } catch (error) {
