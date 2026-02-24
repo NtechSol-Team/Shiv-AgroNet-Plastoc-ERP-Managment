@@ -432,14 +432,19 @@ export function Sales() {
         status: status,
         items: invoiceItems.flatMap(item => {
           if (item.childItems && item.childItems.length > 0) {
-            return item.childItems.map(child => ({
-              finishedProductId: child.finishedProductId,
-              bellItemId: child.id,
-              quantity: parseFloat(child.netWeight),
-              rate: item.rate,
-              gstPercent: item.taxPercent,
-              discount: (parseFloat(child.netWeight) * item.rate * item.discountPercent) / 100
-            }));
+            return item.childItems.map(child => {
+              // Use grossWeight (what the customer physically receives / what the form preview uses)
+              // Fall back to netWeight only if grossWeight is not available
+              const childQty = parseFloat(child.grossWeight);
+              return {
+                finishedProductId: child.finishedProductId,
+                bellItemId: child.id,
+                quantity: childQty,
+                rate: item.rate,
+                gstPercent: item.taxPercent,
+                discount: (childQty * item.rate * item.discountPercent) / 100
+              };
+            });
           }
           return [{
             finishedProductId: item.finishedProductId,
