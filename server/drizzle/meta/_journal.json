@@ -15,6 +15,13 @@
       "when": 1769945196312,
       "tag": "0001_lush_killmonger",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1771995367476,
+      "tag": "0002_happy_wolf_cub",
+      "breakpoints": true
     }
   ]
 }

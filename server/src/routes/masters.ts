@@ -444,6 +444,7 @@ router.post('/customers', async (req: Request, res: Response, next: NextFunction
             stateCode: inferredStateCode,
             email, phone, address,
             outstanding: String(outstanding || 0),
+            openingBalance: String(req.body.openingBalance ?? outstanding ?? 0),
         }).returning();
 
         cache.del('masters:customers');
@@ -459,14 +460,23 @@ router.put('/customers/:id', async (req: Request, res: Response, next: NextFunct
 
         const inferredStateCode = stateCode || (gstNo ? gstNo.substring(0, 2) : '24');
 
+        const updateData: any = {
+            name, gstNo,
+            stateCode: inferredStateCode,
+            email, phone, address,
+            updatedAt: new Date()
+        };
+
+        // Only update opening balance if it's explicitly passed, otherwise leave it.
+        // The GUI might still pass `outstanding` from the edit form, 
+        // we should probably avoid overwriting `outstanding` directly on PUT 
+        // because it's calculated dynamically anyway, but if it's forced we can.
+        if (req.body.openingBalance !== undefined) {
+            updateData.openingBalance = String(req.body.openingBalance || 0);
+        }
+
         const [item] = await db.update(customers)
-            .set({
-                name, gstNo,
-                stateCode: inferredStateCode,
-                email, phone, address,
-                outstanding: String(outstanding || 0),
-                updatedAt: new Date()
-            })
+            .set(updateData)
             .where(eq(customers.id, req.params.id))
             .returning();
 

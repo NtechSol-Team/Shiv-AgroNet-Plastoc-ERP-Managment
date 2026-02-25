@@ -56,6 +56,7 @@ export const customers = pgTable('customers', {
     phone: text('phone').notNull(),
     address: text('address'),
     outstanding: decimal('outstanding', { precision: 10, scale: 2 }).default('0'),
+    openingBalance: decimal('opening_balance', { precision: 10, scale: 2 }).default('0'),
     gstVerifiedAt: timestamp('gst_verified_at'),
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),

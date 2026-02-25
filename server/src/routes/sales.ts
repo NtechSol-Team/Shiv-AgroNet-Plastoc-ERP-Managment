@@ -619,6 +619,7 @@ export default router;
 router.get('/outstanding/:customerId', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { customerId } = req.params;
+        const { includeReceiptId } = req.query;
 
         // Get confirmed invoices with outstanding balance
         const outstandingInvoices = await db
@@ -633,7 +634,35 @@ router.get('/outstanding/:customerId', async (req: Request, res: Response, next:
             )
             .orderBy(invoices.invoiceDate);
 
-        res.json(successResponse(outstandingInvoices));
+        let finalInvoices = [...outstandingInvoices];
+
+        // If editing a receipt, we must also include invoices that were fully/partially paid by this specific receipt
+        // and add the allocated amount BACK to their balance so the user can reallocate.
+        if (includeReceiptId) {
+            const allocations = await db.select()
+                .from(invoicePaymentAllocations)
+                .where(eq(invoicePaymentAllocations.paymentId, includeReceiptId as string));
+
+            for (const alloc of allocations) {
+                // Check if this invoice is already in our list
+                let inv = finalInvoices.find(i => i.id === alloc.invoiceId);
+
+                if (!inv) {
+                    // It was fully paid, so it wasn't fetched above. Fetch it now.
+                    const [paidInv] = await db.select().from(invoices).where(eq(invoices.id, alloc.invoiceId));
+                    if (paidInv) {
+                        inv = paidInv;
+                        finalInvoices.push(inv);
+                    }
+                }
+
+            }
+
+            // Re-sort by date just in case
+            finalInvoices.sort((a, b) => new Date(a.invoiceDate).getTime() - new Date(b.invoiceDate).getTime());
+        }
+
+        res.json(successResponse(finalInvoices));
     } catch (error) {
         next(error);
     }
@@ -826,6 +855,11 @@ router.post('/receipts', async (req: Request, res: Response, next: NextFunction)
             referenceId: transactionId
         });
 
+        // Invalidate caches
+        cacheService.del('dashboard:kpis');
+        cacheService.del('finance:transactions');
+        cacheService.del('masters:customers');
+
         res.json(successResponse({
             receiptId: transactionId,
             message: 'Receipt created and allocated successfully'
@@ -867,16 +901,7 @@ router.delete('/receipts/:id', async (req, res, next) => {
             // Delete allocations
             await tx.delete(invoicePaymentAllocations).where(eq(invoicePaymentAllocations.paymentId, id));
 
-            // 3. Revert Customer Outstanding (Increase it back)
-            if (receipt.partyId) {
-                const customer = (await tx.select().from(customers).where(eq(customers.id, receipt.partyId)))[0];
-                if (customer) {
-                    const newOutstanding = parseFloat(customer.outstanding || '0') + parseFloat(receipt.amount);
-                    await tx.update(customers)
-                        .set({ outstanding: newOutstanding.toString() })
-                        .where(eq(customers.id, receipt.partyId));
-                }
-            }
+            // 3. Removed Revert Customer Outstanding from here because the DB row still exists during the query.
 
             // 4. Revert Bank Balance (Decrease it) - IF logic matches original receipt
             if (receipt.accountId) {
@@ -894,13 +919,178 @@ router.delete('/receipts/:id', async (req, res, next) => {
 
             // 6. Delete Receipt Transaction
             await tx.delete(paymentTransactions).where(eq(paymentTransactions.id, id));
+
+            // 7. Update Customer Outstanding AFTER the receipt is successfully wiped from DB
+            if (receipt.partyId) {
+                await syncCustomerOutstanding(receipt.partyId as string, tx);
+            }
         });
 
         // Invalidate caches
         cacheService.del('dashboard:kpis');
         cacheService.del('finance:transactions');
+        cacheService.del('masters:customers');
 
         res.json(successResponse({ message: 'Receipt deleted and financial impact reverted successfully' }));
+
+    } catch (error) {
+        next(error);
+    }
+});
+
+// UPDATE RECEIPT (Revert & Recreate)
+router.put('/receipts/:id', async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const {
+            date,
+            mode,
+            accountId,
+            bankReference,
+            remarks,
+            allocations,
+            amount,
+        } = req.body;
+
+        const receipt = (await db.select().from(paymentTransactions).where(eq(paymentTransactions.id, id)))[0];
+        if (!receipt) throw createError('Receipt not found', 404);
+
+        const customerId = receipt.partyId;
+
+        // Ensure date is valid or use existing/now
+        const transactionDate = date ? new Date(date) : new Date(receipt.date || Date.now());
+
+        await db.transaction(async (tx) => {
+            // ==========================================
+            // 1. REVERT OLD RECEIPT (Similar to DELETE)
+            // ==========================================
+            const oldAllocations = await tx.select().from(invoicePaymentAllocations).where(eq(invoicePaymentAllocations.paymentId, id));
+
+            for (const allocation of oldAllocations) {
+                const invoice = (await tx.select().from(salesInvoices).where(eq(salesInvoices.id, allocation.invoiceId)))[0];
+                if (invoice) {
+                    const newPaid = parseFloat(invoice.paidAmount || '0') - parseFloat(allocation.amount);
+                    const newBalance = parseFloat(invoice.grandTotal || '0') - newPaid;
+
+                    await tx.update(salesInvoices)
+                        .set({
+                            paidAmount: newPaid.toString(),
+                            balanceAmount: newBalance.toString(),
+                            paymentStatus: newBalance >= parseFloat(invoice.grandTotal || '0') - 1 ? 'Unpaid' : (newBalance > 1 ? 'Partial' : 'Paid')
+                        })
+                        .where(eq(salesInvoices.id, allocation.invoiceId));
+                }
+            }
+            await tx.delete(invoicePaymentAllocations).where(eq(invoicePaymentAllocations.paymentId, id));
+
+            // Revert Bank Balance 
+            if (receipt.accountId) {
+                const account = (await tx.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, receipt.accountId)))[0];
+                if (account) {
+                    const newBalance = parseFloat(account.balance || '0') - parseFloat(receipt.amount);
+                    await tx.update(bankCashAccounts)
+                        .set({ balance: newBalance.toString() })
+                        .where(eq(bankCashAccounts.id, receipt.accountId));
+                }
+            }
+
+            await tx.delete(generalLedger).where(eq(generalLedger.referenceId, id));
+
+            // ==========================================
+            // 2. RECREATE NEW RECEIPT
+            // ==========================================
+            let finalMode = mode || receipt.mode;
+            let finalAccountId = accountId !== undefined ? accountId : receipt.accountId;
+            let finalAmount = amount !== undefined ? amount.toString() : receipt.amount;
+
+            const isAdvance = (parseFloat(finalAmount) - allocations.reduce((sum: number, a: any) => sum + Number(a.amount), 0)) > 0;
+            const advanceBalance = String(Math.max(0, parseFloat(finalAmount) - allocations.reduce((sum: number, a: any) => sum + Number(a.amount), 0)));
+
+            await tx.update(paymentTransactions).set({
+                date: transactionDate,
+                mode: finalMode,
+                accountId: finalAccountId,
+                amount: finalAmount,
+                bankReference: bankReference !== undefined ? bankReference : receipt.bankReference,
+                remarks: remarks !== undefined ? remarks : receipt.remarks,
+                isAdvance,
+                advanceBalance,
+            }).where(eq(paymentTransactions.id, id));
+
+            // Create New Allocations
+            for (const allocation of allocations) {
+                await tx.insert(invoicePaymentAllocations).values({
+                    paymentId: id,
+                    invoiceId: allocation.invoiceId,
+                    amount: allocation.amount.toString(),
+                });
+
+                // Update Invoice
+                const invoice = (await tx.select().from(salesInvoices).where(eq(salesInvoices.id, allocation.invoiceId)))[0];
+                if (invoice) {
+                    const newPaid = parseFloat(invoice.paidAmount || '0') + Number(allocation.amount);
+                    const newBalance = parseFloat(invoice.grandTotal || '0') - newPaid;
+
+                    await tx.update(salesInvoices)
+                        .set({
+                            paidAmount: newPaid.toString(),
+                            balanceAmount: newBalance.toString(),
+                            paymentStatus: newBalance <= 1 ? 'Paid' : 'Partial'
+                        })
+                        .where(eq(salesInvoices.id, allocation.invoiceId));
+                }
+            }
+
+            // Update Bank/Cash Balance
+            if (finalAccountId) {
+                const account = (await tx.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, finalAccountId)))[0];
+                if (account) {
+                    const newAccountBalance = parseFloat(account.balance || '0') + parseFloat(finalAmount);
+                    await tx.update(bankCashAccounts)
+                        .set({ balance: newAccountBalance.toString() })
+                        .where(eq(bankCashAccounts.id, finalAccountId));
+                }
+            }
+
+            // General Ledger
+            if (finalAccountId) {
+                await tx.insert(generalLedger).values({
+                    transactionDate: transactionDate,
+                    voucherNumber: receipt.code,
+                    voucherType: 'RECEIPT',
+                    ledgerId: finalAccountId,
+                    ledgerType: finalMode === 'Cash' ? 'CASH' : 'BANK',
+                    debitAmount: finalAmount,
+                    creditAmount: '0',
+                    description: `Receipt from ${receipt.partyName}`,
+                    referenceId: id
+                });
+            }
+
+            await tx.insert(generalLedger).values({
+                transactionDate: transactionDate,
+                voucherNumber: receipt.code,
+                voucherType: 'RECEIPT',
+                ledgerId: customerId,
+                ledgerType: 'CUSTOMER',
+                debitAmount: '0',
+                creditAmount: finalAmount,
+                description: `Payment received in ${finalMode}`,
+                referenceId: id
+            });
+
+            // Customer outstanding sync
+            await syncCustomerOutstanding(customerId as string, tx);
+        });
+
+        cacheService.del('dashboard:kpis');
+        cacheService.del('finance:transactions');
+        cacheService.del('masters:customers');
+
+        res.json(successResponse({
+            receiptId: id,
+            message: 'Receipt updated successfully'
+        }));
 
     } catch (error) {
         next(error);

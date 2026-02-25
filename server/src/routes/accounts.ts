@@ -30,7 +30,7 @@ import {
     financialTransactions, financialEntities, billPaymentAllocations, invoicePaymentAllocations,
     generalLedger, ccAccountDetails
 } from '../db/schema';
-import { eq, desc, sql, and, or, count as countFn, inArray } from 'drizzle-orm';
+import { eq, desc, sql, and, or, count as countFn, inArray, ne } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
 import { syncSupplierOutstanding, syncCustomerOutstanding } from '../utils/balance';
@@ -406,7 +406,14 @@ router.get('/customer-ledger', async (req: Request, res: Response, next: NextFun
                     count: countFn()
                 })
                 .from(paymentTransactions)
-                .where(and(eq(paymentTransactions.partyType, 'customer'), eq(paymentTransactions.partyId, customerId)));
+                .where(and(eq(paymentTransactions.partyType, 'customer'), eq(paymentTransactions.partyId, customerId), ne(paymentTransactions.status, 'Reversed')));
+
+            const [advanceStats] = await db
+                .select({
+                    total: sql<string>`coalesce(sum(${paymentTransactions.advanceBalance}), 0)`
+                })
+                .from(paymentTransactions)
+                .where(and(eq(paymentTransactions.partyType, 'customer'), eq(paymentTransactions.partyId, customerId), eq(paymentTransactions.status, 'Confirmed'), sql`${paymentTransactions.advanceBalance} > 0`));
 
             // 3. Paginated Lists
             const customerInvoices = await db
@@ -420,7 +427,7 @@ router.get('/customer-ledger', async (req: Request, res: Response, next: NextFun
             const customerPayments = await db
                 .select()
                 .from(paymentTransactions)
-                .where(and(eq(paymentTransactions.partyType, 'customer'), eq(paymentTransactions.partyId, customerId)))
+                .where(and(eq(paymentTransactions.partyType, 'customer'), eq(paymentTransactions.partyId, customerId), ne(paymentTransactions.status, 'Reversed')))
                 .orderBy(desc(paymentTransactions.createdAt))
                 .limit(limit)
                 .offset(offset);
@@ -436,6 +443,8 @@ router.get('/customer-ledger', async (req: Request, res: Response, next: NextFun
                     totalInvoiced: parseFloat(invoiceStats.total),
                     totalReceived: parseFloat(paymentStats.total),
                     totalOutstanding: parseFloat(customer.outstanding || '0'),
+                    openingBalance: parseFloat(customer.openingBalance || '0'),
+                    advanceAmount: parseFloat(advanceStats.total),
                     invoiceCount: Number(invoiceStats.count),
                     paymentCount: Number(paymentStats.count)
                 },
@@ -517,7 +526,7 @@ router.get('/supplier-ledger', async (req: Request, res: Response, next: NextFun
                     count: countFn()
                 })
                 .from(paymentTransactions)
-                .where(and(eq(paymentTransactions.partyType, 'supplier'), eq(paymentTransactions.partyId, supplierId)));
+                .where(and(eq(paymentTransactions.partyType, 'supplier'), eq(paymentTransactions.partyId, supplierId), ne(paymentTransactions.status, 'Reversed')));
 
             // 3. Paginated Lists
             const supplierBills = await db
@@ -531,7 +540,7 @@ router.get('/supplier-ledger', async (req: Request, res: Response, next: NextFun
             const supplierPayments = await db
                 .select()
                 .from(paymentTransactions)
-                .where(and(eq(paymentTransactions.partyType, 'supplier'), eq(paymentTransactions.partyId, supplierId)))
+                .where(and(eq(paymentTransactions.partyType, 'supplier'), eq(paymentTransactions.partyId, supplierId), ne(paymentTransactions.status, 'Reversed')))
                 .orderBy(desc(paymentTransactions.createdAt))
                 .limit(limit)
                 .offset(offset);
@@ -1070,6 +1079,7 @@ router.get('/transactions', async (req: Request, res: Response, next: NextFuncti
             billAllocations.forEach(a => {
                 if (!allocationsMap[a.paymentId]) allocationsMap[a.paymentId] = [];
                 allocationsMap[a.paymentId].push({
+                    billId: a.billId,
                     billNumber: a.bill?.invoiceNumber || a.bill?.code,
                     amount: a.amount,
                     type: 'Purchase'
@@ -1079,6 +1089,7 @@ router.get('/transactions', async (req: Request, res: Response, next: NextFuncti
             invoiceAllocations.forEach(a => {
                 if (!allocationsMap[a.paymentId]) allocationsMap[a.paymentId] = [];
                 allocationsMap[a.paymentId].push({
+                    invoiceId: a.invoiceId,
                     billNumber: a.invoice?.invoiceNumber,
                     amount: a.amount,
                     type: 'Sales'
@@ -1487,6 +1498,13 @@ router.get('/ledger/:accountId', async (req: Request, res: Response, next: NextF
         // Get account details
         const [account] = await db.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, accountId));
         if (!account) throw createError('Account not found', 404);
+
+        if (account.type === 'CC') {
+            const [ccDetails] = await db.select().from(ccAccountDetails).where(eq(ccAccountDetails.accountId, accountId));
+            if (ccDetails) {
+                (account as any).sanctionedLimit = ccDetails.sanctionedLimit;
+            }
+        }
 
         // 1. Get Payment Transactions (Receipts/Payments)
         const paymentTxs = await db

@@ -1503,10 +1503,7 @@ router.delete('/payments/:id', async (req, res, next) => {
             }
         }
 
-        // 2. Revert Supplier Outstanding
-        if (payment.partyId && payment.partyType === 'supplier') {
-            await syncSupplierOutstanding(payment.partyId);
-        }
+        // 2. Removed Revert Supplier Outstanding from here because the DB row still exists during the query.
 
         // 3. Revert Bank Balance (INCREASE it back - Money In)
         if (payment.accountId) {
@@ -1527,6 +1524,11 @@ router.delete('/payments/:id', async (req, res, next) => {
 
         // 6. Delete Payment Transaction
         await db.delete(paymentTransactions).where(eq(paymentTransactions.id, id));
+
+        // 7. Update Supplier Outstanding AFTER the payment is successfully wiped from DB
+        if (payment.partyId && payment.partyType === 'supplier') {
+            await syncSupplierOutstanding(payment.partyId);
+        }
 
         // Invalidate cache
         cacheService.del('dashboard:kpis');

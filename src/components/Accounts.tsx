@@ -151,8 +151,8 @@ export function Accounts() {
   const getAvailableBalance = (a: any) => {
     if (a.type === 'CC') {
       const limit = parseFloat(a.sanctionedLimit || '0');
-      const utilized = Math.abs(parseFloat(a.balance || '0'));
-      return limit - utilized;
+      const balance = parseFloat(a.balance || '0');
+      return limit + balance;
     }
     return parseFloat(a.balance || '0');
   };
@@ -633,7 +633,7 @@ export function Accounts() {
                     {accountLedgerData.account.name} - Statement
                   </h3>
                   <p className="text-xs text-blue-600 mt-1">
-                    Current Balance: <span className="font-bold text-lg">₹{(accountLedgerData.account.type === 'CC' ? getAvailableBalance(accountLedgerData.account) : parseFloat(accountLedgerData.summary.currentBalance)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    {accountLedgerData.account.type === 'CC' ? 'Available Balance' : 'Current Balance'}: <span className="font-bold text-lg">₹{(accountLedgerData.account.type === 'CC' ? getAvailableBalance(accountLedgerData.account) : parseFloat(accountLedgerData.summary.currentBalance)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </p>
                 </div>
                 <div className="text-right text-xs text-gray-500">
@@ -859,9 +859,20 @@ export function Accounts() {
             </div>
             {ledgerData && (
               <div className="flex-1 bg-white p-4 rounded-lg border border-green-200 flex justify-between items-center">
-                <div>
-                  <p className="text-sm text-gray-500">Current Outstanding</p>
-                  <p className="text-2xl font-bold text-green-700">₹{ledgerData.summary?.totalOutstanding || '0.00'}</p>
+                <div className="flex gap-8 items-center">
+                  <div>
+                    <p className="text-sm text-gray-500">Current Outstanding</p>
+                    <p className={`text-2xl font-bold ${parseFloat(ledgerData.summary?.totalOutstanding || '0') < 0 ? 'text-blue-700' : 'text-green-700'}`}>
+                      ₹{Math.abs(parseFloat(ledgerData.summary?.totalOutstanding || '0')).toFixed(2)}
+                      {parseFloat(ledgerData.summary?.totalOutstanding || '0') < 0 && ' (Cr)'}
+                    </p>
+                  </div>
+                  {(ledgerData.summary?.advanceAmount || 0) > 0 && (
+                    <div className="pl-6 border-l border-gray-200">
+                      <p className="text-sm text-gray-500">Unallocated Advance</p>
+                      <p className="text-2xl font-bold text-blue-600">₹{ledgerData.summary?.advanceAmount}</p>
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -879,8 +890,18 @@ export function Accounts() {
                               <p class="text-lg font-medium text-gray-700 mb-6">${customerName}</p>
                               
                               <div className="mb-6 p-4 bg-gray-50 rounded border">
-                                <p class="text-sm text-gray-500">Total Outstanding</p>
-                                <p class="text-2xl font-bold text-red-700">₹${ledgerData.summary?.totalOutstanding || '0'}</p>
+                                <p class="text-sm text-gray-500">Opening Balance</p>
+                                <p class="text-xl font-bold text-gray-700">₹${ledgerData.summary?.openingBalance || '0'}</p>
+                                
+                                ${parseFloat(ledgerData.summary?.advanceAmount || '0') > 0 ? `
+                                <p class="text-sm text-gray-500 mt-2">Unallocated Advance</p>
+                                <p class="text-xl font-bold text-blue-700">₹${ledgerData.summary?.advanceAmount}</p>
+                                ` : ''}
+
+                                <p class="text-sm text-gray-500 mt-2">Total Outstanding (including Opening Balance)</p>
+                                <p class="text-2xl font-bold ${parseFloat(ledgerData.summary?.totalOutstanding || '0') < 0 ? 'text-blue-700' : 'text-red-700'}">
+                                  ₹${Math.abs(parseFloat(ledgerData.summary?.totalOutstanding || '0')).toFixed(2)} ${parseFloat(ledgerData.summary?.totalOutstanding || '0') < 0 ? '(Cr)' : ''}
+                                </p>
                               </div>
 
                               <h2 class="font-bold border-b pb-2 mt-8 mb-4">Unpaid Invoices</h2>
@@ -963,6 +984,18 @@ export function Accounts() {
 
           {ledgerData ? (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Opening Balance Panel */}
+              {parseFloat(ledgerData.summary?.openingBalance || '0') > 0 && (
+                <div className="lg:col-span-2 bg-blue-50 p-4 rounded-lg border border-blue-100 flex justify-between items-center">
+                  <div>
+                    <h3 className="font-semibold text-blue-800">Opening Balance</h3>
+                    <p className="text-sm text-blue-600">Initial outstanding balance carried forward</p>
+                  </div>
+                  <div className="text-xl font-bold text-blue-700">
+                    ₹{ledgerData.summary?.openingBalance}
+                  </div>
+                </div>
+              )}
               {/* Invoices */}
               <div className="bg-white rounded-lg border border-gray-200">
                 <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">

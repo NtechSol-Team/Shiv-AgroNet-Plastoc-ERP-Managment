@@ -363,10 +363,16 @@ export const salesApi = {
         }),
     getInvoiceForPrint: (id: string) => fetchApi<any>(`/sales/invoices/${id}/print`),
     getSummary: () => fetchApi<any>('/sales/summary'),
-    getOutstandingInvoices: (customerId: string) => fetchApi<any[]>(`/sales/outstanding/${customerId}`),
+    getOutstandingInvoices: (customerId: string, includeReceiptId?: string) =>
+        fetchApi<any[]>(`/sales/outstanding/${customerId}${includeReceiptId ? `?includeReceiptId=${includeReceiptId}` : ''}`),
     createReceipt: (data: any) =>
         fetchApi<any>('/sales/receipts', {
             method: 'POST',
+            body: JSON.stringify(data),
+        }),
+    updateReceipt: (id: string, data: any) =>
+        fetchApi<any>(`/sales/receipts/${id}`, {
+            method: 'PUT',
             body: JSON.stringify(data),
         }),
     deleteReceipt: (id: string) =>

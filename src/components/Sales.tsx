@@ -70,6 +70,7 @@ export function Sales() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null); // NEW: Success message state
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+  const [editingReceiptId, setEditingReceiptId] = useState<string | null>(null);
 
   const [salesInvoices, setSalesInvoices] = useState<any[]>([]);
   const [salesReceipts, setSalesReceipts] = useState<any[]>([]);
@@ -138,6 +139,7 @@ export function Sales() {
 
   const [outstandingInvoices, setOutstandingInvoices] = useState<any[]>([]);
   const [allocations, setAllocations] = useState<{ [key: string]: number }>({});
+  const [initialAllocations, setInitialAllocations] = useState<{ [key: string]: number }>({});
 
   const [expandedInvoice, setExpandedInvoice] = useState<string | null>(null);
 
@@ -588,11 +590,20 @@ export function Sales() {
         date: finalDate,
         allocations: allocationItems
       };
-      const result = await salesApi.createReceipt(payload);
+
+      let result;
+      if (editingReceiptId) {
+        result = await salesApi.updateReceipt(editingReceiptId, payload);
+      } else {
+        result = await salesApi.createReceipt(payload);
+      }
+
       if (result.error) {
         setError(result.error);
       } else {
         setShowReceiptForm(false);
+        setEditingReceiptId(null);
+        setInitialAllocations({});
         setReceiptForm({
           customerId: '',
           date: new Date().toISOString().split('T')[0],
@@ -600,19 +611,60 @@ export function Sales() {
           amount: '',
           accountId: '',
           isAdvance: false,
-          useAdvanceReceipt: false, // Reset new field
-          selectedAdvanceId: '',    // Reset new field
+          useAdvanceReceipt: false,
+          selectedAdvanceId: '',
           reference: '',
           remarks: ''
         });
         setAllocations({});
         fetchData();
-        setSuccess('Receipt recorded successfully'); // Add success msg similar to purchase (optional)
+        setSuccess(editingReceiptId ? 'Receipt updated successfully' : 'Receipt recorded successfully');
       }
     } catch (err) {
-      setError("Failed to create receipt");
+      setError(`Failed to ${editingReceiptId ? 'update' : 'create'} receipt`);
     }
     setSaving(false);
+  };
+
+  const handleEditReceipt = async (receipt: any) => {
+    setReceiptForm({
+      customerId: receipt.partyId,
+      date: new Date(receipt.date).toISOString().split('T')[0],
+      mode: receipt.mode,
+      amount: receipt.amount,
+      accountId: receipt.accountId || '',
+      reference: receipt.bankReference || '',
+      remarks: receipt.remarks || '',
+      useAdvanceReceipt: false, // For simplicity
+      selectedAdvanceId: '',
+      isAdvance: receipt.isAdvance && (!receipt.allocations || receipt.allocations.length === 0),
+    });
+    setEditingReceiptId(receipt.id);
+
+    // Set Allocations
+    const newAllocs: any = {};
+    const initAllocs: any = {};
+    if (receipt.allocations) {
+      receipt.allocations.forEach((a: any) => {
+        const amt = parseFloat(a.amount);
+        newAllocs[a.invoiceId] = amt;
+        initAllocs[a.invoiceId] = amt;
+      });
+    }
+    setAllocations(newAllocs);
+    setInitialAllocations(initAllocs);
+
+    // Fetch outstanding invoices (including the ones affected by this receipt)
+    try {
+      const res = await salesApi.getOutstandingInvoices(receipt.partyId, receipt.id);
+      if (res.data) {
+        setOutstandingInvoices(res.data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+
+    setShowReceiptForm(true);
   };
 
 
@@ -1253,9 +1305,14 @@ export function Sales() {
                             <td className="px-4 py-1.5 text-sm font-mono font-bold text-gray-900 text-right">₹{parseFloat(receipt.amount).toLocaleString()}</td>
                             <td className="px-4 py-1.5 text-right text-xs text-blue-600 font-bold">
                               {receipt.status !== 'Reversed' && (
-                                <button onClick={() => handleDeleteReceipt(receipt.id)} className="text-red-600 hover:text-red-800 flex items-center justify-end text-[10px] uppercase ml-auto" title="Delete Receipt">
-                                  <Trash2 className="w-3 h-3 mr-1" /> Delete
-                                </button>
+                                <div className="flex justify-end space-x-2">
+                                  <button onClick={() => handleEditReceipt(receipt)} className="text-blue-600 hover:text-blue-800 flex items-center text-[10px] uppercase" title="Edit Receipt">
+                                    <Edit2 className="w-3 h-3 mr-1" /> Edit
+                                  </button>
+                                  <button onClick={() => handleDeleteReceipt(receipt.id)} className="text-red-600 hover:text-red-800 flex items-center text-[10px] uppercase" title="Delete Receipt">
+                                    <Trash2 className="w-3 h-3 mr-1" /> Delete
+                                  </button>
+                                </div>
                               )}
                             </td>
                           </tr>
@@ -1270,11 +1327,11 @@ export function Sales() {
               <div className="bg-white border border-gray-300 rounded-sm shadow-sm">
                 {/* Header */}
                 <div className="bg-gray-100 px-4 py-2 border-b border-gray-300 flex justify-between items-center sticky top-0 z-10">
-                  <h2 className="text-sm font-bold text-gray-800 uppercase">New Payment Receipt</h2>
+                  <h2 className="text-sm font-bold text-gray-800 uppercase">{editingReceiptId ? 'Edit Payment Receipt' : 'New Payment Receipt'}</h2>
                   <div className="flex space-x-2">
-                    <button onClick={() => setShowReceiptForm(false)} className="px-3 py-1 text-xs font-bold text-gray-600 hover:text-red-600 border border-transparent hover:border-red-200 rounded-sm uppercase">Cancel</button>
+                    <button onClick={() => { setShowReceiptForm(false); setEditingReceiptId(null); setInitialAllocations({}); }} className="px-3 py-1 text-xs font-bold text-gray-600 hover:text-red-600 border border-transparent hover:border-red-200 rounded-sm uppercase">Cancel</button>
                     <button onClick={handleCreateReceipt} disabled={saving} className="px-3 py-1 bg-green-700 text-white text-xs font-bold uppercase rounded-sm hover:bg-green-800 shadow-sm flex items-center">
-                      {saving && <Loader2 className="w-3 h-3 animate-spin mr-1" />} Save Receipt
+                      {saving && <Loader2 className="w-3 h-3 animate-spin mr-1" />} {editingReceiptId ? 'Update Receipt' : 'Save Receipt'}
                     </button>
                   </div>
                 </div>
@@ -1437,7 +1494,8 @@ export function Sales() {
                             <tr><td colSpan={5} className="px-4 py-8 text-center text-xs text-gray-500 italic">No outstanding invoices found.</td></tr>
                           ) : (
                             outstandingInvoices.map((inv) => {
-                              const balance = parseFloat(inv.balanceAmount || inv.grandTotal);
+                              const baseBalance = parseFloat(inv.balanceAmount || inv.grandTotal);
+                              const balance = baseBalance + (initialAllocations[inv.id] || 0);
                               return (
                                 <tr key={inv.id} className="hover:bg-blue-50">
                                   <td className="px-3 py-1.5 text-xs text-gray-600">{new Date(inv.invoiceDate).toLocaleDateString()}</td>
