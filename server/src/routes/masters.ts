@@ -759,9 +759,10 @@ router.delete('/general-items/:id', async (req: Request, res: Response, next: Ne
 
 router.get('/accounts', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const cacheKey = 'masters:accounts';
-        const cached = cache.get(cacheKey);
-        if (cached) return res.json(successResponse(cached));
+        // Disabled caching so that balances update in exactly real-time
+        // const cacheKey = 'masters:accounts';
+        // const cached = cache.get(cacheKey);
+        // if (cached) return res.json(successResponse(cached));
 
         const items = await db.select().from(bankCashAccounts).orderBy(bankCashAccounts.code);
 
@@ -785,8 +786,8 @@ router.get('/accounts', async (req: Request, res: Response, next: NextFunction) 
                 }
             }
         }
-
-        cache.set(cacheKey, items);
+        // Store removed to disable caching
+        // cache.set(cacheKey, items);
         res.json(successResponse(items));
     } catch (error) {
         next(error);

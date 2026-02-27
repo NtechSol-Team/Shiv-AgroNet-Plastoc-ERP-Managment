@@ -637,7 +637,20 @@ export function Accounts() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className={`text-lg font-bold font-mono ${selectedAccountId === acc.id ? 'text-blue-800' : 'text-gray-900'}`}>₹{acc.type === 'CC' ? getAvailableBalance(acc).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : parseFloat(acc.balance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      {acc.type === 'CC' ? (
+                        <>
+                          <p className="text-xs text-gray-500 mb-1">
+                            Utilized: <span className="font-medium text-gray-900">₹{Math.abs(parseFloat(acc.balance || '0')).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </p>
+                          <p className={`text-lg font-bold font-mono ${selectedAccountId === acc.id ? 'text-blue-800' : 'text-gray-900'}`} title="Available Balance">
+                            ₹{getAvailableBalance(acc).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </p>
+                        </>
+                      ) : (
+                        <p className={`text-lg font-bold font-mono ${selectedAccountId === acc.id ? 'text-blue-800' : 'text-gray-900'}`}>
+                          ₹{parseFloat(acc.balance || '0').toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                      )}
                     </div>
                   </div>
                 ))}
