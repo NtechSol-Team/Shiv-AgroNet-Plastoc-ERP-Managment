@@ -447,9 +447,11 @@ export const accountsApi = {
 export const inventoryApi = {
     getFinishedGoods: () => fetchApi<any[]>('/inventory/finished-goods'),
     getRawMaterials: () => fetchApi<any[]>('/inventory/raw-materials'),
-    getMovements: (page = 1, limit = 50, params?: { itemType?: string; type?: string }) => {
-        const query = new URLSearchParams({ page: String(page), limit: String(limit), ...(params as any) }).toString();
-        return fetchApi<any>(`/inventory/movements?${query}`);
+    getMovements: (page = 1, limit = 50, params?: { itemId?: string; stockType?: string }) => {
+        const query = new URLSearchParams({ page: String(page), limit: String(limit) });
+        if (params?.itemId) query.append('itemId', params.itemId);
+        if (params?.stockType) query.append('stockType', params.stockType);
+        return fetchApi<any>(`/inventory/movements?${query.toString()}`);
     },
     getSummary: () => fetchApi<any>('/inventory/summary'),
     getAvailableBatches: (rawMaterialId: string) => fetchApi<any[]>(`/inventory/raw-materials/${rawMaterialId}/batches`),

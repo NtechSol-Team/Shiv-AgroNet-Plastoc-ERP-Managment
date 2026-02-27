@@ -21,7 +21,7 @@
 
 import { db } from '../db/index';
 import { stockMovements, rawMaterials, finishedProducts, purchaseBills, purchaseBillItems, productionBatches, rawMaterialBatches, rawMaterialRolls, purchaseBillAdjustments } from '../db/schema';
-import { eq, and, sql, desc, sum } from 'drizzle-orm';
+import { eq, and, sql, desc, or } from 'drizzle-orm';
 import { invalidateInventorySummary, invalidateDashboardKPIs } from './precomputed.service';
 
 // ============================================================
@@ -401,9 +401,29 @@ export async function getFinishedProductMovements(finishedProductId: string, lim
  * Used for the audit ledger view
  * Supports server-side pagination via limit + offset
  */
-export async function getAllMovementsWithDetails(limit: number = 50, offset: number = 0) {
+export async function getAllMovementsWithDetails(limit: number = 50, offset: number = 0, filters?: { itemId?: string; stockType?: 'IN' | 'OUT' }) {
+    const conditions = [];
+
+    if (filters?.itemId) {
+        conditions.push(
+            or(
+                eq(stockMovements.rawMaterialId, filters.itemId),
+                eq(stockMovements.finishedProductId, filters.itemId)
+            )
+        );
+    }
+
+    if (filters?.stockType === 'IN') {
+        conditions.push(sql`CAST(${stockMovements.quantityIn} AS NUMERIC) > 0`);
+    } else if (filters?.stockType === 'OUT') {
+        conditions.push(sql`CAST(${stockMovements.quantityOut} AS NUMERIC) > 0`);
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
     const [movements, totalResult] = await Promise.all([
         db.query.stockMovements.findMany({
+            where: whereClause,
             orderBy: (movements, { desc }) => [desc(movements.date)],
             limit,
             offset,
@@ -412,7 +432,9 @@ export async function getAllMovementsWithDetails(limit: number = 50, offset: num
                 finishedProduct: true
             }
         }),
-        db.select({ count: sql<number>`count(*)::int` }).from(stockMovements)
+        db.select({ count: sql<number>`count(*)::int` })
+            .from(stockMovements)
+            .where(whereClause)
     ]);
     return {
         data: movements,

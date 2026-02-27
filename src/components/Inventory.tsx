@@ -20,6 +20,7 @@ export function Inventory() {
   const [ledgerTotal, setLedgerTotal] = useState(0);
   const [ledgerTotalPages, setLedgerTotalPages] = useState(1);
   const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerFilters, setLedgerFilters] = useState<{ itemId: string; stockType: string }>({ itemId: '', stockType: '' });
   const LEDGER_PAGE_SIZE = 50;
 
   // Edit Modal State
@@ -56,7 +57,7 @@ export function Inventory() {
     if (activeTab === 'movements') {
       fetchLedgerPage(1);
     }
-  }, [activeTab]);
+  }, [activeTab, ledgerFilters]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -80,7 +81,11 @@ export function Inventory() {
     setLedgerLoading(true);
     setError(null);
     try {
-      const result = await inventoryApi.getMovements(page, LEDGER_PAGE_SIZE);
+      const params: any = {};
+      if (ledgerFilters.itemId) params.itemId = ledgerFilters.itemId;
+      if (ledgerFilters.stockType) params.stockType = ledgerFilters.stockType;
+
+      const result = await inventoryApi.getMovements(page, LEDGER_PAGE_SIZE, params);
       if (result.data) {
         setStockMovements(result.data.data || []);
         setLedgerTotal(result.data.total || 0);
@@ -379,11 +384,53 @@ export function Inventory() {
               {activeTab === 'movements' && (
                 <div>
                   {/* Ledger Header with count info */}
-                  <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-gray-50">
-                    <span className="text-xs text-gray-500">
-                      {ledgerLoading ? 'Loading...' : `Showing ${stockMovements.length ? ((ledgerPage - 1) * LEDGER_PAGE_SIZE + 1) : 0}–${Math.min(ledgerPage * LEDGER_PAGE_SIZE, ledgerTotal)} of ${ledgerTotal} entries`}
-                    </span>
-                    <span className="text-xs font-medium text-gray-600">Page {ledgerPage} of {ledgerTotalPages}</span>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50 gap-4">
+                    <div className="flex items-center gap-3">
+                      <select
+                        value={ledgerFilters.stockType}
+                        onChange={(e) => setLedgerFilters(prev => ({ ...prev, stockType: e.target.value }))}
+                        className="px-3 py-1.5 border border-gray-300 rounded text-sm bg-white focus:ring-1 focus:ring-blue-500"
+                      >
+                        <option value="">All Movements</option>
+                        <option value="IN">Stock IN (+)</option>
+                        <option value="OUT">Stock OUT (-)</option>
+                      </select>
+
+                      <select
+                        value={ledgerFilters.itemId}
+                        onChange={(e) => setLedgerFilters(prev => ({ ...prev, itemId: e.target.value }))}
+                        className="px-3 py-1.5 border border-gray-300 rounded text-sm bg-white focus:ring-1 focus:ring-blue-500 max-w-xs"
+                      >
+                        <option value="">All Items</option>
+                        <optgroup label="Finished Goods">
+                          {finishedGoods.map(fg => (
+                            <option key={fg.id} value={fg.id}>{fg.name} ({fg.code})</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="Raw Materials">
+                          {rawMaterials.map(rm => (
+                            <option key={rm.id} value={rm.id}>{rm.name} ({rm.code})</option>
+                          ))}
+                        </optgroup>
+                      </select>
+
+                      {(ledgerFilters.itemId || ledgerFilters.stockType) && (
+                        <button
+                          onClick={() => setLedgerFilters({ itemId: '', stockType: '' })}
+                          className="text-gray-500 hover:text-red-600 p-1"
+                          title="Clear Filters"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-4">
+                      <span className="text-xs text-gray-500">
+                        {ledgerLoading ? 'Loading...' : `Showing ${stockMovements.length ? ((ledgerPage - 1) * LEDGER_PAGE_SIZE + 1) : 0}–${Math.min(ledgerPage * LEDGER_PAGE_SIZE, ledgerTotal)} of ${ledgerTotal} entries`}
+                      </span>
+                      <span className="text-xs font-medium text-gray-600">Page {ledgerPage} of {ledgerTotalPages}</span>
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto relative">
@@ -468,8 +515,8 @@ export function Inventory() {
                                 onClick={() => fetchLedgerPage(p as number)}
                                 disabled={ledgerLoading}
                                 className={`w-7 h-7 text-xs font-medium rounded transition-colors ${p === ledgerPage
-                                    ? 'bg-blue-600 text-white'
-                                    : 'border border-gray-300 hover:bg-white text-gray-600'
+                                  ? 'bg-blue-600 text-white'
+                                  : 'border border-gray-300 hover:bg-white text-gray-600'
                                   }`}
                               >
                                 {p}
