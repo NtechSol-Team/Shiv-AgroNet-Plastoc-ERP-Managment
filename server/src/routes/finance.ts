@@ -455,6 +455,17 @@ router.post('/transactions', validateRequest(createTransactionSchema), async (re
                 });
             }
 
+            // Detailed Console Log for Accounting Entry
+            console.log('\n======================================================');
+            console.log(`[ACCOUNTING LOG] FINANCE TX Recorded Successfully`);
+            console.log('======================================================');
+            console.log(`Transaction ID : ${newTx.id}`);
+            console.log(`Date           : ${new Date(transactionDate).toLocaleString()}`);
+            console.log(`Amount         : ₹${amt.toFixed(2)} ([${paymentMode}])`);
+            console.log(`Type           : ${transactionType}`);
+            console.log(`Remarks        : ${remarks || 'N/A'}`);
+            console.log('------------------------------------------------------\n');
+
             res.json(successResponse(newTx));
         });
 

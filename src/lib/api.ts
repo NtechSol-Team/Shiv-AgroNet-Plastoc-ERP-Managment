@@ -426,11 +426,14 @@ export const accountsApi = {
         }),
     // Supplier Advance Refund
     getSupplierAdvances: (supplierId: string) => fetchApi<any>(`/accounts/supplier-advances/${supplierId}`),
+    getSupplierAdvanceRefunds: () => fetchApi<any[]>('/accounts/supplier-advance-refunds'),
     createSupplierAdvanceRefund: (data: any) =>
         fetchApi<any>('/accounts/supplier-advance-refund', {
             method: 'POST',
             body: JSON.stringify(data),
         }),
+    deleteSupplierAdvanceRefund: (id: string) =>
+        fetchApi<any>(`/accounts/supplier-advance-refund/${id}`, { method: 'DELETE' }),
     // Bank-to-Bank Transfer
     getBankTransfers: () => fetchApi<any[]>('/accounts/bank-transfers'),
     createBankTransfer: (data: any) =>

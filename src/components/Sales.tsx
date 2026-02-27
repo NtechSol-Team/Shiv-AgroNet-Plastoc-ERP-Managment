@@ -1268,6 +1268,7 @@ export function Sales() {
                         <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Receipt #</th>
                         <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Customer</th>
                         <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Mode</th>
+                        <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Account</th>
                         <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Amount</th>
                         <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right w-24">Actions</th>
                       </tr>
@@ -1275,7 +1276,7 @@ export function Sales() {
                     <tbody className="divide-y divide-gray-200">
                       {salesReceipts.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="px-6 py-12 text-center text-sm text-gray-500 italic">No receipts recorded.</td>
+                          <td colSpan={8} className="px-6 py-12 text-center text-sm text-gray-500 italic">No receipts recorded.</td>
                         </tr>
                       ) : (
                         salesReceipts.map((receipt) => (
@@ -1302,6 +1303,7 @@ export function Sales() {
                             </td>
                             <td className="px-4 py-1.5 text-sm font-bold text-gray-900">{receipt.partyName}</td>
                             <td className="px-4 py-1.5 text-sm font-medium text-gray-600">{receipt.mode}</td>
+                            <td className="px-4 py-1.5 text-sm font-medium text-gray-800">{receipt.accountName || '-'}</td>
                             <td className="px-4 py-1.5 text-sm font-mono font-bold text-gray-900 text-right">₹{parseFloat(receipt.amount).toLocaleString()}</td>
                             <td className="px-4 py-1.5 text-right text-xs text-blue-600 font-bold">
                               {receipt.status !== 'Reversed' && (
@@ -1583,6 +1585,7 @@ export function Sales() {
                     <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Date</th>
                     <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Ref #</th>
                     <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Customer</th>
+                    <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Account</th>
                     <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Amount</th>
                     <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Adjusted</th>
                     <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Balance</th>
@@ -1591,7 +1594,7 @@ export function Sales() {
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                   {salesReceipts.filter(p => p.isAdvance).length === 0 ? (
-                    <tr><td colSpan={7} className="px-6 py-12 text-center text-sm text-gray-500 italic">No advance receipts found.</td></tr>
+                    <tr><td colSpan={8} className="px-6 py-12 text-center text-sm text-gray-500 italic">No advance receipts found.</td></tr>
                   ) : (
                     salesReceipts.filter(p => p.isAdvance).map(receipt => {
                       const amount = parseFloat(receipt.amount);
@@ -1602,6 +1605,7 @@ export function Sales() {
                           <td className="px-4 py-2 text-xs text-gray-600">{new Date(receipt.date).toLocaleDateString()}</td>
                           <td className="px-4 py-2 text-xs font-mono font-bold text-blue-700">{receipt.code}</td>
                           <td className="px-4 py-2 text-sm font-bold text-gray-900">{receipt.partyName}</td>
+                          <td className="px-4 py-2 text-sm font-medium text-gray-800">{receipt.accountName || '-'}</td>
                           <td className="px-4 py-2 text-sm font-mono font-bold text-right">₹{amount.toLocaleString()}</td>
                           <td className="px-4 py-2 text-sm font-mono text-gray-600 text-right">₹{adjusted.toLocaleString()}</td>
                           <td className="px-4 py-2 text-sm font-mono font-bold text-purple-700 text-right">₹{balance.toLocaleString()}</td>

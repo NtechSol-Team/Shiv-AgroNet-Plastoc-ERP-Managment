@@ -798,6 +798,20 @@ router.post('/transactions', validateRequest(recordPaymentSchema), async (req: R
                 partyNewOutstanding: parseFloat(partyNewOutstanding).toFixed(2),
             }));
 
+            // Detailed Console Log for Accounting Entry
+            console.log('\n======================================================');
+            console.log(`[ACCOUNTING LOG] ${type} Recorded Successfully`);
+            console.log('======================================================');
+            console.log(`Transaction ID : ${newTx.code}`);
+            console.log(`Date           : ${new Date(date || Date.now()).toLocaleString()}`);
+            console.log(`Amount         : ₹${parseFloat(String(amount)).toFixed(2)} ([${mode}])`);
+            console.log(`Party          : ${partyName} (${partyType.toUpperCase()})`);
+            console.log(`Ref / Type     : ${referenceCode} (${finalIsAdvance ? 'Advance' : 'Against Invoice/Bill'})`);
+            console.log(`Remarks        : ${remarks || 'N/A'}`);
+            console.log(`New Balance    : ₹${parseFloat(newBalance).toFixed(2)} (Account)`);
+            console.log(`New Outstanding: ₹${parseFloat(partyNewOutstanding).toFixed(2)} (Party)`);
+            console.log('------------------------------------------------------\n');
+
             // Invalidate accounts cache
             cache.del('masters:accounts');
         });
@@ -1286,6 +1300,18 @@ router.post('/expenses', validateRequest(createExpenseSchema), async (req: Reque
                 expense: expenseCreate,
                 accountNewBalance: parseFloat(accountUpdate?.newBalance || '0').toFixed(2),
             }));
+            // Detailed Console Log for Accounting Entry
+            console.log('\n======================================================');
+            console.log(`[ACCOUNTING LOG] EXPENSE Recorded Successfully`);
+            console.log('======================================================');
+            console.log(`Expense Code   : ${expenseCreate.code}`);
+            console.log(`Date           : ${new Date(date || Date.now()).toLocaleString()}`);
+            console.log(`Amount         : ₹${parseFloat(String(amount)).toFixed(2)} ([${paymentMode}])`);
+            console.log(`Expense Head   : ${expenseHead.name}`);
+            console.log(`Description    : ${expenseCreate.description || 'N/A'}`);
+            console.log(`Reference      : ${reference || 'N/A'}`);
+            console.log(`New Balance    : ₹${parseFloat(accountUpdate?.newBalance || '0').toFixed(2)} (Account)`);
+            console.log('------------------------------------------------------\n');
         });
     } catch (error) {
         next(error);
@@ -1856,6 +1882,132 @@ router.post('/supplier-advance-refund', async (req: Request, res: Response, next
             }));
         });
     } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * GET /accounts/supplier-advance-refunds
+ * List all supplier advance refunds history
+ */
+router.get('/supplier-advance-refunds', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const refunds = await db
+            .select({
+                id: paymentTransactions.id,
+                code: paymentTransactions.code,
+                date: paymentTransactions.date,
+                amount: paymentTransactions.amount,
+                remarks: paymentTransactions.remarks,
+                supplierId: paymentTransactions.partyId,
+                supplierName: suppliers.name,
+                accountId: paymentTransactions.accountId,
+                accountName: bankCashAccounts.name,
+                referenceCode: paymentTransactions.referenceCode,
+                createdAt: paymentTransactions.createdAt
+            })
+            .from(paymentTransactions)
+            .leftJoin(suppliers, eq(paymentTransactions.partyId, suppliers.id))
+            .leftJoin(bankCashAccounts, eq(paymentTransactions.accountId, bankCashAccounts.id))
+            .where(eq(paymentTransactions.type, 'SUPPLIER_ADVANCE_REFUND'))
+            .orderBy(desc(paymentTransactions.date));
+
+        res.json(successResponse(refunds));
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * DELETE /accounts/supplier-advance-refund/:id
+ * Delete a supplier advance refund and revert all balances
+ */
+router.delete('/supplier-advance-refund/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+
+        console.log(`\n[ACCOUNTING LOG] Attempting to delete supplier advance refund TX: ${id}`);
+
+        await db.transaction(async (tx) => {
+            // 1. Fetch the refund transaction
+            const [refundTx] = await tx.select().from(paymentTransactions)
+                .where(and(
+                    eq(paymentTransactions.id, id),
+                    eq(paymentTransactions.type, 'SUPPLIER_ADVANCE_REFUND')
+                ));
+
+            if (!refundTx) {
+                console.log(`[ACCOUNTING ERROR] Refund transaction ${id} not found or invalid type`);
+                throw createError('Supplier advance refund not found', 404);
+            }
+
+            const refundAmount = parseFloat(refundTx.amount);
+            const supplierId = refundTx.partyId!;
+            const accountId = refundTx.accountId!;
+
+            console.log(`[ACCOUNTING LOG] Refund details - Supplier: ${supplierId}, Account: ${accountId}, Amount: ₹${refundAmount}`);
+
+            // 2. Fetch the corresponding supplier
+            const [supplier] = await tx.select().from(suppliers).where(eq(suppliers.id, supplierId));
+            if (!supplier) throw createError('Associated supplier not found', 404);
+
+            // 3. Reverse Bank/Cash Account Balance (Decrease - since refund increased it)
+            console.log(`[ACCOUNTING LOG] Reversing bank/cash account balance for: ${accountId}`);
+            await tx.update(bankCashAccounts)
+                .set({
+                    balance: sql`${bankCashAccounts.balance}::numeric - ${refundAmount}`,
+                    updatedAt: new Date()
+                })
+                .where(eq(bankCashAccounts.id, accountId));
+
+            // 4. Delete associated general ledger entries
+            console.log(`[ACCOUNTING LOG] Deleting associated general ledger entries for TX: ${id}`);
+            await tx.delete(generalLedger).where(eq(generalLedger.referenceId, id));
+
+            // 5. Restore the supplier's available advance pool
+            // Find the most recent advances for this supplier to add the balance back
+            // (We are adding it back to the first available advance to keep it simple, 
+            // since we reduced from FIFO, ideally we'd reverse LIFO but any active advance works for the pool)
+            const [latestAdvance] = await tx
+                .select()
+                .from(paymentTransactions)
+                .where(and(
+                    eq(paymentTransactions.partyId, supplierId),
+                    eq(paymentTransactions.partyType, 'supplier'),
+                    sql`${paymentTransactions.isAdvance} = true`
+                ))
+                .orderBy(desc(paymentTransactions.date))
+                .limit(1);
+
+            if (latestAdvance) {
+                console.log(`[ACCOUNTING LOG] Restoring advance balance pool to advance TX: ${latestAdvance.id}`);
+                const currentAdvBal = parseFloat(latestAdvance.advanceBalance || '0');
+                const newAdvBal = currentAdvBal + refundAmount;
+                await tx.update(paymentTransactions)
+                    .set({ advanceBalance: String(newAdvBal.toFixed(2)) })
+                    .where(eq(paymentTransactions.id, latestAdvance.id));
+            } else {
+                console.log(`[ACCOUNTING ERROR] Could not find an original advance to restore the pool. Discarding restoration.`);
+                // If we can't find an advance, we might have an issue, but we still need to delete the refund.
+            }
+
+            // 6. Delete the refund transaction itself
+            console.log(`[ACCOUNTING LOG] Deleting the refund transaction record`);
+            await tx.delete(paymentTransactions).where(eq(paymentTransactions.id, id));
+
+            // 7. Sync supplier outstanding
+            console.log(`[ACCOUNTING LOG] Syncing supplier outstanding for: ${supplierId}`);
+            await syncSupplierOutstanding(supplierId, tx);
+
+            console.log(`[ACCOUNTING LOG] Successfully deleted supplier advance refund TX: ${id}\n`);
+
+            cache.del('masters:suppliers');
+            cache.del('masters:accounts');
+
+            res.json(successResponse({ message: 'Supplier advance refund deleted successfully' }));
+        });
+    } catch (error) {
+        console.error(`[ACCOUNTING ERROR] Failed to delete supplier advance refund:`, error);
         next(error);
     }
 });

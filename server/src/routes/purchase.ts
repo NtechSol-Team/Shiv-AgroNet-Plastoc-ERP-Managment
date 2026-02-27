@@ -424,6 +424,22 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
         console.log('\n✅ POST /purchase/bills - SUCCESS');
         console.log('================================\n');
 
+        // Detailed Console Log for Accounting Entry
+        console.log('\n======================================================');
+        console.log(`[ACCOUNTING LOG] PURCHASE BILL Created Successfully`);
+        console.log('======================================================');
+        console.log(`Bill Code      : ${billCode}`);
+        console.log(`Invoice No     : ${invoiceNumber}`);
+        console.log(`Date           : ${new Date(date).toLocaleString()}`);
+        console.log(`Supplier       : ${supplier.name}`);
+        console.log(`Type           : ${type}`);
+        console.log(`Items Count    : ${items.length} item(s)`);
+        console.log(`Taxable Amount : ₹${parseFloat(String(subtotal - discountAmount)).toFixed(2)}`);
+        console.log(`Total Tax      : ₹${parseFloat(String(totalTax)).toFixed(2)}`);
+        console.log(`Grand Total    : ₹${parseFloat(String(grandTotal)).toFixed(2)}`);
+        console.log(`Status         : ${status}`);
+        console.log('------------------------------------------------------\n');
+
         res.json(successResponse({
             ...bill,
             supplier,
@@ -968,10 +984,12 @@ router.delete('/bills/:id', async (req: Request, res: Response, next: NextFuncti
                         // Delete the original FG_IN that this bill created
                         const deleted = await db.delete(stockMovements)
                             .where(
-                                sql`${stockMovements.referenceType} = 'purchase'
-                                        AND ${stockMovements.referenceId} = ${id}
-                                        AND ${stockMovements.finishedProductId} = ${item.finishedProductId}
-                                        AND ${stockMovements.movementType} = 'FG_IN'`
+                                and(
+                                    eq(stockMovements.referenceType, 'purchase'),
+                                    eq(stockMovements.referenceId, id),
+                                    eq(stockMovements.finishedProductId, item.finishedProductId),
+                                    eq(stockMovements.movementType, 'FG_IN')
+                                )
                             )
                             .returning({ id: stockMovements.id });
 

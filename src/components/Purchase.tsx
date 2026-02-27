@@ -1900,6 +1900,7 @@ export function Purchase() {
                       <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Payment #</th>
                       <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Supplier</th>
                       <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Mode</th>
+                      <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Account</th>
                       <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right">Amount</th>
                       <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider text-right w-24">Actions</th>
                     </tr>
@@ -1916,7 +1917,7 @@ export function Purchase() {
                       });
 
                       if (filtered.length === 0) {
-                        return <tr><td colSpan={6} className="px-6 py-12 text-center text-sm text-gray-500 italic">No payments match your filters.</td></tr>;
+                        return <tr><td colSpan={7} className="px-6 py-12 text-center text-sm text-gray-500 italic">No payments match your filters.</td></tr>;
                       }
 
                       return filtered.map((payment) => (
@@ -1945,6 +1946,7 @@ export function Purchase() {
                             )}
                           </td>
                           <td className="px-4 py-1.5 text-sm font-medium text-gray-600">{payment.mode}</td>
+                          <td className="px-4 py-1.5 text-sm font-medium text-gray-800">{payment.accountName || '-'}</td>
                           <td className="px-4 py-1.5 text-sm font-mono font-bold text-gray-900 text-right">₹{parseFloat(payment.amount).toLocaleString()}</td>
                           <td className="px-4 py-1.5 text-right text-xs text-blue-600 font-bold">
                             {payment.status !== 'Reversed' && (
@@ -1997,6 +1999,7 @@ export function Purchase() {
                     <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Date</th>
                     <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Ref #</th>
                     <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider">Supplier</th>
+                    <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32">Account</th>
                     <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32 text-right">Amount</th>
                     <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32 text-right">Adjusted</th>
                     <th className="px-4 py-2 text-xs font-bold text-gray-700 uppercase tracking-wider w-32 text-right">Balance</th>
@@ -2005,7 +2008,7 @@ export function Purchase() {
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                   {purchasePayments.filter(p => p.isAdvance).length === 0 ? (
-                    <tr><td colSpan={7} className="px-6 py-12 text-center text-sm text-gray-500 italic">No advance payments found.</td></tr>
+                    <tr><td colSpan={8} className="px-6 py-12 text-center text-sm text-gray-500 italic">No advance payments found.</td></tr>
                   ) : (
                     purchasePayments.filter(p => p.isAdvance).map((payment) => {
                       const amount = parseFloat(payment.amount);
@@ -2021,6 +2024,7 @@ export function Purchase() {
                             {payment.status === 'Reversed' && <span className="ml-2 text-[9px] bg-red-200 text-red-800 px-1 rounded">REVERSED</span>}
                           </td>
                           <td className="px-4 py-1.5 text-sm font-bold text-gray-900">{payment.partyName}</td>
+                          <td className="px-4 py-1.5 text-sm font-medium text-gray-800">{payment.accountName || '-'}</td>
                           <td className="px-4 py-1.5 text-sm font-mono font-bold text-gray-900 text-right">₹{amount.toLocaleString()}</td>
                           <td className="px-4 py-1.5 text-sm font-mono text-green-700 text-right">₹{adjusted.toLocaleString()}</td>
                           <td className="px-4 py-1.5 text-sm font-mono font-bold text-red-600 text-right">₹{balance.toLocaleString()}</td>

@@ -394,6 +394,20 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
             cacheService.del('masters:customers');
         }
 
+        // Detailed Console Log for Accounting Entry
+        console.log('\n======================================================');
+        console.log(`[ACCOUNTING LOG] INVOICE Created Successfully`);
+        console.log('======================================================');
+        console.log(`Invoice No     : ${invoiceNumber}`);
+        console.log(`Date           : ${new Date(invoiceDate).toLocaleString()}`);
+        console.log(`Customer       : ${finalCustomerName} (${invoiceType})`);
+        console.log(`Items Count    : ${items.length} item(s)`);
+        console.log(`Taxable Amount : ₹${parseFloat(String(taxableTotal)).toFixed(2)}`);
+        console.log(`Total Tax      : ₹${parseFloat(String(totalTax)).toFixed(2)}`);
+        console.log(`Grand Total    : ₹${parseFloat(String(grandTotal)).toFixed(2)}`);
+        console.log(`Status         : ${status}`);
+        console.log('------------------------------------------------------\n');
+
         res.json(successResponse({
             ...invoice,
             customer,
@@ -470,6 +484,19 @@ router.post('/invoices/:id/payment', async (req: Request, res: Response, next: N
             await syncCustomerOutstanding(invoice.customerId);
             cacheService.del('masters:customers');
         }
+
+        // Detailed Console Log for Accounting Entry
+        console.log('\n======================================================');
+        console.log(`[ACCOUNTING LOG] INVOICE PAYMENT Recorded Successfully`);
+        console.log('======================================================');
+        console.log(`Payment Code   : ${paymentCode}`);
+        console.log(`Invoice No     : ${invoice.invoiceNumber}`);
+        console.log(`Date           : ${new Date().toLocaleString()}`);
+        console.log(`Amount Paid    : ₹${parseFloat(String(amount)).toFixed(2)} ([${paymentMode}])`);
+        console.log(`New Paid Total : ₹${parseFloat(String(newPaid)).toFixed(2)}`);
+        console.log(`New Balance    : ₹${parseFloat(String(newBalance)).toFixed(2)}`);
+        console.log(`Payment Status : ${paymentStatus}`);
+        console.log('------------------------------------------------------\n');
 
         res.json(successResponse({
             message: 'Payment recorded',
@@ -859,6 +886,18 @@ router.post('/receipts', async (req: Request, res: Response, next: NextFunction)
         cacheService.del('dashboard:kpis');
         cacheService.del('finance:transactions');
         cacheService.del('masters:customers');
+
+        // Detailed Console Log for Accounting Entry
+        console.log('\n======================================================');
+        console.log(`[ACCOUNTING LOG] SALES RECEIPT Recorded Successfully`);
+        console.log('======================================================');
+        console.log(`Receipt Code   : ${code}`);
+        console.log(`Date           : ${new Date().toLocaleString()}`);
+        console.log(`Customer       : ${customer.name}`);
+        console.log(`Amount Paid    : ₹${parseFloat(String(amount)).toFixed(2)} ([${finalMode}])`);
+        console.log(`Allocations    : ${allocations.length} invoice(s) settled`);
+        console.log(`Remarks        : ${useAdvanceReceipt ? 'Advance Adjusted' : 'Regular Receipt'}`);
+        console.log('------------------------------------------------------\n');
 
         res.json(successResponse({
             receiptId: transactionId,
