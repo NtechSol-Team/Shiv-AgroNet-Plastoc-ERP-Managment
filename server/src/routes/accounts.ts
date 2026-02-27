@@ -402,7 +402,7 @@ router.get('/customer-ledger', async (req: Request, res: Response, next: NextFun
 
             const [paymentStats] = await db
                 .select({
-                    total: sql<string>`coalesce(sum(${paymentTransactions.amount}), 0)`,
+                    total: sql<string>`coalesce(sum(CASE WHEN ${paymentTransactions.type} = 'PAYMENT' THEN -(${paymentTransactions.amount}::numeric) ELSE (${paymentTransactions.amount}::numeric) END), 0)`,
                     count: countFn()
                 })
                 .from(paymentTransactions)
@@ -461,7 +461,7 @@ router.get('/customer-ledger', async (req: Request, res: Response, next: NextFun
 
             // We only calculate global Invoiced/Received if needed, but it's good for dashboard
             const [invoiceGlobal] = await db.select({ total: sql<string>`coalesce(sum(${invoices.grandTotal}), 0)` }).from(invoices);
-            const [paymentGlobal] = await db.select({ total: sql<string>`coalesce(sum(${paymentTransactions.amount}), 0)` }).from(paymentTransactions).where(eq(paymentTransactions.partyType, 'customer'));
+            const [paymentGlobal] = await db.select({ total: sql<string>`coalesce(sum(CASE WHEN ${paymentTransactions.type} = 'PAYMENT' THEN -(${paymentTransactions.amount}::numeric) ELSE (${paymentTransactions.amount}::numeric) END), 0)` }).from(paymentTransactions).where(eq(paymentTransactions.partyType, 'customer'));
 
             // Paginated Customers
             const paginatedCustomers = await db
@@ -522,7 +522,7 @@ router.get('/supplier-ledger', async (req: Request, res: Response, next: NextFun
 
             const [paymentStats] = await db
                 .select({
-                    total: sql<string>`coalesce(sum(${paymentTransactions.amount}), 0)`,
+                    total: sql<string>`coalesce(sum(CASE WHEN ${paymentTransactions.type} IN ('RECEIPT', 'SUPPLIER_ADVANCE_REFUND') THEN -(${paymentTransactions.amount}::numeric) ELSE (${paymentTransactions.amount}::numeric) END), 0)`,
                     count: countFn()
                 })
                 .from(paymentTransactions)
@@ -570,7 +570,7 @@ router.get('/supplier-ledger', async (req: Request, res: Response, next: NextFun
             }).from(suppliers);
 
             const [billGlobal] = await db.select({ total: sql<string>`coalesce(sum(${purchaseBills.grandTotal}), 0)` }).from(purchaseBills);
-            const [paymentGlobal] = await db.select({ total: sql<string>`coalesce(sum(${paymentTransactions.amount}), 0)` }).from(paymentTransactions).where(eq(paymentTransactions.partyType, 'supplier'));
+            const [paymentGlobal] = await db.select({ total: sql<string>`coalesce(sum(CASE WHEN ${paymentTransactions.type} IN ('RECEIPT', 'SUPPLIER_ADVANCE_REFUND') THEN -(${paymentTransactions.amount}::numeric) ELSE (${paymentTransactions.amount}::numeric) END), 0)` }).from(paymentTransactions).where(eq(paymentTransactions.partyType, 'supplier'));
 
             const paginatedSuppliers = await db
                 .select()

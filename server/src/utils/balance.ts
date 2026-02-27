@@ -1,6 +1,6 @@
 import { db } from '../db';
 import { suppliers, customers, purchaseBills, salesInvoices, billPaymentAllocations, invoicePaymentAllocations, paymentTransactions } from '../db/schema';
-import { eq, and, ne } from 'drizzle-orm';
+import { eq, and, ne, inArray } from 'drizzle-orm';
 
 /**
  * Recalculate and update the outstanding balance for a supplier.
@@ -25,13 +25,19 @@ export async function syncSupplierOutstanding(supplierId: string, tx?: any) {
         .where(
             and(
                 eq(paymentTransactions.partyId, supplierId),
-                eq(paymentTransactions.type, 'PAYMENT'),
+                inArray(paymentTransactions.type, ['PAYMENT', 'SUPPLIER_ADVANCE_REFUND']),
                 ne(paymentTransactions.mode, 'Adjustment'),
                 ne(paymentTransactions.status, 'Reversed')
             )
         );
 
-    const totalPaid = allPayments.reduce((sum: number, p: any) => sum + parseFloat(p.amount || '0'), 0);
+    const totalPaid = allPayments.reduce((sum: number, p: any) => {
+        const amt = parseFloat(p.amount || '0');
+        if (p.type === 'SUPPLIER_ADVANCE_REFUND') {
+            return sum - amt;
+        }
+        return sum + amt;
+    }, 0);
 
     // Opening Balance + Bills - Payments (allow negative for advance)
     const correctOutstanding = totalBillAmount - totalPaid;
