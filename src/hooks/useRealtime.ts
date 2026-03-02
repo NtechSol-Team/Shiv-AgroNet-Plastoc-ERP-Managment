@@ -13,8 +13,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { RealtimeEvent, RealtimeEventType } from '../types/realtime';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-const SSE_URL = `${API_BASE}/api/events`;
+const VITE_API_URL = import.meta.env.VITE_API_URL;
+// If VITE_API_URL is provided, use it. If it ends with /api, we'll append /events.
+// Otherwise, default to localhost:3001/api.
+const API_BASE = VITE_API_URL || 'http://localhost:3001/api';
+const SSE_URL = API_BASE.endsWith('/api') ? `${API_BASE}/events` : `${API_BASE}/api/events`;
 
 // Exponential back-off config
 const INITIAL_RETRY_MS = 1_000;
