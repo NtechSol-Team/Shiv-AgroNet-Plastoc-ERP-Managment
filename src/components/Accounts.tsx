@@ -90,6 +90,14 @@ export function Accounts() {
     h.name.toLowerCase().includes(expenseHeadSearch.toLowerCase())
   );
 
+  // Expense List Filter State
+  const [showExpenseFilters, setShowExpenseFilters] = useState(false);
+  const [expFilterDateFrom, setExpFilterDateFrom] = useState('');
+  const [expFilterDateTo, setExpFilterDateTo] = useState('');
+  const [expFilterCategory, setExpFilterCategory] = useState('');
+  const [expFilterPaymentMode, setExpFilterPaymentMode] = useState('');
+  const [expFilterSearch, setExpFilterSearch] = useState('');
+
   // Modal States
 
   const [showExpenseModal, setShowExpenseModal] = useState(false);
@@ -1336,37 +1344,223 @@ export function Accounts() {
       )}
 
       {/* EXPENSES TAB */}
-      {activeTab === 'expenses' && (
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
-          <table className="w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Paid From</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {expenses.map((exp, idx) => (
-                <tr key={idx} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 text-sm">{new Date(exp.date).toLocaleDateString()}</td>
-                  <td className="px-6 py-4 text-sm font-medium">{exp.expenseHead?.name}</td>
-                  <td className="px-6 py-4 text-sm text-gray-500">{exp.description}</td>
-                  <td className="px-6 py-4 text-sm text-gray-500">{exp.account?.name}</td>
-                  <td className="px-6 py-4 text-sm text-right text-red-600 font-medium">- ₹{parseFloat(exp.amount).toLocaleString('en-IN')}</td>
-                  <td className="px-6 py-4 text-right text-sm font-medium">
-                    <button onClick={() => handleEditExpense(exp)} className="text-blue-600 hover:text-blue-900 mr-3">Edit</button>
-                    <button onClick={() => handleDeleteExpense(exp.id)} className="text-red-600 hover:text-red-900">Delete</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {activeTab === 'expenses' && (() => {
+        // --- Compute filtered expenses ---
+        const filteredExpenses = expenses.filter(exp => {
+          const expDate = exp.date.split('T')[0];
+          if (expFilterDateFrom && expDate < expFilterDateFrom) return false;
+          if (expFilterDateTo && expDate > expFilterDateTo) return false;
+          if (expFilterCategory && exp.expenseHead?.name !== expFilterCategory) return false;
+          if (expFilterPaymentMode && exp.paymentMode !== expFilterPaymentMode) return false;
+          if (expFilterSearch) {
+            const q = expFilterSearch.toLowerCase();
+            if (
+              !exp.description?.toLowerCase().includes(q) &&
+              !exp.expenseHead?.name?.toLowerCase().includes(q) &&
+              !exp.account?.name?.toLowerCase().includes(q)
+            ) return false;
+          }
+          return true;
+        });
+        const filteredTotal = filteredExpenses.reduce((s, e) => s + parseFloat(e.amount || '0'), 0);
+        const hasActiveFilters = expFilterDateFrom || expFilterDateTo || expFilterCategory || expFilterPaymentMode || expFilterSearch;
+        const uniqueCategories = Array.from(new Set(expenses.map(e => e.expenseHead?.name).filter(Boolean))).sort();
+        const uniqueModes = Array.from(new Set(expenses.map(e => e.paymentMode).filter(Boolean))).sort();
+
+        return (
+          <div className="space-y-4">
+            {/* Header Toolbar */}
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-gray-800">Expense Records</h3>
+                <p className="text-xs text-gray-500">{filteredExpenses.length} of {expenses.length} records</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowExpenseFilters(v => !v)}
+                  className={`px-3 py-2 border rounded-lg flex items-center text-sm font-medium shadow-sm transition-all ${showExpenseFilters || hasActiveFilters
+                      ? 'bg-blue-50 border-blue-200 text-blue-700'
+                      : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                    }`}
+                >
+                  <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" /></svg>
+                  {showExpenseFilters ? 'Hide Filters' : 'Filters'}
+                  {hasActiveFilters && <span className="ml-2 w-2 h-2 bg-blue-600 rounded-full inline-block"></span>}
+                </button>
+                <button
+                  onClick={() => { setEditingExpenseId(null); setExpenseForm({ date: new Date().toISOString().split('T')[0], expenseHeadId: '', description: '', amount: '', accountId: '', paymentMode: 'Cash' }); setExpenseHeadSearch(''); setShowExpenseModal(true); }}
+                  className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center text-sm font-medium shadow-sm transition-all"
+                >
+                  <Plus className="w-4 h-4 mr-1.5" />
+                  Add Expense
+                </button>
+              </div>
+            </div>
+
+            {/* Filter Panel */}
+            {showExpenseFilters && (
+              <div className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
+                  {/* Search */}
+                  <div className="lg:col-span-2">
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Search</label>
+                    <input
+                      type="text"
+                      placeholder="Description, category, account..."
+                      value={expFilterSearch}
+                      onChange={e => setExpFilterSearch(e.target.value)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
+                  {/* Category */}
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Category</label>
+                    <select
+                      value={expFilterCategory}
+                      onChange={e => setExpFilterCategory(e.target.value)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                      <option value="">All Categories</option>
+                      {uniqueCategories.map(c => <option key={String(c)} value={String(c)}>{c}</option>)}
+                    </select>
+                  </div>
+                  {/* Payment Mode */}
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Payment Mode</label>
+                    <select
+                      value={expFilterPaymentMode}
+                      onChange={e => setExpFilterPaymentMode(e.target.value)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                      <option value="">All Modes</option>
+                      {uniqueModes.map(m => <option key={String(m)} value={String(m)}>{m}</option>)}
+                    </select>
+                  </div>
+                  {/* Date From */}
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Date From</label>
+                    <input
+                      type="date"
+                      value={expFilterDateFrom}
+                      onChange={e => setExpFilterDateFrom(e.target.value)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                  {/* Date To */}
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Date To</label>
+                    <input
+                      type="date"
+                      value={expFilterDateTo}
+                      onChange={e => setExpFilterDateTo(e.target.value)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
+                  <div className="lg:col-span-4 flex items-end justify-end">
+                    {hasActiveFilters && (
+                      <button
+                        onClick={() => { setExpFilterDateFrom(''); setExpFilterDateTo(''); setExpFilterCategory(''); setExpFilterPaymentMode(''); setExpFilterSearch(''); }}
+                        className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-md transition-colors font-medium border border-transparent hover:border-red-200"
+                      >
+                        Clear Filters
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Totals Summary Bar */}
+            <div className="bg-red-50 border border-red-100 rounded-lg px-5 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-6">
+                <div>
+                  <span className="text-xs font-semibold text-red-800 uppercase tracking-wider block">
+                    {hasActiveFilters ? 'Filtered Total' : 'Total Expenses'}
+                  </span>
+                  <span className="text-xs text-red-500">
+                    {hasActiveFilters ? `${filteredExpenses.length} matching entries` : `All ${expenses.length} entries`}
+                  </span>
+                </div>
+                <div className="h-8 w-px bg-red-200"></div>
+                <div>
+                  <span className="text-xs font-medium text-red-600 block">Total Amount</span>
+                  <span className="text-xl font-bold text-red-800">₹{filteredTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                {hasActiveFilters && (
+                  <>
+                    <div className="h-8 w-px bg-red-200"></div>
+                    <div>
+                      <span className="text-xs font-medium text-gray-500 block">All-Time Total</span>
+                      <span className="text-sm font-semibold text-gray-600">
+                        ₹{expenses.reduce((s, e) => s + parseFloat(e.amount || '0'), 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Expenses Table */}
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Paid From</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Mode</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {filteredExpenses.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
+                        <div className="flex flex-col items-center">
+                          <svg className="w-10 h-10 mb-3 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 14H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-4M9 14l3 3 3-3M12 14V3" /></svg>
+                          <p>{hasActiveFilters ? 'No expenses match the selected filters.' : 'No expenses recorded yet.'}</p>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredExpenses.map((exp, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 text-sm">{new Date(exp.date).toLocaleDateString('en-IN')}</td>
+                        <td className="px-6 py-4 text-sm">
+                          <span className="inline-flex px-2 py-0.5 bg-orange-50 text-orange-700 border border-orange-100 rounded-full text-xs font-medium">
+                            {exp.expenseHead?.name || '-'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-500">{exp.description || '-'}</td>
+                        <td className="px-6 py-4 text-sm text-gray-500">{exp.account?.name || '-'}</td>
+                        <td className="px-6 py-4 text-sm text-gray-500">{exp.paymentMode || '-'}</td>
+                        <td className="px-6 py-4 text-sm text-right text-red-600 font-semibold">- ₹{parseFloat(exp.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className="px-6 py-4 text-right text-sm font-medium">
+                          <button onClick={() => handleEditExpense(exp)} className="text-blue-600 hover:text-blue-900 mr-3">Edit</button>
+                          <button onClick={() => handleDeleteExpense(exp.id)} className="text-red-600 hover:text-red-900">Delete</button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {filteredExpenses.length > 0 && (
+                  <tfoot className="bg-gray-50 border-t-2 border-gray-200">
+                    <tr>
+                      <td colSpan={5} className="px-6 py-3 text-sm font-bold text-gray-600 text-right uppercase tracking-wide">Total</td>
+                      <td className="px-6 py-3 text-sm text-right font-bold text-red-700">- ₹{filteredTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        );
+      })()}
 
 
 
