@@ -3,6 +3,8 @@ import {
   Plus, TrendingUp, TrendingDown, X, Loader2, Users, Truck,
   CreditCard, Wallet, FileText, ArrowUpRight, ArrowDownRight, Search, Printer, MessageCircle, ChevronDown, Check, ArrowLeftRight, RotateCcw
 } from 'lucide-react';
+import { useRealtimeEvent } from '../hooks/useRealtime';
+import { useRealtimeContext } from '../context/RealtimeContext';
 import { accountsApi, mastersApi, financeApi } from '../lib/api';
 
 // ============================================================
@@ -163,9 +165,20 @@ export function Accounts() {
   // LOAD INITIAL DATA
   // ============================================================
 
+  const { lastEvent } = useRealtimeContext();
+
   useEffect(() => {
     fetchInitialData();
   }, [page, limit]);
+
+  // Auto-refresh on real-time events
+  useRealtimeEvent(lastEvent, ['accounts_updated', 'masters_updated', 'sales_updated', 'purchase_updated'], () => {
+    fetchInitialData();
+    // Also refresh active ledgers if they are open
+    if (activeTab === 'customer' && selectedCustomerId) loadCustomerLedger(selectedCustomerId);
+    if (activeTab === 'supplier' && selectedSupplierId) loadSupplierLedger(selectedSupplierId);
+    if (selectedAccountId) loadAccountLedger(selectedAccountId);
+  });
 
   const fetchInitialData = async () => {
     setLoading(true);
@@ -1140,9 +1153,17 @@ export function Accounts() {
             </div>
             {ledgerData && (
               <div className="flex-1 bg-white p-4 rounded-lg border border-red-200 flex justify-between items-center">
-                <div>
-                  <p className="text-sm text-gray-500">Current Outstanding</p>
-                  <p className="text-2xl font-bold text-red-700">₹{ledgerData.summary?.totalOutstanding || '0.00'}</p>
+                <div className="flex gap-8 items-center">
+                  <div>
+                    <p className="text-sm text-gray-500">Current Outstanding</p>
+                    <p className="text-2xl font-bold text-red-700">₹{ledgerData.summary?.totalOutstanding || '0.00'}</p>
+                  </div>
+                  {(ledgerData.summary?.advanceAmount || 0) > 0 && (
+                    <div className="pl-6 border-l border-gray-200">
+                      <p className="text-sm text-gray-500">Unallocated Advance</p>
+                      <p className="text-2xl font-bold text-blue-600">₹{ledgerData.summary?.advanceAmount}</p>
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -1162,6 +1183,11 @@ export function Accounts() {
                               <div className="mb-6 p-4 bg-gray-50 rounded border">
                                 <p class="text-sm text-gray-500">Total Payable</p>
                                 <p class="text-2xl font-bold text-red-700">₹${ledgerData.summary?.totalOutstanding || '0'}</p>
+                                
+                                ${parseFloat(ledgerData.summary?.advanceAmount || '0') > 0 ? `
+                                <p class="text-sm text-gray-500 mt-2">Unallocated Advance</p>
+                                <p class="text-xl font-bold text-blue-700">₹${ledgerData.summary?.advanceAmount}</p>
+                                ` : ''}
                               </div>
 
                               <h2 class="font-bold border-b pb-2 mt-8 mb-4">Purchase Bills</h2>

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Filter, Loader2, Package, Edit2, Trash2, X, Plus, Settings2, ArrowDownCircle, CheckCircle } from 'lucide-react';
+import { useRealtimeEvent } from '../hooks/useRealtime';
+import { useRealtimeContext } from '../context/RealtimeContext';
 import { inventoryApi, mastersApi, productionApi } from '../lib/api';
 
 import { BellInventory } from './BellInventory';
@@ -48,9 +50,19 @@ export function Inventory() {
   const [reduceResult, setReduceResult] = useState<any>(null);
   const [reducing, setReducing] = useState(false);
 
+  const { lastEvent } = useRealtimeContext();
+
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Auto-refresh on real-time events
+  useRealtimeEvent(lastEvent, ['inventory_updated', 'sales_updated', 'purchase_updated', 'production_updated', 'masters_updated'], () => {
+    fetchData();
+    if (activeTab === 'movements') {
+      fetchLedgerPage(ledgerPage);
+    }
+  });
 
   // When movements tab becomes active, load page 1 if not yet loaded
   useEffect(() => {

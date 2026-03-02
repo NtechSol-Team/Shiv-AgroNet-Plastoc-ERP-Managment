@@ -8,6 +8,8 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { mastersApi, accountsApi } from '../lib/api';
+import { useRealtimeContext } from './RealtimeContext';
+import { useRealtimeEvent } from '../hooks/useRealtime';
 
 // Type definitions for master data
 export interface Customer {
@@ -96,6 +98,8 @@ interface MasterDataContextType extends MasterData {
     refreshAccounts: () => Promise<void>;
     refreshRawMaterials: () => Promise<void>;
     refreshFinishedProducts: () => Promise<void>;
+    refreshMachines: () => Promise<void>;
+    refreshExpenseHeads: () => Promise<void>;
     lastUpdated: Date | null;
 }
 
@@ -210,10 +214,45 @@ export function MasterDataProvider({ children }: MasterDataProviderProps) {
         }
     }, []);
 
+    const refreshMachines = useCallback(async () => {
+        try {
+            const res = await mastersApi.getMachines();
+            setData(prev => ({ ...prev, machines: res.data || [] }));
+        } catch (err) {
+            console.error('Failed to refresh machines:', err);
+        }
+    }, []);
+
+    const refreshExpenseHeads = useCallback(async () => {
+        try {
+            const res = await mastersApi.getExpenseHeads();
+            setData(prev => ({ ...prev, expenseHeads: res.data || [] }));
+        } catch (err) {
+            console.error('Failed to refresh expense heads:', err);
+        }
+    }, []);
+
     // Load on mount
     useEffect(() => {
         loadAllMasters();
     }, [loadAllMasters]);
+
+    // ─── SSE Real-time Auto-refresh ─────────────────────────────────────────
+    const { lastEvent } = useRealtimeContext();
+
+    useRealtimeEvent(lastEvent, 'masters_updated', (event) => {
+        const entity = event.entity;
+        if (!entity || entity === 'customers') refreshCustomers();
+        if (!entity || entity === 'suppliers') refreshSuppliers();
+        if (!entity || entity === 'raw-materials') refreshRawMaterials();
+        if (!entity || entity === 'finished-products') refreshFinishedProducts();
+        if (!entity || entity === 'accounts') refreshAccounts();
+        if (!entity || entity === 'machines') refreshMachines();
+        if (!entity || entity === 'expense-heads') refreshExpenseHeads();
+        if (!entity || entity === 'employees') loadAllMasters(); // Less frequent update
+        if (!entity || entity === 'general-items') loadAllMasters();
+    });
+    // ────────────────────────────────────────────────────────────────────────
 
     const value: MasterDataContextType = {
         ...data,
@@ -225,6 +264,8 @@ export function MasterDataProvider({ children }: MasterDataProviderProps) {
         refreshAccounts,
         refreshRawMaterials,
         refreshFinishedProducts,
+        refreshMachines,
+        refreshExpenseHeads,
         lastUpdated
     };
 

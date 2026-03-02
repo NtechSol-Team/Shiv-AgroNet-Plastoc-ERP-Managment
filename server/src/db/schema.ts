@@ -143,6 +143,10 @@ export const purchaseBills = pgTable('purchase_bills', {
     dateIdx: index('purchase_bills_date_idx').on(table.date),
     statusIdx: index('purchase_bills_status_idx').on(table.status),
     invoiceNoIdx: index('purchase_bills_invoice_no_idx').on(table.invoiceNumber),
+    // Composite indexes for common query patterns
+    supplierDateIdx: index('purchase_bills_supplier_date_idx').on(table.supplierId, table.date),
+    supplierPaymentStatusIdx: index('purchase_bills_supplier_payment_status_idx').on(table.supplierId, table.paymentStatus),
+    typeStatusIdx: index('purchase_bills_type_status_idx').on(table.type, table.status),
 }));
 
 export const purchaseBillItems = pgTable('purchase_bill_items', {
@@ -164,7 +168,12 @@ export const purchaseBillItems = pgTable('purchase_bill_items', {
     igst: decimal('igst', { precision: 10, scale: 2 }).default('0'),
     totalAmount: decimal('total_amount', { precision: 12, scale: 2 }).notNull(),
     createdAt: timestamp('created_at').defaultNow(),
-});
+}, (table) => ({
+    billIdx: index('purchase_bill_items_bill_idx').on(table.billId),
+    rawMaterialIdx: index('purchase_bill_items_raw_material_idx').on(table.rawMaterialId),
+    finishedProductIdx: index('purchase_bill_items_finished_product_idx').on(table.finishedProductId),
+    billRawMaterialIdx: index('purchase_bill_items_bill_rm_idx').on(table.billId, table.rawMaterialId),
+}));
 
 
 // NEW: Raw Material Batches (Traceable Inventory)
@@ -269,6 +278,10 @@ export const salesInvoices = pgTable('sales_invoices', {
     statusIdx: index('sales_invoices_status_idx').on(table.status),
     invoiceNoIdx: index('sales_invoices_invoice_no_idx').on(table.invoiceNumber),
     customerNameIdx: index('sales_invoices_customer_name_idx').on(table.customerName),
+    // Composite indexes for common query patterns
+    customerDateIdx: index('sales_invoices_customer_date_idx').on(table.customerId, table.invoiceDate),
+    customerPaymentStatusIdx: index('sales_invoices_customer_payment_status_idx').on(table.customerId, table.paymentStatus),
+    statusDateIdx: index('sales_invoices_status_date_idx').on(table.status, table.invoiceDate),
 }));
 
 
@@ -324,6 +337,10 @@ export const paymentTransactions = pgTable('payment_transactions', {
     dateIdx: index('payment_transactions_date_idx').on(table.date),
     partyIdx: index('payment_transactions_party_idx').on(table.partyId),
     accountIdx: index('payment_transactions_account_idx').on(table.accountId),
+    // Composite indexes for common query patterns
+    partyTypeIdx: index('payment_transactions_party_type_idx').on(table.partyId, table.type),
+    partyDateIdx: index('payment_transactions_party_date_idx').on(table.partyId, table.date),
+    statusDateIdx: index('payment_transactions_status_date_idx').on(table.status, table.date),
 }));
 
 // ==================== STOCK MOVEMENTS (CORE LEDGER) ====================
@@ -348,6 +365,10 @@ export const stockMovements = pgTable('stock_movements', {
     finishedProductIdx: index('stock_movements_finished_product_idx').on(table.finishedProductId),
     itemTypeIdx: index('stock_movements_item_type_idx').on(table.itemType),
     dateIdx: index('stock_movements_date_idx').on(table.date),
+    // Composite indexes for common query patterns
+    rawMaterialDateIdx: index('stock_movements_rm_date_idx').on(table.rawMaterialId, table.date),
+    finishedProductDateIdx: index('stock_movements_fp_date_idx').on(table.finishedProductId, table.date),
+    itemTypeDateIdx: index('stock_movements_item_type_date_idx').on(table.itemType, table.date),
 }));
 
 // ==================== ACCOUNTING & GENERAL LEDGER ====================
@@ -369,6 +390,9 @@ export const generalLedger = pgTable('general_ledger', {
     ledgerIdx: index('general_ledger_idx').on(table.ledgerId),
     dateIdx: index('general_ledger_date_idx').on(table.transactionDate),
     voucherTypeIdx: index('general_ledger_voucher_type_idx').on(table.voucherType),
+    // Composite indexes for common query patterns
+    ledgerDateIdx: index('general_ledger_ledger_date_idx').on(table.ledgerId, table.transactionDate),
+    ledgerTypeIdx: index('general_ledger_ledger_type_date_idx').on(table.ledgerType, table.transactionDate),
 }));
 
 export const accountTransactions = pgTable('account_transactions', {
@@ -385,6 +409,9 @@ export const accountTransactions = pgTable('account_transactions', {
 }, (table) => ({
     accountIdx: index('account_transactions_account_idx').on(table.accountId),
     dateIdx: index('account_transactions_date_idx').on(table.date),
+    // Composite indexes for common query patterns
+    accountDateIdx: index('account_transactions_account_date_idx').on(table.accountId, table.date),
+    accountRefTypeIdx: index('account_transactions_account_ref_type_idx').on(table.accountId, table.referenceType),
 }));
 
 export const invoicePaymentAllocations = pgTable('invoice_payment_allocations', {
@@ -614,6 +641,9 @@ export const bellItems = pgTable('bell_items', {
     batchIdx: index('bell_items_batch_idx').on(table.batchId),
     statusIdx: index('bell_items_status_idx').on(table.status),
     finishedProductIdx: index('bell_items_finished_product_idx').on(table.finishedProductId),
+    // Composite indexes for common query patterns
+    productStatusIdx: index('bell_items_product_status_idx').on(table.finishedProductId, table.status),
+    batchStatusIdx: index('bell_items_batch_status_idx').on(table.batchId, table.status),
 }));
 
 // ==================== FINANCE MODULE ====================
@@ -730,6 +760,9 @@ export const rawMaterialRolls = pgTable('raw_material_rolls', {
     statusIdx: index('rm_rolls_status_idx').on(table.status),
     rollCodeIdx: index('rm_rolls_roll_code_idx').on(table.rollCode),
     netWeightIdx: index('rm_rolls_net_weight_idx').on(table.netWeight),
+    // Composite indexes for common query patterns
+    materialStatusIdx: index('rm_rolls_material_status_idx').on(table.rawMaterialId, table.status),
+    billStatusIdx: index('rm_rolls_bill_status_idx').on(table.purchaseBillId, table.status),
 }));
 
 export const rawMaterialRollsRelations = relations(rawMaterialRolls, ({ one }) => ({

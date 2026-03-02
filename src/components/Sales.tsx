@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Printer, Search, X, Trash2, Loader2, Building2, MapPin, FileText, Download, Receipt, ArrowRight, RotateCcw, History, Info, MessageCircle, Link, Edit2 } from 'lucide-react';
+import { useRealtimeEvent } from '../hooks/useRealtime';
+import { useRealtimeContext } from '../context/RealtimeContext';
 import { salesApi, mastersApi, accountsApi, gstApi } from '../lib/api';
 import { printInvoice } from '../utils/printInvoice';
 
@@ -158,9 +160,16 @@ export function Sales() {
 
   const [availableAdvances, setAvailableAdvances] = useState<any[]>([]);
 
+  const { lastEvent } = useRealtimeContext();
+
   useEffect(() => {
     fetchData();
   }, [page, limit]);
+
+  // Auto-refresh on real-time events
+  useRealtimeEvent(lastEvent, ['sales_updated', 'accounts_updated', 'inventory_updated', 'masters_updated'], () => {
+    fetchData();
+  });
 
   const handleQuickGstSearch = async () => {
     const gstin = quickAddCustomerForm.gstNo;

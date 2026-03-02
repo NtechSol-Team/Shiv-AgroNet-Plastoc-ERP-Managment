@@ -32,6 +32,7 @@ import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
 import { getRawMaterialStock, getFinishedProductStock, getAllRawMaterialsWithStock, getAllFinishedProductsWithStock } from '../services/inventory.service';
 import { cache } from '../services/cache.service';
+import { realtimeService } from '../services/realtime.service';
 
 const router = Router();
 
@@ -90,6 +91,7 @@ router.post('/raw-materials', async (req: Request, res: Response, next: NextFunc
 
         cache.del('masters:raw-materials');
         res.status(201).json(successResponse({ ...item, stock: '0.00' }));
+        realtimeService.emit('masters_updated', 'raw-materials');
     } catch (error) {
         next(error);
     }
@@ -123,6 +125,7 @@ router.put('/raw-materials/:id', async (req: Request, res: Response, next: NextF
         cache.del('masters:raw-materials');
         const stock = await getRawMaterialStock(id);
         res.json(successResponse({ ...item, stock: stock.toFixed(2) }));
+        realtimeService.emit('masters_updated', 'raw-materials');
     } catch (error) {
         next(error);
     }
@@ -138,6 +141,7 @@ router.delete('/raw-materials/:id', async (req: Request, res: Response, next: Ne
         await db.delete(rawMaterials).where(eq(rawMaterials.id, id));
         cache.del('masters:raw-materials');
         res.json(successResponse({ deleted: true }));
+        realtimeService.emit('masters_updated', 'raw-materials');
     } catch (error) {
         next(error);
     }
@@ -192,6 +196,7 @@ router.post('/finished-products', async (req: Request, res: Response, next: Next
 
         cache.del('masters:finished-products');
         res.status(201).json(successResponse({ ...item, stock: '0.00' }));
+        realtimeService.emit('masters_updated', 'finished-products');
     } catch (error) {
         next(error);
     }
@@ -223,6 +228,7 @@ router.put('/finished-products/:id', async (req: Request, res: Response, next: N
         cache.del('masters:finished-products');
         const stock = await getFinishedProductStock(id);
         res.json(successResponse({ ...item, stock: stock.toFixed(2) }));
+        realtimeService.emit('masters_updated', 'finished-products');
     } catch (error) {
         next(error);
     }
@@ -331,10 +337,11 @@ router.delete('/finished-products/:id', async (req: Request, res: Response, next
         await db.delete(finishedProducts).where(eq(finishedProducts.id, id));
 
         cache.del('masters:finished-products');
-        // Clear summary cache as stock changed
         cache.del('inventory:summary');
 
         res.json(successResponse({ deleted: true, batchesRemoved: batchesToDelete.length }));
+        realtimeService.emit('masters_updated', 'finished-products');
+        realtimeService.emit('inventory_updated');
     } catch (error) {
         next(error);
     }
@@ -375,6 +382,7 @@ router.post('/machines', async (req: Request, res: Response, next: NextFunction)
 
         cache.del('masters:machines');
         res.status(201).json(successResponse(item));
+        realtimeService.emit('masters_updated', 'machines');
     } catch (error) {
         next(error);
     }
@@ -391,6 +399,7 @@ router.put('/machines/:id', async (req: Request, res: Response, next: NextFuncti
         if (!item) throw createError('Machine not found', 404);
         cache.del('masters:machines');
         res.json(successResponse(item));
+        realtimeService.emit('masters_updated', 'machines');
     } catch (error) {
         next(error);
     }
@@ -401,6 +410,7 @@ router.delete('/machines/:id', async (req: Request, res: Response, next: NextFun
         await db.delete(machines).where(eq(machines.id, req.params.id));
         cache.del('masters:machines');
         res.json(successResponse({ deleted: true }));
+        realtimeService.emit('masters_updated', 'machines');
     } catch (error) {
         next(error);
     }
@@ -449,6 +459,7 @@ router.post('/customers', async (req: Request, res: Response, next: NextFunction
 
         cache.del('masters:customers');
         res.status(201).json(successResponse(item));
+        realtimeService.emit('masters_updated', 'customers');
     } catch (error) {
         next(error);
     }
@@ -483,6 +494,7 @@ router.put('/customers/:id', async (req: Request, res: Response, next: NextFunct
         if (!item) throw createError('Customer not found', 404);
         cache.del('masters:customers');
         res.json(successResponse(item));
+        realtimeService.emit('masters_updated', 'customers');
     } catch (error) {
         next(error);
     }
@@ -493,6 +505,7 @@ router.delete('/customers/:id', async (req: Request, res: Response, next: NextFu
         await db.delete(customers).where(eq(customers.id, req.params.id));
         cache.del('masters:customers');
         res.json(successResponse({ deleted: true }));
+        realtimeService.emit('masters_updated', 'customers');
     } catch (error) {
         next(error);
     }
@@ -540,6 +553,7 @@ router.post('/suppliers', async (req: Request, res: Response, next: NextFunction
 
         cache.del('masters:suppliers');
         res.status(201).json(successResponse(item));
+        realtimeService.emit('masters_updated', 'suppliers');
     } catch (error) {
         next(error);
     }
@@ -565,6 +579,7 @@ router.put('/suppliers/:id', async (req: Request, res: Response, next: NextFunct
         if (!item) throw createError('Supplier not found', 404);
         cache.del('masters:suppliers');
         res.json(successResponse(item));
+        realtimeService.emit('masters_updated', 'suppliers');
     } catch (error) {
         next(error);
     }
@@ -575,6 +590,7 @@ router.delete('/suppliers/:id', async (req: Request, res: Response, next: NextFu
         await db.delete(suppliers).where(eq(suppliers.id, req.params.id));
         cache.del('masters:suppliers');
         res.json(successResponse({ deleted: true }));
+        realtimeService.emit('masters_updated', 'suppliers');
     } catch (error) {
         next(error);
     }
@@ -638,6 +654,7 @@ router.post('/expense-heads', async (req: Request, res: Response, next: NextFunc
 
         cache.del('masters:expense-heads');
         res.status(201).json(successResponse(item));
+        realtimeService.emit('masters_updated', 'expense-heads');
     } catch (error) {
         next(error);
     }
@@ -654,6 +671,7 @@ router.put('/expense-heads/:id', async (req: Request, res: Response, next: NextF
         if (!item) throw createError('Expense head not found', 404);
         cache.del('masters:expense-heads');
         res.json(successResponse(item));
+        realtimeService.emit('masters_updated', 'expense-heads');
     } catch (error) {
         next(error);
     }
@@ -683,6 +701,7 @@ router.delete('/expense-heads/:id', async (req: Request, res: Response, next: Ne
         await db.delete(expenseHeads).where(eq(expenseHeads.id, id));
         cache.del('masters:expense-heads');
         res.json(successResponse({ deleted: true }));
+        realtimeService.emit('masters_updated', 'expense-heads');
     } catch (error) {
         next(error);
     }
@@ -713,6 +732,7 @@ router.post('/general-items', async (req: Request, res: Response, next: NextFunc
         }).returning();
         cache.del('masters:general-items');
         res.status(201).json(successResponse(item));
+        realtimeService.emit('masters_updated', 'general-items');
     } catch (error) {
         next(error);
     }
@@ -728,6 +748,7 @@ router.put('/general-items/:id', async (req: Request, res: Response, next: NextF
         if (!item) throw createError('General Item not found', 404);
         cache.del('masters:general-items');
         res.json(successResponse(item));
+        realtimeService.emit('masters_updated', 'general-items');
     } catch (error) {
         next(error);
     }
@@ -748,6 +769,7 @@ router.delete('/general-items/:id', async (req: Request, res: Response, next: Ne
         await db.delete(generalItems).where(eq(generalItems.id, id));
         cache.del('masters:general-items');
         res.json(successResponse({ deleted: true }));
+        realtimeService.emit('masters_updated', 'general-items');
     } catch (error) {
         next(error);
     }
@@ -829,6 +851,7 @@ router.post('/accounts', async (req: Request, res: Response, next: NextFunction)
 
         cache.del('masters:accounts');
         res.status(201).json(successResponse(item));
+        realtimeService.emit('masters_updated', 'accounts');
     } catch (error) {
         next(error);
     }
@@ -845,6 +868,7 @@ router.put('/accounts/:id', async (req: Request, res: Response, next: NextFuncti
         if (!item) throw createError('Account not found', 404);
         cache.del('masters:accounts');
         res.json(successResponse(item));
+        realtimeService.emit('masters_updated', 'accounts');
     } catch (error) {
         next(error);
     }
@@ -954,6 +978,7 @@ router.delete('/accounts/:id', async (req: Request, res: Response, next: NextFun
         await deleteAccountWithCascade(req.params.id, false);
         cache.del('masters:accounts');
         res.json(successResponse({ deleted: true, message: 'Account and associated transactions deleted successfully' }));
+        realtimeService.emit('masters_updated', 'accounts');
     } catch (error) {
         next(error);
     }
@@ -964,6 +989,7 @@ router.delete('/cc-accounts/:id', async (req: Request, res: Response, next: Next
         await deleteAccountWithCascade(req.params.id, true);
         cache.del('masters:cc-accounts');
         res.json(successResponse({ deleted: true, message: 'CC Account and associated transactions deleted successfully' }));
+        realtimeService.emit('masters_updated', 'accounts');
     } catch (error) {
         next(error);
     }
@@ -998,6 +1024,7 @@ router.post('/employees', async (req: Request, res: Response, next: NextFunction
         }).returning();
 
         res.status(201).json(successResponse(item));
+        realtimeService.emit('masters_updated', 'employees');
     } catch (error) {
         next(error);
     }
@@ -1013,6 +1040,7 @@ router.put('/employees/:id', async (req: Request, res: Response, next: NextFunct
 
         if (!item) throw createError('Employee not found', 404);
         res.json(successResponse(item));
+        realtimeService.emit('masters_updated', 'employees');
     } catch (error) {
         next(error);
     }
@@ -1022,6 +1050,7 @@ router.delete('/employees/:id', async (req: Request, res: Response, next: NextFu
     try {
         await db.delete(employees).where(eq(employees.id, req.params.id));
         res.json(successResponse({ deleted: true }));
+        realtimeService.emit('masters_updated', 'employees');
     } catch (error) {
         next(error);
     }

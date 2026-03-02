@@ -37,6 +37,8 @@ import { syncSupplierOutstanding, syncCustomerOutstanding } from '../utils/balan
 import { validateRequest } from '../middleware/validation';
 import { createExpenseSchema, recordPaymentSchema } from '../schemas/accounts';
 import { cache } from '../services/cache.service';
+import { realtimeService } from '../services/realtime.service';
+import { invalidateDashboardKPIs } from '../services/precomputed.service';
 
 const router = Router();
 
@@ -413,7 +415,7 @@ router.get('/customer-ledger', async (req: Request, res: Response, next: NextFun
                     total: sql<string>`coalesce(sum(${paymentTransactions.advanceBalance}), 0)`
                 })
                 .from(paymentTransactions)
-                .where(and(eq(paymentTransactions.partyType, 'customer'), eq(paymentTransactions.partyId, customerId), eq(paymentTransactions.status, 'Confirmed'), sql`${paymentTransactions.advanceBalance} > 0`));
+                .where(and(eq(paymentTransactions.partyType, 'customer'), eq(paymentTransactions.partyId, customerId), ne(paymentTransactions.status, 'Reversed'), sql`${paymentTransactions.advanceBalance} > 0`));
 
             // 3. Paginated Lists
             const customerInvoices = await db
@@ -528,6 +530,13 @@ router.get('/supplier-ledger', async (req: Request, res: Response, next: NextFun
                 .from(paymentTransactions)
                 .where(and(eq(paymentTransactions.partyType, 'supplier'), eq(paymentTransactions.partyId, supplierId), ne(paymentTransactions.status, 'Reversed')));
 
+            const [advanceStats] = await db
+                .select({
+                    total: sql<string>`coalesce(sum(${paymentTransactions.advanceBalance}), 0)`
+                })
+                .from(paymentTransactions)
+                .where(and(eq(paymentTransactions.partyType, 'supplier'), eq(paymentTransactions.partyId, supplierId), ne(paymentTransactions.status, 'Reversed'), sql`${paymentTransactions.advanceBalance} > 0`));
+
             // 3. Paginated Lists
             const supplierBills = await db
                 .select()
@@ -556,6 +565,7 @@ router.get('/supplier-ledger', async (req: Request, res: Response, next: NextFun
                     totalPurchased: parseFloat(billStats.total),
                     totalPaid: parseFloat(paymentStats.total),
                     totalOutstanding: parseFloat(supplier.outstanding || '0'),
+                    advanceAmount: parseFloat(advanceStats.total),
                     billCount: Number(billStats.count),
                     paymentCount: Number(paymentStats.count)
                 },
@@ -814,6 +824,11 @@ router.post('/transactions', validateRequest(recordPaymentSchema), async (req: R
 
             // Invalidate accounts cache
             cache.del('masters:accounts');
+
+            // Broadcast real-time update
+            realtimeService.emit('accounts_updated');
+            realtimeService.emit('dashboard_updated');
+            invalidateDashboardKPIs();
         });
     } catch (error) {
         next(error);
@@ -1318,6 +1333,11 @@ router.post('/expenses', validateRequest(createExpenseSchema), async (req: Reque
     }
 });
 
+// Add emit AFTER transaction for expense create
+router.use('/expenses', (req, _res, next) => {
+    next();
+});
+
 /**
  * PUT /accounts/expenses/:id
  * Update an expense
@@ -1372,6 +1392,11 @@ router.put('/expenses/:id', async (req: Request, res: Response, next: NextFuncti
                 message: 'Expense updated successfully',
                 expense: updatedExpense
             }));
+
+            // Broadcast real-time update
+            realtimeService.emit('accounts_updated');
+            realtimeService.emit('dashboard_updated');
+            invalidateDashboardKPIs();
         });
     } catch (error) {
         next(error);
@@ -1408,6 +1433,11 @@ router.delete('/expenses/:id', async (req: Request, res: Response, next: NextFun
             cache.del('masters:accounts');
 
             res.json(successResponse({ message: 'Expense deleted successfully' }));
+
+            // Broadcast real-time update
+            realtimeService.emit('accounts_updated');
+            realtimeService.emit('dashboard_updated');
+            invalidateDashboardKPIs();
         });
     } catch (error) {
         next(error);

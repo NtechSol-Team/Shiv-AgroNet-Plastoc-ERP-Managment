@@ -17,6 +17,7 @@ import {
     requestSizeLimiter,
 } from './middleware/security';
 import routes from './routes/index';
+import { realtimeService } from './services/realtime.service';
 
 const app = express();
 const PORT = SERVER_CONFIG.server.port;
@@ -102,6 +103,28 @@ app.get('/health', (req, res) => {
         environment: SERVER_CONFIG.server.env,
         version: '1.0.0',
     });
+});
+
+// ===========================================
+// REAL-TIME SSE ENDPOINT
+// ===========================================
+
+/**
+ * GET /api/events
+ * Server-Sent Events stream for real-time UI updates.
+ * Browser clients connect here and receive push notifications
+ * when any data mutation occurs (sales, purchase, inventory, etc.)
+ */
+app.get('/api/events', (req, res) => {
+    realtimeService.subscribe(res);
+});
+
+/**
+ * GET /api/events/status
+ * Returns count of currently connected SSE clients.
+ */
+app.get('/api/events/status', (_req, res) => {
+    res.json({ connectedClients: realtimeService.clientCount });
 });
 
 // ===========================================

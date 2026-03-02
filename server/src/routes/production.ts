@@ -19,6 +19,8 @@ import { eq, desc, sql, count as countFn } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
 import { validateRawMaterialStock, validateFinishedProductStock } from '../services/inventory.service';
+import { realtimeService } from '../services/realtime.service';
+import { invalidateInventorySummary, invalidateDashboardKPIs } from '../services/precomputed.service';
 
 const router = Router();
 
@@ -403,6 +405,11 @@ router.post('/batches', async (req: Request, res: Response, next: NextFunction) 
         });
 
         res.json(successResponse(fullBatch));
+
+        // Broadcast real-time update
+        realtimeService.emit('production_updated');
+        realtimeService.emit('inventory_updated');
+        invalidateInventorySummary();
     } catch (error) {
         next(error);
     }
@@ -619,6 +626,11 @@ router.put('/batches/:id', async (req: Request, res: Response, next: NextFunctio
         });
 
         res.json(successResponse({ message: 'Batch updated successfully' }));
+
+        // Broadcast real-time update
+        realtimeService.emit('production_updated');
+        realtimeService.emit('inventory_updated');
+        invalidateInventorySummary();
     } catch (error) {
         next(error);
     }
@@ -748,6 +760,13 @@ router.post('/batches/:id/complete', async (req: Request, res: Response, next: N
         }
 
         res.json(successResponse(response));
+
+        // Broadcast real-time update
+        realtimeService.emit('production_updated');
+        realtimeService.emit('inventory_updated');
+        realtimeService.emit('dashboard_updated');
+        invalidateInventorySummary();
+        invalidateDashboardKPIs();
     } catch (error) {
         next(error);
     }
@@ -939,6 +958,13 @@ router.post('/quick-complete', async (req: Request, res: Response, next: NextFun
         }
 
         res.json(successResponse(response));
+
+        // Broadcast real-time update
+        realtimeService.emit('production_updated');
+        realtimeService.emit('inventory_updated');
+        realtimeService.emit('dashboard_updated');
+        invalidateInventorySummary();
+        invalidateDashboardKPIs();
     } catch (error) {
         next(error);
     }
@@ -1121,6 +1147,11 @@ router.delete('/batches/:id', async (req: Request, res: Response, next: NextFunc
         await db.delete(productionBatches).where(eq(productionBatches.id, id));
 
         res.json(successResponse({ message: 'Batch deleted successfully' }));
+
+        // Broadcast real-time update
+        realtimeService.emit('production_updated');
+        realtimeService.emit('inventory_updated');
+        invalidateInventorySummary();
     } catch (error) {
         next(error);
     }

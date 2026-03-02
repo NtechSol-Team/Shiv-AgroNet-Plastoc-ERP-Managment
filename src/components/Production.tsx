@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, AlertTriangle, CheckCircle, X, Loader2, Package, Trash2, ArrowRight, Settings2, Calendar, ChevronDown, ChevronUp, Edit2, Pencil } from 'lucide-react';
+import { useRealtimeEvent } from '../hooks/useRealtime';
+import { useRealtimeContext } from '../context/RealtimeContext';
 import { productionApi, mastersApi, inventoryApi } from '../lib/api';
 
 export function Production() {
@@ -49,9 +51,16 @@ export function Production() {
     status: 'safe' | 'exceeded';
   } | null>(null);
 
+  const { lastEvent } = useRealtimeContext();
+
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Auto-refresh on real-time events
+  useRealtimeEvent(lastEvent, ['production_updated', 'inventory_updated', 'masters_updated'], () => {
+    fetchData();
+  });
 
   const fetchData = async () => {
     setLoading(true);

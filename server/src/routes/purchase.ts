@@ -18,6 +18,8 @@ import { db } from '../db/index';
 import { createStockMovement, getPendingBillQuantity } from '../services/inventory.service';
 import { cache as cacheService } from '../services/cache.service';
 import { syncSupplierOutstanding } from '../utils/balance';
+import { realtimeService } from '../services/realtime.service';
+import { invalidateInventorySummary, invalidateDashboardKPIs } from '../services/precomputed.service';
 
 // ... (imports remain)
 import {
@@ -445,6 +447,14 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
             supplier,
             items: insertedItems,
         }));
+
+        // Broadcast real-time update
+        realtimeService.emit('purchase_updated');
+        realtimeService.emit('dashboard_updated');
+        if (status === 'Confirmed') {
+            invalidateInventorySummary();
+            invalidateDashboardKPIs();
+        }
     } catch (error) {
         console.log('\n❌ POST /purchase/bills - ERROR');
         console.error('Error details:', error);
@@ -723,6 +733,12 @@ router.post('/bills/:id/payment', async (req: Request, res: Response, next: Next
             balanceAmount: result.newBalance,
             paymentStatus: result.paymentStatus,
         }));
+
+        // Broadcast real-time update
+        realtimeService.emit('purchase_updated');
+        realtimeService.emit('accounts_updated');
+        realtimeService.emit('dashboard_updated');
+        invalidateDashboardKPIs();
     } catch (error) {
         next(error);
     }
@@ -899,6 +915,11 @@ router.put('/bills/:id', async (req: Request, res: Response, next: NextFunction)
             supplier,
             items: updatedItems,
         }));
+
+        // Broadcast real-time update
+        realtimeService.emit('purchase_updated');
+        realtimeService.emit('dashboard_updated');
+        invalidateDashboardKPIs();
     } catch (error) {
         next(error);
     }
@@ -1007,6 +1028,13 @@ router.delete('/bills/:id', async (req: Request, res: Response, next: NextFuncti
         cacheService.del('dashboard:kpis');
 
         res.json(successResponse({ message: 'Bill deleted successfully' }));
+
+        // Broadcast real-time update
+        realtimeService.emit('purchase_updated');
+        realtimeService.emit('inventory_updated');
+        realtimeService.emit('dashboard_updated');
+        invalidateInventorySummary();
+        invalidateDashboardKPIs();
     } catch (error) {
         next(error);
     }
@@ -1252,6 +1280,12 @@ router.post('/payments', async (req: Request, res: Response, next: NextFunction)
             paymentId: transactionId,
             message: 'Payment recorded and allocated successfully'
         }));
+
+        // Broadcast real-time update
+        realtimeService.emit('purchase_updated');
+        realtimeService.emit('accounts_updated');
+        realtimeService.emit('dashboard_updated');
+        invalidateDashboardKPIs();
 
     } catch (error) {
         next(error);

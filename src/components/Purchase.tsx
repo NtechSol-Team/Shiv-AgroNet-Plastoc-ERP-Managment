@@ -11,6 +11,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Minus, Search, Loader2, Building2, Package, Trash2, CheckCircle, XCircle, RotateCcw, Link, Edit2 } from 'lucide-react';
+import { useRealtimeEvent } from '../hooks/useRealtime';
+import { useRealtimeContext } from '../context/RealtimeContext';
 import { purchaseApi, mastersApi, accountsApi, gstApi } from '../lib/api';
 import RollEntryModal from './RollEntryModal';
 
@@ -279,6 +281,8 @@ export function Purchase() {
   };
   const [availableAdvances, setAvailableAdvances] = useState<any[]>([]); // For integrated adjustment
 
+  const { lastEvent } = useRealtimeContext();
+
   const [paymentForm, setPaymentForm] = useState(() => {
     const d = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -351,6 +355,11 @@ export function Purchase() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Auto-refresh on real-time events
+  useRealtimeEvent(lastEvent, ['purchase_updated', 'accounts_updated', 'inventory_updated', 'masters_updated'], () => {
+    fetchData();
+  });
 
   // ============================================================
   // GST CALCULATION HELPERS

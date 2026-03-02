@@ -24,6 +24,8 @@ import { createError } from '../middleware/errorHandler';
 import { createStockMovement, validateFinishedProductStock, getFinishedProductStock } from '../services/inventory.service';
 import { cache as cacheService } from '../services/cache.service';
 import { syncCustomerOutstanding } from '../utils/balance';
+import { realtimeService } from '../services/realtime.service';
+import { invalidateInventorySummary, invalidateDashboardKPIs } from '../services/precomputed.service';
 
 const router = Router();
 
@@ -413,6 +415,14 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
             customer,
             items: insertedItems,
         }));
+
+        // Broadcast real-time update to all connected clients
+        realtimeService.emit('sales_updated');
+        realtimeService.emit('dashboard_updated');
+        if (status === 'Confirmed') {
+            invalidateInventorySummary();
+            invalidateDashboardKPIs();
+        }
     } catch (error) {
         next(error);
     }
@@ -628,6 +638,13 @@ router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFun
         cacheService.del('masters:customers');
 
         res.json(successResponse({ message: 'Invoice deleted successfully' }));
+
+        // Broadcast real-time update
+        realtimeService.emit('sales_updated');
+        realtimeService.emit('inventory_updated');
+        realtimeService.emit('dashboard_updated');
+        invalidateInventorySummary();
+        invalidateDashboardKPIs();
     } catch (error) {
         next(error);
     }
@@ -904,6 +921,12 @@ router.post('/receipts', async (req: Request, res: Response, next: NextFunction)
             message: 'Receipt created and allocated successfully'
         }));
 
+        // Broadcast real-time update
+        realtimeService.emit('sales_updated');
+        realtimeService.emit('accounts_updated');
+        realtimeService.emit('dashboard_updated');
+        invalidateDashboardKPIs();
+
     } catch (error) {
         next(error);
     }
@@ -971,6 +994,12 @@ router.delete('/receipts/:id', async (req, res, next) => {
         cacheService.del('masters:customers');
 
         res.json(successResponse({ message: 'Receipt deleted and financial impact reverted successfully' }));
+
+        // Broadcast real-time update
+        realtimeService.emit('sales_updated');
+        realtimeService.emit('accounts_updated');
+        realtimeService.emit('dashboard_updated');
+        invalidateDashboardKPIs();
 
     } catch (error) {
         next(error);
@@ -1130,6 +1159,12 @@ router.put('/receipts/:id', async (req, res, next) => {
             receiptId: id,
             message: 'Receipt updated successfully'
         }));
+
+        // Broadcast real-time update
+        realtimeService.emit('sales_updated');
+        realtimeService.emit('accounts_updated');
+        realtimeService.emit('dashboard_updated');
+        invalidateDashboardKPIs();
 
     } catch (error) {
         next(error);

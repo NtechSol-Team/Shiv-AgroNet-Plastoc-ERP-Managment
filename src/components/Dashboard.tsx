@@ -12,6 +12,8 @@ import {
   Activity, History, ShoppingCart, Target, Scale,
   Calendar, ChevronDown, Filter
 } from 'lucide-react';
+import { useRealtimeEvent } from '../hooks/useRealtime';
+import { useRealtimeContext } from '../context/RealtimeContext';
 import { dashboardApi } from '../lib/api';
 import { CCDashboardWidget } from './CCDashboardWidget';
 
@@ -90,9 +92,23 @@ export function Dashboard() {
   const [dynamicProfit, setDynamicProfit] = useState<any>(null);
   const [machineEfficiency, setMachineEfficiency] = useState<any[]>([]);
 
+  const { lastEvent } = useRealtimeContext();
+
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  // Auto-refresh on real-time events
+  useRealtimeEvent(lastEvent, [
+    'dashboard_updated',
+    'sales_updated',
+    'purchase_updated',
+    'inventory_updated',
+    'accounts_updated',
+    'production_updated'
+  ], () => {
+    fetchDashboardData();
+  });
 
   const fetchDashboardData = async () => {
     setLoading(true);
