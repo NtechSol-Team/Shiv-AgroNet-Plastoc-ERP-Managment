@@ -441,6 +441,13 @@ export const accountsApi = {
             method: 'POST',
             body: JSON.stringify(data),
         }),
+    updateBankTransfer: (id: string, data: any) =>
+        fetchApi<any>(`/accounts/bank-transfer/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        }),
+    deleteBankTransfer: (id: string) =>
+        fetchApi<any>(`/accounts/bank-transfer/${id}`, { method: 'DELETE' }),
 };
 
 // ==================== INVENTORY API ====================

@@ -2225,4 +2225,173 @@ router.post('/bank-transfer', async (req: Request, res: Response, next: NextFunc
     }
 });
 
+/**
+ * PUT /accounts/bank-transfer/:id
+ * Update an existing bank transfer and reconcile balances
+ */
+router.put('/bank-transfer/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+        const { fromAccountId, toAccountId, amount, date, reference, remarks } = req.body;
+
+        if (!fromAccountId || !toAccountId || !amount || parseFloat(amount) <= 0) {
+            throw createError('From account, To account, and a valid amount are required', 400);
+        }
+
+        if (fromAccountId === toAccountId) {
+            throw createError('From and To accounts cannot be the same', 400);
+        }
+
+        const newAmount = parseFloat(amount);
+
+        await db.transaction(async (tx) => {
+            // 1. Fetch existing transfer
+            const [oldTx] = await tx.select().from(paymentTransactions)
+                .where(and(eq(paymentTransactions.id, id), eq(paymentTransactions.type, 'BANK_TRANSFER')));
+            if (!oldTx) throw createError('Bank transfer not found', 404);
+
+            const oldAmount = parseFloat(oldTx.amount);
+            const oldFromAccountId = oldTx.partyId!;
+            const oldToAccountId = oldTx.accountId!;
+
+            // 2. Revert old balances
+            // Revert Old Source
+            await tx.update(bankCashAccounts)
+                .set({ balance: sql`${bankCashAccounts.balance}::numeric + ${oldAmount}`, updatedAt: new Date() })
+                .where(eq(bankCashAccounts.id, oldFromAccountId));
+
+            // Revert Old Destination
+            await tx.update(bankCashAccounts)
+                .set({ balance: sql`${bankCashAccounts.balance}::numeric - ${oldAmount}`, updatedAt: new Date() })
+                .where(eq(bankCashAccounts.id, oldToAccountId));
+
+            // 3. Validate new source account and destination
+            const [fromAccount] = await tx.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, fromAccountId));
+            if (!fromAccount) throw createError('Source account not found', 404);
+
+            const [toAccount] = await tx.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, toAccountId));
+            if (!toAccount) throw createError('Destination account not found', 404);
+
+            // 4. Check available balance in new source (after reversion)
+            let availableBalance: number;
+            if (fromAccount.type === 'CC') {
+                const [ccDetails] = await tx.select({ sanctionedLimit: ccAccountDetails.sanctionedLimit })
+                    .from(ccAccountDetails).where(eq(ccAccountDetails.accountId, fromAccountId));
+                const sanctionedLimit = parseFloat(ccDetails?.sanctionedLimit || '0');
+                const utilized = Math.abs(parseFloat(fromAccount.balance || '0'));
+                availableBalance = sanctionedLimit - utilized;
+            } else {
+                availableBalance = parseFloat(fromAccount.balance || '0');
+            }
+
+            if (newAmount > availableBalance + 0.01) {
+                throw createError(`Insufficient balance in ${fromAccount.name}. Available: ₹${availableBalance.toFixed(2)}`, 400);
+            }
+
+            // 5. Apply new balances
+            // Deduct from new source
+            await tx.update(bankCashAccounts)
+                .set({ balance: sql`${bankCashAccounts.balance}::numeric - ${newAmount}`, updatedAt: new Date() })
+                .where(eq(bankCashAccounts.id, fromAccountId));
+
+            // Add to new destination
+            await tx.update(bankCashAccounts)
+                .set({ balance: sql`${bankCashAccounts.balance}::numeric + ${newAmount}`, updatedAt: new Date() })
+                .where(eq(bankCashAccounts.id, toAccountId));
+
+            // 6. Update payment transaction record
+            const [updatedTx] = await tx.update(paymentTransactions).set({
+                date: new Date(date || Date.now()),
+                referenceId: fromAccountId,
+                referenceCode: `${fromAccount.name} → ${toAccount.name}`,
+                partyId: fromAccountId,
+                partyName: fromAccount.name,
+                accountId: toAccountId,
+                amount: String(newAmount),
+                bankReference: reference || null,
+                remarks: remarks || `Transfer: ${fromAccount.name} → ${toAccount.name}`
+            }).where(eq(paymentTransactions.id, id)).returning();
+
+            // 7. Update General Ledger entries
+            // Easiest is to delete and recreate them to ensure correctness
+            await tx.delete(generalLedger).where(eq(generalLedger.referenceId, id));
+
+            // DR: Destination Account
+            await tx.insert(generalLedger).values({
+                transactionDate: new Date(date || Date.now()),
+                voucherNumber: updatedTx.code,
+                voucherType: 'CONTRA',
+                ledgerId: toAccountId,
+                ledgerType: 'BANK_CASH',
+                debitAmount: String(newAmount),
+                creditAmount: '0',
+                description: `Fund transfer received from ${fromAccount.name} (Updated)`,
+                referenceId: updatedTx.id
+            });
+
+            // CR: Source Account
+            await tx.insert(generalLedger).values({
+                transactionDate: new Date(date || Date.now()),
+                voucherNumber: updatedTx.code,
+                voucherType: 'CONTRA',
+                ledgerId: fromAccountId,
+                ledgerType: 'BANK_CASH',
+                debitAmount: '0',
+                creditAmount: String(newAmount),
+                description: `Fund transfer sent to ${toAccount.name} (Updated)`,
+                referenceId: updatedTx.id
+            });
+
+            cache.del('masters:accounts');
+            res.json(successResponse({ message: 'Bank transfer updated successfully', transaction: updatedTx }));
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
+ * DELETE /accounts/bank-transfer/:id
+ * Delete a bank transfer and revert balances
+ */
+router.delete('/bank-transfer/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+
+        await db.transaction(async (tx) => {
+            // 1. Fetch existing transfer
+            const [oldTx] = await tx.select().from(paymentTransactions)
+                .where(and(eq(paymentTransactions.id, id), eq(paymentTransactions.type, 'BANK_TRANSFER')));
+            if (!oldTx) throw createError('Bank transfer not found', 404);
+
+            const amount = parseFloat(oldTx.amount);
+            const fromAccountId = oldTx.partyId!;
+            const toAccountId = oldTx.accountId!;
+
+            // 2. Revert balances
+            // Source account (Credit → Debit to revert)
+            await tx.update(bankCashAccounts)
+                .set({ balance: sql`${bankCashAccounts.balance}::numeric + ${amount}`, updatedAt: new Date() })
+                .where(eq(bankCashAccounts.id, fromAccountId));
+
+            // Destination account (Debit → Credit to revert)
+            await tx.update(bankCashAccounts)
+                .set({ balance: sql`${bankCashAccounts.balance}::numeric - ${amount}`, updatedAt: new Date() })
+                .where(eq(bankCashAccounts.id, toAccountId));
+
+            // 3. Delete general ledger entries
+            await tx.delete(generalLedger).where(eq(generalLedger.referenceId, id));
+
+            // 4. Delete the transaction
+            await tx.delete(paymentTransactions).where(eq(paymentTransactions.id, id));
+
+            cache.del('masters:accounts');
+            res.json(successResponse({ message: 'Bank transfer deleted successfully' }));
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+
 export default router;

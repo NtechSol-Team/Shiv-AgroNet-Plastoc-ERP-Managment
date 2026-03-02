@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   Plus, TrendingUp, TrendingDown, X, Loader2, Users, Truck,
-  CreditCard, Wallet, FileText, ArrowUpRight, ArrowDownRight, Search, Printer, MessageCircle, ChevronDown, Check, ArrowLeftRight, RotateCcw
+  CreditCard, Wallet, FileText, ArrowUpRight, ArrowDownRight, Search, Printer, MessageCircle, ChevronDown, Check, ArrowLeftRight, RotateCcw,
+  Edit2, Trash2
 } from 'lucide-react';
 import { useRealtimeEvent } from '../hooks/useRealtime';
 import { useRealtimeContext } from '../context/RealtimeContext';
@@ -158,6 +159,7 @@ export function Accounts() {
     remarks: ''
   });
   const [bankTransferError, setBankTransferError] = useState<string | null>(null);
+  const [editingBankTransferId, setEditingBankTransferId] = useState<string | null>(null);
 
   // Helper to compute available balance for display
   const getAvailableBalance = (a: any) => {
@@ -427,6 +429,30 @@ export function Accounts() {
   };
 
   // ── Bank Transfer handlers ──
+  const handleEditBankTransfer = (tx: any) => {
+    setBankTransferForm({
+      fromAccountId: tx.fromAccountId,
+      toAccountId: tx.toAccountId,
+      amount: tx.amount.toString(),
+      date: tx.date.split('T')[0],
+      reference: tx.bankReference || '',
+      remarks: tx.remarks || ''
+    });
+    setEditingBankTransferId(tx.id);
+    setShowBankTransferModal(true);
+  };
+
+  const handleDeleteBankTransfer = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this bank transfer?')) return;
+    try {
+      await accountsApi.deleteBankTransfer(id);
+      fetchInitialData();
+      if (selectedAccountId) loadAccountLedger(selectedAccountId);
+    } catch (err) {
+      alert('Failed to delete bank transfer. Please try again.');
+    }
+  };
+
   const handleBankTransferSubmit = async () => {
     setBankTransferError(null);
     const { fromAccountId, toAccountId, amount } = bankTransferForm;
@@ -440,8 +466,18 @@ export function Accounts() {
     }
     const fromAcc = accounts.find(a => a.id === fromAccountId);
     const fromBalance = getAvailableBalance(fromAcc || {});
-    if (parseFloat(amount) > fromBalance + 0.01) {
-      setBankTransferError(`Insufficient balance in ${fromAcc?.name}. Available: ₹${fromBalance.toFixed(2)}`);
+
+    // For editing, we need to consider that the old amount will be added back
+    let availableForEdit = fromBalance;
+    if (editingBankTransferId) {
+      const oldTx = bankTransfersHistory.find(t => t.id === editingBankTransferId);
+      if (oldTx && oldTx.fromAccountId === fromAccountId) {
+        availableForEdit += parseFloat(oldTx.amount);
+      }
+    }
+
+    if (parseFloat(amount) > availableForEdit + 0.01) {
+      setBankTransferError(`Insufficient balance in ${fromAcc?.name}. Available: ₹${availableForEdit.toFixed(2)}`);
       return;
     }
     setBankTransferLoading(true);
@@ -451,15 +487,21 @@ export function Accounts() {
         ? new Date().toISOString()
         : new Date(bankTransferForm.date + 'T12:00:00').toISOString();
 
-      const res = await accountsApi.createBankTransfer({
+      const payload = {
         ...bankTransferForm,
         date: finalDate,
         amount: parseFloat(bankTransferForm.amount)
-      });
+      };
+
+      const res = editingBankTransferId
+        ? await accountsApi.updateBankTransfer(editingBankTransferId, payload)
+        : await accountsApi.createBankTransfer(payload);
+
       if (res.error) {
         setBankTransferError(res.error);
       } else {
         setShowBankTransferModal(false);
+        setEditingBankTransferId(null);
         setBankTransferForm({ fromAccountId: '', toAccountId: '', amount: '', date: new Date().toISOString().split('T')[0], reference: '', remarks: '' });
         fetchInitialData();
         if (selectedAccountId) loadAccountLedger(selectedAccountId);
@@ -1379,8 +1421,8 @@ export function Accounts() {
                 <button
                   onClick={() => setShowExpenseFilters(v => !v)}
                   className={`px-3 py-2 border rounded-lg flex items-center text-sm font-medium shadow-sm transition-all ${showExpenseFilters || hasActiveFilters
-                      ? 'bg-blue-50 border-blue-200 text-blue-700'
-                      : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                    ? 'bg-blue-50 border-blue-200 text-blue-700'
+                    : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
                     }`}
                 >
                   <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" /></svg>
@@ -2000,11 +2042,11 @@ export function Accounts() {
                   <ArrowLeftRight className="w-5 h-5 text-purple-700" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-purple-900">Bank / Cash Transfer</h3>
+                  <h3 className="text-lg font-bold text-purple-900">{editingBankTransferId ? 'Edit Bank Transfer' : 'Bank / Cash Transfer'}</h3>
                   <p className="text-xs text-purple-600">Internal fund movement between accounts</p>
                 </div>
               </div>
-              <button onClick={() => setShowBankTransferModal(false)} className="text-gray-400 hover:text-gray-600">
+              <button onClick={() => { setShowBankTransferModal(false); setEditingBankTransferId(null); setBankTransferError(null); }} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -2134,12 +2176,13 @@ export function Accounts() {
                         <th className="px-4 py-2">Date</th>
                         <th className="px-4 py-2">Details</th>
                         <th className="px-4 py-2 text-right">Amount</th>
+                        <th className="px-4 py-2 text-center">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
                       {bankTransfersHistory.length === 0 ? (
                         <tr>
-                          <td colSpan={3} className="px-4 py-8 text-center text-gray-500 italic">No transfers found</td>
+                          <td colSpan={4} className="px-4 py-8 text-center text-gray-500 italic">No transfers found</td>
                         </tr>
                       ) : (
                         bankTransfersHistory.map((tx) => (
@@ -2162,6 +2205,24 @@ export function Accounts() {
                             <td className="px-4 py-3 text-right font-medium text-gray-900 whitespace-nowrap">
                               ₹{parseFloat(tx.amount).toLocaleString('en-IN')}
                             </td>
+                            <td className="px-4 py-3 text-center">
+                              <div className="flex justify-center gap-2">
+                                <button
+                                  onClick={() => handleEditBankTransfer(tx)}
+                                  className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                                  title="Edit"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteBankTransfer(tx.id)}
+                                  className="p-1 text-red-600 hover:bg-red-50 rounded"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
                           </tr>
                         ))
                       )}
@@ -2174,7 +2235,8 @@ export function Accounts() {
             {/* Footer */}
             <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-3 shrink-0">
               <button
-                onClick={() => setShowBankTransferModal(false)}
+                type="button"
+                onClick={() => { setShowBankTransferModal(false); setEditingBankTransferId(null); setBankTransferError(null); }}
                 className="px-5 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
                 disabled={bankTransferLoading}
               >
