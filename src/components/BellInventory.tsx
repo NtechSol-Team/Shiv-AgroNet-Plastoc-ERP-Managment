@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Package, Plus, Search, Scale, AlertCircle, RefreshCcw, Trash2, Edit2, X, Check, ArrowRight, ChevronDown, ChevronRight, Layers, Box } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Package, Plus, Search, AlertCircle, RefreshCcw, Trash2, Edit2, X, Check, ChevronDown, ChevronRight, Layers, Box, Upload, Download, FileSpreadsheet } from 'lucide-react';
 import { bellInventoryApi, inventoryApi } from '../lib/api';
+import * as XLSX from 'xlsx';
 
 interface BellItem {
     id: string;
@@ -66,6 +67,14 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
     const [selectedProductId, setSelectedProductId] = useState('');
     const [batchCode, setBatchCode] = useState('');
     const [bellItems, setBellItems] = useState<NewBellItem[]>([]);
+
+    // Import XLSX State
+    const [showImportModal, setShowImportModal] = useState(false);
+    const [importRows, setImportRows] = useState<any[]>([]);
+    const [importBatchCode, setImportBatchCode] = useState('');
+    const [importErrors, setImportErrors] = useState<string[]>([]);
+    const [isImporting, setIsImporting] = useState(false);
+    const importFileRef = useRef<HTMLInputElement>(null);
 
     // Derived state for current product selection
     const selectedProduct = products.find(p => p.id === selectedProductId);
@@ -268,6 +277,155 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
         setEditForm({ pieceCount: '', netWeight: '' });
     };
 
+    // ==================== XLSX IMPORT HANDLERS ====================
+
+    const handleDownloadTemplate = () => {
+        const templateData = [
+            {
+                'Batch Code': 'BB-001',
+                'Product Name': 'Product A',
+                'Shade (GSM)': '150',
+                'Size (LxW)': '120x90',
+                'Piece Count': '1',
+                'Gross Weight (Kg)': '25.50',
+                'Weight Loss (grams)': '200'
+            },
+            {
+                'Batch Code': 'BB-001',
+                'Product Name': 'Product B',
+                'Shade (GSM)': '200',
+                'Size (LxW)': '100x80',
+                'Piece Count': '1',
+                'Gross Weight (Kg)': '18.75',
+                'Weight Loss (grams)': '150'
+            }
+        ];
+        const ws = XLSX.utils.json_to_sheet(templateData);
+        // Set column widths
+        ws['!cols'] = [18, 22, 14, 14, 14, 22, 23].map(w => ({ wch: w }));
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Bale Import Template');
+        XLSX.writeFile(wb, 'bale_import_template.xlsx');
+    };
+
+    const handleImportXlsx = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const data = new Uint8Array(event.target?.result as ArrayBuffer);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                const rows: any[] = XLSX.utils.sheet_to_json(sheet);
+
+                if (rows.length === 0) {
+                    setImportErrors(['The file is empty or has no data rows.']);
+                    setImportRows([]);
+                    setShowImportModal(true);
+                    return;
+                }
+
+                const errors: string[] = [];
+                const parsedRows = rows.map((row: any, idx: number) => {
+                    const rowNum = idx + 2; // Excel row number (1-indexed + header)
+                    const batchCode = String(row['Batch Code'] || '').trim();
+                    const productName = String(row['Product Name'] || '').trim();
+                    const gsm = String(row['Shade (GSM)'] || '').trim();
+                    const size = String(row['Size (LxW)'] || '').trim();
+                    const pieceCount = String(row['Piece Count'] || '1').trim();
+                    const grossWeight = parseFloat(String(row['Gross Weight (Kg)'] || '0'));
+                    const weightLoss = parseFloat(String(row['Weight Loss (grams)'] || '0'));
+                    const netWeight = grossWeight - (weightLoss / 1000);
+
+                    if (!batchCode) errors.push(`Row ${rowNum}: Batch Code is missing.`);
+                    if (!productName) errors.push(`Row ${rowNum}: Product Name is missing.`);
+                    if (!grossWeight || grossWeight <= 0) errors.push(`Row ${rowNum}: Gross Weight must be > 0.`);
+                    if (netWeight <= 0) errors.push(`Row ${rowNum}: Net Weight is <= 0 (check Weight Loss).`);
+
+                    // Match product by name
+                    const matchedProduct = products.find(
+                        p => p.name.trim().toLowerCase() === productName.toLowerCase()
+                    );
+
+                    return {
+                        batchCode,
+                        productName,
+                        finishedProductId: matchedProduct?.id || '',
+                        productMatched: !!matchedProduct,
+                        gsm: gsm || matchedProduct?.gsm || '',
+                        size: size || `${matchedProduct?.length || ''}x${matchedProduct?.width || ''}`,
+                        pieceCount,
+                        grossWeight,
+                        weightLoss,
+                        netWeight
+                    };
+                });
+
+                // Detect unmatched products
+                parsedRows.forEach((r, idx) => {
+                    if (!r.productMatched) {
+                        errors.push(`Row ${idx + 2}: Product "${r.productName}" not found in the system.`);
+                    }
+                });
+
+                // Get batch code from first row
+                const detectedBatchCode = parsedRows[0]?.batchCode || '';
+                setImportBatchCode(detectedBatchCode);
+                setImportRows(parsedRows);
+                setImportErrors(errors);
+                setShowImportModal(true);
+            } catch (err) {
+                setImportErrors(['Failed to read the file. Please ensure it is a valid .xlsx file.']);
+                setImportRows([]);
+                setShowImportModal(true);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+        // Reset file input
+        e.target.value = '';
+    };
+
+    const handleSubmitImport = async () => {
+        setImportErrors([]);
+        if (!importBatchCode.trim()) {
+            setImportErrors(['Batch Code is required.']);
+            return;
+        }
+        const unmatched = importRows.filter(r => !r.productMatched);
+        if (unmatched.length > 0) {
+            setImportErrors([`Cannot import: ${unmatched.length} product(s) not matched. Please fix the file.`]);
+            return;
+        }
+        setIsImporting(true);
+        try {
+            const payload = {
+                batchCode: importBatchCode.trim(),
+                items: importRows.map(r => ({
+                    finishedProductId: r.finishedProductId,
+                    gsm: r.gsm,
+                    size: r.size,
+                    pieceCount: r.pieceCount,
+                    grossWeight: String(r.grossWeight),
+                    weightLoss: String(r.weightLoss)
+                }))
+            };
+            const res = await bellInventoryApi.createBell(payload);
+            if (res.data) {
+                setShowImportModal(false);
+                setImportRows([]);
+                setImportBatchCode('');
+                fetchData();
+                if (onSuccess) onSuccess();
+            } else if (res.error) {
+                setImportErrors([res.error]);
+            }
+        } catch (err: any) {
+            setImportErrors([err.message || 'Import failed.']);
+        }
+        setIsImporting(false);
+    };
+
     // Calculate Unique Filter Options
     const allItems = batches.flatMap(b => b.items || []);
     const uniqueProducts = Array.from(new Set(allItems.map(i => i.finishedProduct?.name))).filter(Boolean).sort();
@@ -332,6 +490,29 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                         <Search className="w-4 h-4 mr-2" />
                         {showFilters ? 'Hide Filters' : 'Filters'}
                         {(filterProduct || filterSize || filterGsm || filterStatus !== 'Available') && <span className="ml-2 w-2 h-2 bg-blue-600 rounded-full"></span>}
+                    </button>
+                    {/* Hidden file input for XLSX import */}
+                    <input
+                        ref={importFileRef}
+                        type="file"
+                        accept=".xlsx,.xls"
+                        className="hidden"
+                        onChange={handleImportXlsx}
+                    />
+                    <button
+                        onClick={() => importFileRef.current?.click()}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg flex items-center shadow-sm transition-all text-sm font-medium"
+                    >
+                        <Upload className="w-4 h-4 mr-2" />
+                        Import Bale Data
+                    </button>
+                    <button
+                        onClick={handleDownloadTemplate}
+                        className="bg-white hover:bg-gray-50 text-emerald-700 border border-emerald-300 px-4 py-2 rounded-lg flex items-center shadow-sm transition-all text-sm font-medium"
+                        title="Download Excel Template"
+                    >
+                        <Download className="w-4 h-4 mr-2" />
+                        Download Template
                     </button>
                     <button
                         onClick={() => setShowCreateModal(true)}
@@ -815,6 +996,155 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                                     className="flex-[2] px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30 disabled:opacity-50 disabled:shadow-none font-medium flex justify-center items-center"
                                 >
                                     {isSubmitting ? <RefreshCcw className="w-4 h-4 animate-spin mr-2" /> : `Create Batch (${bellItems.length} items)`}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ==================== IMPORT XLSX MODAL ==================== */}
+            {showImportModal && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
+                        {/* Modal Header */}
+                        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 flex-shrink-0">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
+                                    <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-bold text-gray-900">Import Bale Data from Excel</h3>
+                                    <p className="text-sm text-gray-500">{importRows.length} rows detected • Review before importing</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={handleDownloadTemplate}
+                                    className="flex items-center gap-2 px-3 py-1.5 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors font-medium"
+                                >
+                                    <Download className="w-4 h-4" />
+                                    Download Template
+                                </button>
+                                <button onClick={() => { setShowImportModal(false); setImportRows([]); setImportErrors([]); }} className="text-gray-400 hover:text-gray-600">
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="p-6 overflow-y-auto flex-grow space-y-5">
+                            {/* Batch Code */}
+                            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Batch Code <span className="text-red-500">*</span></label>
+                                <input
+                                    type="text"
+                                    value={importBatchCode}
+                                    onChange={e => setImportBatchCode(e.target.value)}
+                                    className="max-w-xs w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-sm"
+                                    placeholder="e.g. BB-001"
+                                />
+                                <p className="text-xs text-gray-400 mt-1">Auto-filled from the file. You can change it.</p>
+                            </div>
+
+                            {/* Errors */}
+                            {importErrors.length > 0 && (
+                                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <AlertCircle className="w-4 h-4 text-red-600" />
+                                        <span className="text-sm font-semibold text-red-700">Issues Found ({importErrors.length})</span>
+                                    </div>
+                                    <ul className="list-disc list-inside space-y-1">
+                                        {importErrors.map((err, i) => (
+                                            <li key={i} className="text-xs text-red-600">{err}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+
+                            {/* Preview Table */}
+                            {importRows.length > 0 && (
+                                <div>
+                                    <h4 className="text-sm font-semibold text-gray-700 mb-2">Preview ({importRows.length} items)</h4>
+                                    <div className="overflow-x-auto rounded-lg border border-gray-200">
+                                        <table className="w-full text-sm">
+                                            <thead className="bg-gray-50 text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                                <tr>
+                                                    <th className="px-4 py-2 text-left">#</th>
+                                                    <th className="px-4 py-2 text-left">Product Name</th>
+                                                    <th className="px-4 py-2 text-left">Status</th>
+                                                    <th className="px-4 py-2 text-left">Shade</th>
+                                                    <th className="px-4 py-2 text-left">Size</th>
+                                                    <th className="px-4 py-2 text-right">Pieces</th>
+                                                    <th className="px-4 py-2 text-right">Gross Wt (Kg)</th>
+                                                    <th className="px-4 py-2 text-right">Loss (g)</th>
+                                                    <th className="px-4 py-2 text-right">Net Wt (Kg)</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-100">
+                                                {importRows.map((row, idx) => (
+                                                    <tr key={idx} className={`${!row.productMatched ? 'bg-red-50' : row.netWeight <= 0 ? 'bg-orange-50' : ''
+                                                        }`}>
+                                                        <td className="px-4 py-2 text-gray-400 font-mono text-xs">{idx + 1}</td>
+                                                        <td className="px-4 py-2 font-medium text-gray-900">{row.productName}</td>
+                                                        <td className="px-4 py-2">
+                                                            {row.productMatched ? (
+                                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-semibold">
+                                                                    <Check className="w-3 h-3" /> Matched
+                                                                </span>
+                                                            ) : (
+                                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs font-semibold">
+                                                                    <X className="w-3 h-3" /> Not Found
+                                                                </span>
+                                                            )}
+                                                        </td>
+                                                        <td className="px-4 py-2 text-gray-600">{row.gsm || '-'}</td>
+                                                        <td className="px-4 py-2 text-gray-600">{row.size || '-'}</td>
+                                                        <td className="px-4 py-2 text-right text-gray-600">{row.pieceCount}</td>
+                                                        <td className="px-4 py-2 text-right font-mono font-semibold text-gray-900">{row.grossWeight?.toFixed(2)}</td>
+                                                        <td className="px-4 py-2 text-right text-orange-600">{row.weightLoss}</td>
+                                                        <td className={`px-4 py-2 text-right font-mono font-bold ${row.netWeight > 0 ? 'text-emerald-600' : 'text-red-500'
+                                                            }`}>
+                                                            {row.netWeight?.toFixed(2)}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                            <tfoot className="bg-gray-50 border-t border-gray-200">
+                                                <tr>
+                                                    <td colSpan={6} className="px-4 py-2 text-xs font-bold text-gray-500 uppercase text-right">Totals</td>
+                                                    <td className="px-4 py-2 text-right font-mono font-bold text-gray-900">
+                                                        {importRows.reduce((s, r) => s + (r.grossWeight || 0), 0).toFixed(2)} kg
+                                                    </td>
+                                                    <td className="px-4 py-2 text-right"></td>
+                                                    <td className="px-4 py-2 text-right font-mono font-bold text-emerald-700">
+                                                        {importRows.reduce((s, r) => s + (r.netWeight || 0), 0).toFixed(2)} kg
+                                                    </td>
+                                                </tr>
+                                            </tfoot>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="p-6 border-t border-gray-100 bg-gray-50 flex-shrink-0">
+                            <div className="flex space-x-3">
+                                <button
+                                    type="button"
+                                    onClick={() => { setShowImportModal(false); setImportRows([]); setImportErrors([]); }}
+                                    className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-white transition-colors font-medium bg-white"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleSubmitImport}
+                                    disabled={isImporting || importRows.length === 0 || importRows.some(r => !r.productMatched || r.netWeight <= 0)}
+                                    className="flex-[2] px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-500/30 disabled:opacity-50 disabled:shadow-none font-medium flex justify-center items-center"
+                                >
+                                    {isImporting
+                                        ? <><RefreshCcw className="w-4 h-4 animate-spin mr-2" /> Importing...</>
+                                        : <><Upload className="w-4 h-4 mr-2" /> Import {importRows.length} Items as Batch</>}
                                 </button>
                             </div>
                         </div>
