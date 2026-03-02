@@ -418,6 +418,25 @@ export function Sales() {
     setInvoiceItems(invoiceItems.filter(item => item.id !== itemId));
   };
 
+  const handleEditItem = (item: InvoiceItem) => {
+    // Load item data back into the currentItem state for editing
+    setCurrentItem({
+      finishedProductId: item.finishedProductId || '',
+      bellItemId: item.bellItemId || '',
+      product: item.product,
+      hsnCode: item.hsnCode,
+      quantity: item.quantity.toString(),
+      rate: item.rate.toString(),
+      discountPercent: item.discountPercent.toString(),
+      taxPercent: item.taxPercent.toString(),
+      childItems: item.childItems || []
+    });
+
+    // Remove the item from the list so they can "replace" it by adding it back
+    setInvoiceItems(invoiceItems.filter(i => i.id !== item.id));
+    setError(null);
+  };
+
   const calculateTotals = () => {
     const subtotal = invoiceItems.reduce((sum, item) => sum + (item.quantity * item.rate), 0);
     const totalDiscount = invoiceItems.reduce((sum, item) => {
@@ -1201,7 +1220,10 @@ export function Sales() {
                               <td className="px-3 py-1 text-sm text-right">{item.taxPercent}</td>
                               <td className="px-3 py-1 text-sm font-bold text-right text-gray-900">{item.amount.toFixed(2)}</td>
                               <td className="px-3 py-1 text-center">
-                                <button onClick={() => handleRemoveItem(item.id)} className="text-gray-400 hover:text-red-600"><Trash2 className="w-3 h-3" /></button>
+                                <div className="flex items-center justify-center space-x-1">
+                                  <button onClick={() => handleEditItem(item)} className="text-gray-400 hover:text-blue-600" title="Edit Item"><Edit2 className="w-3 h-3" /></button>
+                                  <button onClick={() => handleRemoveItem(item.id)} className="text-gray-400 hover:text-red-600" title="Remove Item"><Trash2 className="w-3 h-3" /></button>
+                                </div>
                               </td>
                             </tr>
                           ))}

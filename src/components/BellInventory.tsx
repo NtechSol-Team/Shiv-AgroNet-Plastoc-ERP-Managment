@@ -65,6 +65,9 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
 
     // Create Form State
     const [selectedProductId, setSelectedProductId] = useState('');
+    const [selWidth, setSelWidth] = useState('');
+    const [selLength, setSelLength] = useState('');
+    const [selShade, setSelShade] = useState('');
     const [batchCode, setBatchCode] = useState('');
     const [bellItems, setBellItems] = useState<NewBellItem[]>([]);
 
@@ -78,6 +81,39 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
 
     // Derived state for current product selection
     const selectedProduct = products.find(p => p.id === selectedProductId);
+
+    // Filter options for Create Modal
+    const availableWidths = Array.from(new Set(products.map(p => p.width).filter(Boolean))).sort();
+    const availableLengths = Array.from(new Set(
+        products
+            .filter(p => !selWidth || p.width === selWidth)
+            .map(p => p.length)
+            .filter(Boolean)
+    )).sort();
+    const availableShades = Array.from(new Set(
+        products
+            .filter(p => (!selWidth || p.width === selWidth) && (!selLength || p.length === selLength))
+            .map(p => p.gsm)
+            .filter(Boolean)
+    )).sort();
+
+    // Auto-resolve product based on Width, Length, Shade
+    useEffect(() => {
+        if (selWidth && selLength && selShade) {
+            const match = products.find(p =>
+                p.width === selWidth &&
+                p.length === selLength &&
+                p.gsm === selShade
+            );
+            if (match) {
+                setSelectedProductId(match.id);
+            } else {
+                setSelectedProductId('');
+            }
+        } else {
+            setSelectedProductId('');
+        }
+    }, [selWidth, selLength, selShade, products]);
 
     useEffect(() => {
         fetchData();
@@ -120,6 +156,9 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
             grossWeight: '',
             weightLoss: '0'
         }]);
+        setSelWidth('');
+        setSelLength('');
+        setSelShade('');
     };
 
     const updateItem = (index: number, field: keyof NewBellItem, value: string) => {
@@ -840,39 +879,86 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                                     Add Items to Batch
                                 </h4>
                                 <div className="flex gap-4 items-end">
-                                    <div className="flex-grow">
-                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Select Product</label>
-                                        <div className="relative">
-                                            <select
-                                                className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none appearance-none bg-white text-sm"
-                                                value={selectedProductId}
-                                                onChange={(e) => handleProductChange(e.target.value)}
+                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Width</label>
+                                            <div className="relative">
+                                                <select
+                                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none appearance-none bg-white text-sm"
+                                                    value={selWidth}
+                                                    onChange={(e) => { setSelWidth(e.target.value); setSelLength(''); setSelShade(''); }}
+                                                >
+                                                    <option value="">Width</option>
+                                                    {availableWidths.map(w => (
+                                                        <option key={w} value={w}>{w}m</option>
+                                                    ))}
+                                                </select>
+                                                <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Length</label>
+                                            <div className="relative">
+                                                <select
+                                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none appearance-none bg-white text-sm"
+                                                    value={selLength}
+                                                    onChange={(e) => { setSelLength(e.target.value); setSelShade(''); }}
+                                                    disabled={!selWidth}
+                                                >
+                                                    <option value="">Length</option>
+                                                    {availableLengths.map(l => (
+                                                        <option key={l} value={l}>{l}m</option>
+                                                    ))}
+                                                </select>
+                                                <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Shade</label>
+                                            <div className="relative">
+                                                <select
+                                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none appearance-none bg-white text-sm"
+                                                    value={selShade}
+                                                    onChange={(e) => setSelShade(e.target.value)}
+                                                    disabled={!selLength}
+                                                >
+                                                    <option value="">Shade</option>
+                                                    {availableShades.map(s => (
+                                                        <option key={s} value={s}>{s} Shade</option>
+                                                    ))}
+                                                </select>
+                                                <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <button
+                                                onClick={addItem}
+                                                disabled={!selectedProductId}
+                                                className="w-full bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center justify-center shadow-sm font-medium transition-all text-sm h-[38px]"
                                             >
-                                                <option value="">Choose a finished product...</option>
-                                                {products.map(p => (
-                                                    <option key={p.id} value={p.id}>
-                                                        {p.name} ({p.length}x{p.width} | {p.gsm || 'N/A'} Shade) - Stock: {parseFloat(p.stock || '0').toFixed(0)}kg
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+                                                <Plus className="w-4 h-4 mr-2" />
+                                                Add to Batch
+                                            </button>
                                         </div>
                                     </div>
-                                    <button
-                                        onClick={addItem}
-                                        disabled={!selectedProductId}
-                                        className="bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center shadow-sm font-medium transition-all text-sm h-[38px]"
-                                    >
-                                        <Plus className="w-4 h-4 mr-2" />
-                                        Add to Batch
-                                    </button>
+                                    {selectedProduct && (
+                                        <div className="mt-2 p-2 bg-white rounded border border-blue-100 flex items-center justify-between">
+                                            <div className="text-xs text-blue-900 font-semibold flex items-center">
+                                                <Check className="w-3 h-3 mr-1 text-green-500" />
+                                                Product Identified: {selectedProduct.name}
+                                            </div>
+                                            <div className="text-xs text-blue-600">
+                                                Stock: <strong>{parseFloat(selectedProduct.stock || '0').toFixed(2)} kg</strong>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {!selectedProduct && selWidth && selLength && selShade && (
+                                        <div className="mt-2 text-xs text-red-500 flex items-center">
+                                            <AlertCircle className="w-3 h-3 mr-1" />
+                                            No product matches these specifications.
+                                        </div>
+                                    )}
                                 </div>
-                                {selectedProduct && (
-                                    <div className="mt-2 text-xs text-blue-600 flex items-center">
-                                        <Check className="w-3 h-3 mr-1" />
-                                        Selected: {selectedProduct.name} — Current Stock: <strong>{parseFloat(selectedProduct.stock || '0').toFixed(2)} kg</strong>
-                                    </div>
-                                )}
                             </div>
 
                             {/* Items Table */}
