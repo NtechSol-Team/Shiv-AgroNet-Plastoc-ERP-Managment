@@ -31,17 +31,26 @@ router.get('/dashboard-stats', async (req: Request, res: Response, next: NextFun
             totalLoansTaken: sql<string>`coalesce(sum(case when ${financialTransactions.transactionType} = 'LOAN_TAKEN' then ${financialTransactions.amount} else 0 end), 0)`,
             totalLoansGiven: sql<string>`coalesce(sum(case when ${financialTransactions.transactionType} = 'LOAN_GIVEN' then ${financialTransactions.amount} else 0 end), 0)`,
             totalInvestments: sql<string>`coalesce(sum(case when ${financialTransactions.transactionType} = 'INVESTMENT_RECEIVED' then ${financialTransactions.amount} else 0 end), 0)`,
-        }).from(financialTransactions);
+            // Cash investment: deposited into a Cash account OR paymentMode is Cash (when no account selected)
+            investmentCash: sql<string>`coalesce(sum(case when ${financialTransactions.transactionType} = 'INVESTMENT_RECEIVED' and (${bankCashAccounts.type} = 'Cash' or (${financialTransactions.accountId} is null and ${financialTransactions.paymentMode} = 'Cash')) then ${financialTransactions.amount} else 0 end), 0)`,
+            // Bank investment: deposited into a Bank/CC account OR paymentMode is not Cash (when no account selected)
+            investmentBank: sql<string>`coalesce(sum(case when ${financialTransactions.transactionType} = 'INVESTMENT_RECEIVED' and (${bankCashAccounts.type} in ('Bank', 'CC') or (${financialTransactions.accountId} is null and ${financialTransactions.paymentMode} != 'Cash')) then ${financialTransactions.amount} else 0 end), 0)`,
+        })
+            .from(financialTransactions)
+            .leftJoin(bankCashAccounts, eq(financialTransactions.accountId, bankCashAccounts.id));
 
         res.json(successResponse({
             totalLoansTaken: parseFloat(stats.totalLoansTaken),
             totalLoansGiven: parseFloat(stats.totalLoansGiven),
-            totalInvestments: parseFloat(stats.totalInvestments)
+            totalInvestments: parseFloat(stats.totalInvestments),
+            investmentCash: parseFloat(stats.investmentCash),
+            investmentBank: parseFloat(stats.investmentBank),
         }));
     } catch (error) {
         next(error);
     }
 });
+
 
 /**
  * GET /finance/entities

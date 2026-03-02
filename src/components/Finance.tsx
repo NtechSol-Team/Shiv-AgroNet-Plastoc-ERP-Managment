@@ -19,7 +19,9 @@ export function Finance() {
     const [dashboardStats, setDashboardStats] = useState({
         totalLoansTaken: 0,
         totalLoansGiven: 0,
-        totalInvestments: 0
+        totalInvestments: 0,
+        investmentCash: 0,
+        investmentBank: 0,
     });
 
     // Form State
@@ -248,7 +250,7 @@ export function Finance() {
     };
 
     // Stats are now from backend
-    const { totalLoansTaken, totalLoansGiven, totalInvestments } = dashboardStats;
+    const { totalLoansTaken, totalLoansGiven, totalInvestments, investmentCash, investmentBank } = dashboardStats;
 
 
     return (
@@ -353,10 +355,27 @@ export function Finance() {
                                             </div>
                                             <h3 className="text-sm font-semibold text-slate-600 uppercase tracking-wider">Total Investments</h3>
                                         </div>
-                                        <div className="flex items-baseline gap-1">
+                                        <div className="flex items-baseline gap-1 mb-3">
                                             <span className="text-3xl font-bold text-slate-900">₹{totalInvestments.toLocaleString('en-IN')}</span>
                                         </div>
-                                        <p className="text-sm text-slate-500 mt-2">Capital Injection (Equity/Owner)</p>
+                                        <p className="text-sm text-slate-500 mb-3">Capital Injection (Equity/Owner)</p>
+                                        {/* Cash / Bank breakdown */}
+                                        <div className="border-t border-slate-100 pt-3 space-y-1.5">
+                                            <div className="flex justify-between items-center text-xs">
+                                                <span className="flex items-center gap-1.5 text-slate-500">
+                                                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+                                                    Cash
+                                                </span>
+                                                <span className="font-semibold text-slate-700">₹{investmentCash.toLocaleString('en-IN')}</span>
+                                            </div>
+                                            <div className="flex justify-between items-center text-xs">
+                                                <span className="flex items-center gap-1.5 text-slate-500">
+                                                    <span className="inline-block w-2 h-2 rounded-full bg-blue-400"></span>
+                                                    Bank / UPI / Cheque
+                                                </span>
+                                                <span className="font-semibold text-slate-700">₹{investmentBank.toLocaleString('en-IN')}</span>
+                                            </div>
+                                        </div>
                                     </div>
                                     <div className="absolute bottom-0 left-0 w-full h-1 bg-gradient-to-r from-green-500 to-green-600"></div>
                                 </div>
