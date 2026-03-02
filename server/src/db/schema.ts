@@ -92,6 +92,7 @@ export const bankCashAccounts = pgTable('bank_cash_accounts', {
     accountNo: text('account_no'),
     type: text('type').default('Bank'), // Bank, Cash
     balance: decimal('balance', { precision: 12, scale: 2 }).default('0'),
+    openingBalance: decimal('opening_balance', { precision: 12, scale: 2 }).default('0'),
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),
 });

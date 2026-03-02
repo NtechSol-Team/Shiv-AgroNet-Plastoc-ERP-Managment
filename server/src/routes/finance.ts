@@ -17,6 +17,7 @@ import {
 } from '../db/schema';
 import { cache as cacheService } from '../services/cache.service';
 import { eq, desc, sql, count as countFn, and, ne, gte, lte } from 'drizzle-orm';
+import { syncAccountBalance } from '../utils/balance';
 
 const router = Router();
 
@@ -813,7 +814,8 @@ router.post('/recalculate-ledgers', async (req: Request, res: Response, next: Ne
         console.log('🔄 Starting Ledger Recalculation...');
         const results = {
             customersUpdated: 0,
-            suppliersUpdated: 0
+            suppliersUpdated: 0,
+            accountsUpdated: 0
         };
 
         await db.transaction(async (tx) => {
@@ -873,6 +875,13 @@ router.post('/recalculate-ledgers', async (req: Request, res: Response, next: Ne
                         .where(eq(suppliers.id, balance.supplierId));
                     results.suppliersUpdated++;
                 }
+            }
+
+            // 4. Recalculate Account Balances
+            const allAccounts = await tx.select({ id: bankCashAccounts.id }).from(bankCashAccounts);
+            for (const account of allAccounts) {
+                await syncAccountBalance(account.id, tx);
+                results.accountsUpdated++;
             }
         });
 

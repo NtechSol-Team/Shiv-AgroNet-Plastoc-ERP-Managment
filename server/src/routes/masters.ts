@@ -818,7 +818,7 @@ router.get('/accounts', async (req: Request, res: Response, next: NextFunction) 
 
 router.post('/accounts', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { name, accountNo, type, balance } = req.body;
+        const { name, accountNo, type, balance, openingBalance } = req.body;
 
         // Find the highest existing A-NNN code to avoid duplicates
         const allAccounts = await db.select({ code: bankCashAccounts.code })
@@ -847,6 +847,7 @@ router.post('/accounts', async (req: Request, res: Response, next: NextFunction)
         const [item] = await db.insert(bankCashAccounts).values({
             code, name, accountNo, type: type || 'Bank',
             balance: String(balance || 0),
+            openingBalance: String(openingBalance || 0),
         }).returning();
 
         cache.del('masters:accounts');
@@ -859,9 +860,16 @@ router.post('/accounts', async (req: Request, res: Response, next: NextFunction)
 
 router.put('/accounts/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { name, accountNo, type, balance } = req.body;
+        const { name, accountNo, type, balance, openingBalance } = req.body;
         const [item] = await db.update(bankCashAccounts)
-            .set({ name, accountNo, type, balance: String(balance || 0), updatedAt: new Date() })
+            .set({
+                name,
+                accountNo,
+                type,
+                balance: String(balance || 0),
+                openingBalance: String(openingBalance || 0),
+                updatedAt: new Date()
+            })
             .where(eq(bankCashAccounts.id, req.params.id))
             .returning();
 

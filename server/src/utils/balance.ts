@@ -1,6 +1,6 @@
 import { db } from '../db';
-import { suppliers, customers, purchaseBills, salesInvoices, billPaymentAllocations, invoicePaymentAllocations, paymentTransactions } from '../db/schema';
-import { eq, and, ne, inArray } from 'drizzle-orm';
+import { suppliers, customers, purchaseBills, salesInvoices, billPaymentAllocations, invoicePaymentAllocations, paymentTransactions, bankCashAccounts, expenses, financialTransactions } from '../db/schema';
+import { eq, and, ne, inArray, or } from 'drizzle-orm';
 
 /**
  * Recalculate and update the outstanding balance for a supplier.
@@ -109,4 +109,100 @@ export async function syncCustomerOutstanding(customerId: string, tx?: any) {
         .where(eq(customers.id, customerId));
 
     console.log(`[Sync] Customer ${customerId} Outstanding set to ${correctOutstanding.toFixed(2)} based on OB: ${openingBalance}, Inv: ${totalInvoiceAmount}, Received: ${totalReceived}`);
+}
+
+/**
+ * Recalculate and update the balance for a bank/cash account.
+ * balance = openingBalance + totalInflow - totalOutflow
+ */
+export async function syncAccountBalance(accountId: string, tx?: any) {
+    if (!accountId) return;
+    const client = tx || db;
+
+    // 1. Get Account Details
+    const [account] = await client.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, accountId));
+    if (!account) return;
+    const openingBalance = parseFloat(account.openingBalance || '0');
+
+    // 2. Calculate Inflow/Outflow from payment_transactions
+    // Inflow: RECEIPT, SUPPLIER_ADVANCE_REFUND, BANK_TRANSFER (to this account)
+    // Outflow: PAYMENT, BANK_TRANSFER (from this account)
+    const paymentTxs = await client
+        .select()
+        .from(paymentTransactions)
+        .where(
+            and(
+                or(
+                    eq(paymentTransactions.accountId, accountId),
+                    and(
+                        eq(paymentTransactions.type, 'BANK_TRANSFER'),
+                        eq(paymentTransactions.partyId, accountId)
+                    )
+                ),
+                ne(paymentTransactions.status, 'Reversed')
+            )
+        );
+
+    const totalInflowPayments = paymentTxs.reduce((sum: number, p: any) => {
+        const amt = parseFloat(p.amount || '0');
+        if (p.type === 'RECEIPT' || p.type === 'SUPPLIER_ADVANCE_REFUND') {
+            return sum + amt;
+        }
+        if (p.type === 'BANK_TRANSFER' && p.accountId === accountId) {
+            return sum + amt; // Received into this account
+        }
+        return sum;
+    }, 0);
+
+    const totalOutflowPayments = paymentTxs.reduce((sum: number, p: any) => {
+        const amt = parseFloat(p.amount || '0');
+        if (p.type === 'PAYMENT') {
+            return sum + amt;
+        }
+        if (p.type === 'BANK_TRANSFER' && p.partyId === accountId) {
+            return sum + amt; // Sent from this account
+        }
+        return sum;
+    }, 0);
+
+    // 3. Calculate Outflow from expenses
+    const expenseRecords = await client
+        .select()
+        .from(expenses)
+        .where(eq(expenses.accountId, accountId));
+    const totalExpenses = expenseRecords.reduce((sum: number, e: any) => sum + parseFloat(e.amount || '0'), 0);
+
+    // 4. Calculate Inflow/Outflow from financialTransactions
+    const financeRecords = await client
+        .select()
+        .from(financialTransactions)
+        .where(eq(financialTransactions.accountId, accountId));
+
+    const totalInflowFinance = financeRecords.reduce((sum: number, f: any) => {
+        const amt = parseFloat(f.amount || '0');
+        if (['LOAN_TAKEN', 'INVESTMENT_RECEIVED', 'BORROWING'].includes(f.transactionType)) {
+            return sum + amt;
+        }
+        return sum;
+    }, 0);
+
+    const totalOutflowFinance = financeRecords.reduce((sum: number, f: any) => {
+        const amt = parseFloat(f.amount || '0');
+        if (['LOAN_GIVEN', 'INVESTMENT_MADE', 'REPAYMENT'].includes(f.transactionType)) {
+            return sum + amt;
+        }
+        return sum;
+    }, 0);
+
+    // Final Calculation
+    const totalInflow = totalInflowPayments + totalInflowFinance;
+    const totalOutflow = totalOutflowPayments + totalExpenses + totalOutflowFinance;
+    const correctBalance = openingBalance + totalInflow - totalOutflow;
+
+    // 5. Update Account Balance
+    await client.update(bankCashAccounts)
+        .set({ balance: correctBalance.toFixed(2), updatedAt: new Date() })
+        .where(eq(bankCashAccounts.id, accountId));
+
+    console.log(`[Sync] Account ${accountId} Balance updated to ${correctBalance.toFixed(2)} (Inflow: ${totalInflow}, Outflow: ${totalOutflow})`);
 }
