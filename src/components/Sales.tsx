@@ -179,21 +179,34 @@ export function Sales() {
     setError(null);
     setQuickAddGstSuccess(null);
 
+    // Dynamic state code derivation from GSTIN (first 2 digits)
+    const gstState = gstin.substring(0, 2);
+    const derivedStateCode = /^\d{2}$/.test(gstState) ? gstState : '24';
+
     try {
       const result = await gstApi.search(gstin);
       if (result.data) {
         setQuickAddCustomerForm(prev => ({
           ...prev,
           name: result.data.name,
-          stateCode: result.data.stateCode,
+          stateCode: result.data.stateCode || derivedStateCode,
           address: result.data.address
         }));
         setQuickAddGstSuccess('GST details fetched successfully.');
         setTimeout(() => setQuickAddGstSuccess(null), 3000);
       } else {
+        // Fallback: even if search fails, we can still set the state code based on GSTIN
+        setQuickAddCustomerForm(prev => ({
+          ...prev,
+          stateCode: derivedStateCode
+        }));
         setError(result.error || 'Unable to fetch GST details.');
       }
     } catch (err) {
+      setQuickAddCustomerForm(prev => ({
+        ...prev,
+        stateCode: derivedStateCode
+      }));
       setError('Failed to fetch GST details.');
     }
     setQuickAddGstLoading(false);
@@ -271,12 +284,22 @@ export function Sales() {
   const handleCustomerSelect = (customerId: string) => {
     const customer = customers.find(c => c.id === customerId);
     setSelectedCustomer(customer || null);
+
+    // Derive state code from GSTIN if stateCode is missing
+    let derivedStateCode = customer?.stateCode;
+    if (!derivedStateCode && customer?.gstNo && customer.gstNo.length >= 2) {
+      const gstState = customer.gstNo.substring(0, 2);
+      if (/^\d{2}$/.test(gstState)) {
+        derivedStateCode = gstState;
+      }
+    }
+
     setInvoiceForm({
       ...invoiceForm,
       customerId,
       billingAddress: customer?.address || '',
       shippingAddress: invoiceForm.sameAsBilling ? (customer?.address || '') : invoiceForm.shippingAddress,
-      placeOfSupply: customer?.stateCode || '24'
+      placeOfSupply: derivedStateCode || '24'
     });
   };
 
@@ -402,7 +425,7 @@ export function Sales() {
       return sum + (itemSubtotal * item.discountPercent) / 100;
     }, 0);
     const taxableAmount = subtotal - totalDiscount;
-    const totalTax = invoiceItems.reduce((sum, item) => (item.taxableAmount * item.taxPercent) / 100, 0);
+    const totalTax = invoiceItems.reduce((sum, item) => sum + ((item.taxableAmount * item.taxPercent) / 100), 0);
 
     const COMPANY_STATE_CODE = '24';
     const pos = invoiceForm.placeOfSupply || '';
@@ -441,6 +464,7 @@ export function Sales() {
         customerName: invoiceForm.customerId ? undefined : 'Walk-in Customer', // Logic for B2C
         invoiceType: invoiceForm.invoiceType,
         status: status,
+        placeOfSupply: invoiceForm.placeOfSupply,
         items: invoiceItems.flatMap(item => {
           if (item.childItems && item.childItems.length > 0) {
             return item.childItems.map(child => {

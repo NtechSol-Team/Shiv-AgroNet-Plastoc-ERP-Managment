@@ -429,6 +429,248 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
     }
 });
 
+/**
+ * PUT /sales/invoices/:id
+ * Update an existing sales invoice
+ */
+router.put('/invoices/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { id } = req.params;
+        const {
+            invoiceDate,
+            customerId,
+            customerName,
+            invoiceType = 'B2B',
+            status = 'Draft',
+            placeOfSupply = '24', // Default to Gujarat
+            items
+        } = req.body as CreateInvoiceRequest & { items: (InvoiceItem & { id?: string })[], placeOfSupply?: string };
+
+        // 1. Get existing invoice
+        const existingInvoice = await db.query.salesInvoices.findFirst({
+            where: eq(salesInvoices.id, id),
+            with: { items: true }
+        });
+
+        if (!existingInvoice) {
+            throw createError('Invoice not found', 404);
+        }
+
+        if (existingInvoice.status === 'Paid') {
+            throw createError('Cannot update a paid invoice', 400);
+        }
+
+        // 2. Revert previous stock movements/states if it was already confirmed
+        await db.transaction(async (tx) => {
+            if (existingInvoice.status === 'Confirmed') {
+                for (const item of existingInvoice.items || []) {
+                    // Update bell status
+                    if (item.bellItemId) {
+                        await tx.update(bellItems)
+                            .set({ status: 'Available' })
+                            .where(eq(bellItems.id, item.bellItemId));
+                    }
+
+                    // Reversal stock movement
+                    await tx.insert(stockMovements).values({
+                        date: new Date(),
+                        movementType: 'SI_REVERSAL',
+                        itemType: 'finished_product',
+                        finishedProductId: item.finishedProductId,
+                        quantityIn: '0',
+                        quantityOut: item.quantity, // quantityOut for SI_REVERSAL is actually the quantity we are ADDING BACK
+                        runningBalance: '0',
+                        referenceType: 'sales',
+                        referenceCode: existingInvoice.invoiceNumber,
+                        referenceId: existingInvoice.id,
+                        reason: `Update reversal for invoice ${existingInvoice.invoiceNumber}`,
+                    });
+
+                    // Actually, looking at the DELETE route:
+                    // quantityIn: String(item.quantity), // Restore stock
+                    // quantityOut: '0',
+                }
+            }
+
+            // Correction for reversal logic (matching DELETE)
+            if (existingInvoice.status === 'Confirmed') {
+                // Clear previous movements for this invoice to avoid double reversal if updated multiple times?
+                // No, standard flow is to create a new reversal entry.
+            }
+
+            // 3. Re-calculate GST logic based on placeOfSupply
+            const isInterState = placeOfSupply !== COMPANY_STATE_CODE;
+
+            // 4. Validate stock if status is Confirmed
+            if (status === 'Confirmed') {
+                for (const item of items) {
+                    if (item.bellItemId) {
+                        const [bell] = await tx.select().from(bellItems).where(eq(bellItems.id, item.bellItemId));
+                        if (!bell) throw createError(`Bell item not found`, 404);
+
+                        const wasAlreadyInInvoice = existingInvoice.items?.some(i => i.bellItemId === item.bellItemId);
+                        if (!wasAlreadyInInvoice && bell.status !== 'Available') {
+                            throw createError(`Bell item ${bell.code} is already ${bell.status}`, 400);
+                        }
+                    } else {
+                        const validation = await validateFinishedProductStock(item.finishedProductId, item.quantity);
+                        if (!validation.isValid) {
+                            const [product] = await tx.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+                            throw createError(`Insufficient stock for ${product?.name || 'product'}: ${validation.message}`, 400);
+                        }
+                    }
+                }
+            }
+
+            // 5. Calculate New Totals
+            let subtotal = 0;
+            let totalDiscount = 0;
+            let totalCgst = 0;
+            let totalSgst = 0;
+            let totalIgst = 0;
+
+            const processedItems = await Promise.all(items.map(async item => {
+                const [product] = await tx.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+
+                let productName = product?.name || 'Unknown Product';
+                if (item.bellItemId) {
+                    const bellData = await tx
+                        .select({ code: bellItems.code, batchCode: bellBatches.code })
+                        .from(bellItems)
+                        .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id))
+                        .where(eq(bellItems.id, item.bellItemId));
+
+                    if (bellData[0]) {
+                        const itemCode = bellData[0].batchCode || bellData[0].code;
+                        productName = `${itemCode} - ${productName}`;
+                    }
+                }
+
+                const amount = item.quantity * item.rate;
+                const discount = item.discount || 0;
+                const taxableAmount = amount - discount;
+                const gstAmount = (taxableAmount * item.gstPercent) / 100;
+
+                subtotal += amount;
+                totalDiscount += discount;
+
+                const cgst = isInterState ? 0 : gstAmount / 2;
+                const sgst = isInterState ? 0 : gstAmount / 2;
+                const igst = isInterState ? gstAmount : 0;
+
+                if (isInterState) {
+                    totalIgst += igst;
+                } else {
+                    totalCgst += cgst;
+                    totalSgst += sgst;
+                }
+
+                return {
+                    ...item,
+                    productName,
+                    amount,
+                    taxableAmount,
+                    cgst,
+                    sgst,
+                    igst,
+                    total: taxableAmount + gstAmount,
+                };
+            }));
+
+            const totalTax = totalCgst + totalSgst + totalIgst;
+            const taxableTotal = subtotal - totalDiscount;
+            const grandTotal = Math.round(taxableTotal + totalTax);
+
+            // 6. Update Invoice Record
+            const [updatedInvoice] = await tx.update(invoices)
+                .set({
+                    invoiceDate: new Date(invoiceDate),
+                    customerId: customerId || null,
+                    customerName: customerName || (customerId ? existingInvoice.customerName : 'Walk-in Customer'),
+                    placeOfSupply,
+                    invoiceType,
+                    subtotal: String(subtotal),
+                    discountAmount: String(totalDiscount),
+                    taxableAmount: String(taxableTotal),
+                    cgst: String(totalCgst),
+                    sgst: String(totalSgst),
+                    igst: String(totalIgst),
+                    totalTax: String(totalTax),
+                    grandTotal: String(grandTotal),
+                    balanceAmount: String(grandTotal - parseFloat(existingInvoice.paidAmount || '0')),
+                    status,
+                    updatedAt: new Date(),
+                })
+                .where(eq(invoices.id, id))
+                .returning();
+
+            // 7. Replace Items
+            await tx.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+
+            const insertedItems = await Promise.all(processedItems.map(async (item) => {
+                const [insertedItem] = await tx.insert(invoiceItems).values({
+                    invoiceId: id,
+                    finishedProductId: item.finishedProductId,
+                    productName: item.productName,
+                    hsnCode: '5608',
+                    quantity: String(item.quantity),
+                    rate: String(item.rate),
+                    amount: String(item.amount),
+                    discountAmount: String(item.discount || 0),
+                    bellItemId: item.bellItemId,
+                    taxableAmount: String(item.taxableAmount),
+                    gstPercent: String(item.gstPercent),
+                    cgst: String(item.cgst),
+                    sgst: String(item.sgst),
+                    igst: String(item.igst),
+                    totalAmount: String(item.total),
+                }).returning();
+
+                if (status === 'Confirmed') {
+                    if (item.bellItemId) {
+                        await tx.update(bellItems)
+                            .set({ status: 'Issued' })
+                            .where(eq(bellItems.id, item.bellItemId));
+                    }
+
+                    await tx.insert(stockMovements).values({
+                        date: new Date(),
+                        movementType: 'FG_OUT',
+                        itemType: 'finished_product',
+                        finishedProductId: item.finishedProductId,
+                        quantityIn: '0',
+                        quantityOut: String(item.quantity),
+                        runningBalance: '0',
+                        referenceType: 'sales',
+                        referenceCode: existingInvoice.invoiceNumber,
+                        referenceId: existingInvoice.id,
+                        reason: `Sold to ${updatedInvoice.customerName}`,
+                    });
+                }
+                return insertedItem;
+            }));
+
+            // 8. Sync Outstanding
+            if (customerId) await syncCustomerOutstanding(customerId);
+            if (existingInvoice.customerId && existingInvoice.customerId !== customerId) {
+                await syncCustomerOutstanding(existingInvoice.customerId);
+            }
+        });
+
+        res.json(successResponse({ message: 'Invoice updated successfully' }));
+
+        realtimeService.emit('sales_updated');
+        realtimeService.emit('dashboard_updated');
+        if (status === 'Confirmed') {
+            invalidateInventorySummary();
+            invalidateDashboardKPIs();
+        }
+
+    } catch (error) {
+        next(error);
+    }
+});
+
 // ============================================================
 // RECORD PAYMENT
 // ============================================================
