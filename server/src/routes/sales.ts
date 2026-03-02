@@ -26,6 +26,7 @@ import { cache as cacheService } from '../services/cache.service';
 import { syncCustomerOutstanding } from '../utils/balance';
 import { realtimeService } from '../services/realtime.service';
 import { invalidateInventorySummary, invalidateDashboardKPIs } from '../services/precomputed.service';
+import { getNextTransactionCode } from '../utils/generateCode';
 
 const router = Router();
 
@@ -470,8 +471,7 @@ router.post('/invoices/:id/payment', async (req: Request, res: Response, next: N
             .where(eq(invoices.id, id));
 
         // Generate payment code
-        const paymentCountResult = await db.select({ cnt: countFn() }).from(paymentTransactions);
-        const paymentCode = `REC-${String(Number(paymentCountResult[0]?.cnt || 0) + 1).padStart(4, '0')}`;
+        const paymentCode = await getNextTransactionCode('RECEIPT');
 
         // Record payment transaction
         await db.insert(paymentTransactions).values({

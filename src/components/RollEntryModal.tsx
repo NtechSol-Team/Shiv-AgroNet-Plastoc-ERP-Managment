@@ -291,7 +291,7 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                 handleAddRow(rolls[rowIndex].rawMaterialId);
             } else {
                 const nextRowId = rolls[rowIndex + 1]?.id;
-                const nextInput = document.getElementById(`weight-${nextRowId}`);
+                const nextInput = document.getElementById(`gross-${nextRowId}`);
                 if (nextInput) nextInput.focus();
             }
         } else if (e.key === 'Escape') {
@@ -535,7 +535,6 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                                         value={roll.rollCode}
                                                         onChange={(e) => handleUpdateRow(roll.id, 'rollCode', e.target.value)}
                                                         className="w-full text-sm border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 font-mono"
-                                                        tabIndex={idx * 5 + 1}
                                                     />
                                                 </td>
                                                 {billItems.length > 1 && (
@@ -544,7 +543,6 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                                             value={roll.rawMaterialId}
                                                             onChange={(e) => handleUpdateRow(roll.id, 'rawMaterialId', e.target.value)}
                                                             className="w-full text-sm border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                                                            tabIndex={idx * 5 + 2}
                                                         >
                                                             {billItems.map((item) => (
                                                                 <option key={item.rawMaterialId} value={item.rawMaterialId}>
@@ -564,7 +562,6 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                                         onKeyDown={(e) => handleKeyDown(e, idx, 'grossWeight')}
                                                         className="w-full text-sm border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 font-bold text-center"
                                                         placeholder="0.00"
-                                                        tabIndex={idx * 5 + 3}
                                                         autoFocus={idx === rolls.length - 1}
                                                     />
                                                 </td>
@@ -577,7 +574,6 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                                         onKeyDown={(e) => handleKeyDown(e, idx, 'pipeWeight')}
                                                         className="w-full text-sm border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 text-center"
                                                         placeholder="0.00"
-                                                        tabIndex={idx * 5 + 4}
                                                     />
                                                 </td>
                                                 <td className="px-3 py-1.5 bg-blue-50">
@@ -599,7 +595,6 @@ const RollEntryModal: React.FC<RollEntryModalProps> = ({ bill, onClose, onSave }
                                                         onKeyDown={(e) => handleKeyDown(e, idx, 'width')}
                                                         className="w-full text-sm border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 text-center"
                                                         placeholder="—"
-                                                        tabIndex={idx * 4 + 4}
                                                     />
                                                 </td>
                                                 <td className="px-3 py-1.5 text-center">

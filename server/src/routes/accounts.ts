@@ -39,6 +39,7 @@ import { createExpenseSchema, recordPaymentSchema } from '../schemas/accounts';
 import { cache } from '../services/cache.service';
 import { realtimeService } from '../services/realtime.service';
 import { invalidateDashboardKPIs } from '../services/precomputed.service';
+import { getNextTransactionCode, getNextExpenseCode } from '../utils/generateCode';
 
 const router = Router();
 
@@ -430,7 +431,7 @@ router.get('/customer-ledger', async (req: Request, res: Response, next: NextFun
                 .select()
                 .from(paymentTransactions)
                 .where(and(eq(paymentTransactions.partyType, 'customer'), eq(paymentTransactions.partyId, customerId), ne(paymentTransactions.status, 'Reversed')))
-                .orderBy(desc(paymentTransactions.createdAt))
+                .orderBy(desc(paymentTransactions.date), desc(paymentTransactions.createdAt))
                 .limit(limit)
                 .offset(offset);
 
@@ -550,7 +551,7 @@ router.get('/supplier-ledger', async (req: Request, res: Response, next: NextFun
                 .select()
                 .from(paymentTransactions)
                 .where(and(eq(paymentTransactions.partyType, 'supplier'), eq(paymentTransactions.partyId, supplierId), ne(paymentTransactions.status, 'Reversed')))
-                .orderBy(desc(paymentTransactions.createdAt))
+                .orderBy(desc(paymentTransactions.date), desc(paymentTransactions.createdAt))
                 .limit(limit)
                 .offset(offset);
 
@@ -712,11 +713,7 @@ router.post('/transactions', validateRequest(recordPaymentSchema), async (req: R
             newBalance = updatedAccount?.newBalance || '0';
 
             // 4. Create Transaction Record
-            const countResult = await tx.select({ cnt: countFn() }).from(paymentTransactions);
-            const txnCount = Number(countResult[0]?.cnt || 0);
-            const transactionCode = type === 'RECEIPT'
-                ? `REC-${String(txnCount + 1).padStart(4, '0')}`
-                : `PAY-${String(txnCount + 1).padStart(4, '0')}`;
+            const transactionCode = await getNextTransactionCode(type);
 
             let partyName = '';
             if (partyType === 'customer') {
@@ -955,7 +952,7 @@ router.get('/advances/:partyId', async (req: Request, res: Response, next: NextF
                 eq(paymentTransactions.partyId, partyId),
                 sql`${paymentTransactions.advanceBalance} > 0`
             ))
-            .orderBy(desc(paymentTransactions.createdAt));
+            .orderBy(desc(paymentTransactions.date), desc(paymentTransactions.createdAt));
 
         res.json(successResponse(advances));
     } catch (error) {
@@ -1252,7 +1249,7 @@ router.get('/expenses', async (req: Request, res: Response, next: NextFunction) 
             .from(expenses)
             .leftJoin(expenseHeads, eq(expenses.expenseHeadId, expenseHeads.id))
             .leftJoin(bankCashAccounts, eq(expenses.accountId, bankCashAccounts.id))
-            .orderBy(desc(expenses.createdAt));
+            .orderBy(desc(expenses.date), desc(expenses.createdAt));
 
         const formattedExpenses = allExpenses.map(row => ({
             ...row.expenses,
@@ -1288,8 +1285,7 @@ router.post('/expenses', validateRequest(createExpenseSchema), async (req: Reque
 
         await db.transaction(async (tx) => {
             // Generate expense code
-            const countResult = await tx.select({ cnt: countFn() }).from(expenses);
-            const expenseCode = `EXP-${String(Number(countResult[0]?.cnt || 0) + 1).padStart(4, '0')}`;
+            const expenseCode = await getNextExpenseCode();
 
             // 1. Update Account Balance (Reduce)
             const [accountUpdate] = await tx.update(bankCashAccounts)
@@ -1575,7 +1571,7 @@ router.get('/ledger/:accountId', async (req: Request, res: Response, next: NextF
                     )
                 )
             )
-            .orderBy(desc(paymentTransactions.createdAt));
+            .orderBy(desc(paymentTransactions.date), desc(paymentTransactions.createdAt));
 
         // 2. Get Expenses
         const expenseTxs = await db
@@ -1583,7 +1579,7 @@ router.get('/ledger/:accountId', async (req: Request, res: Response, next: NextF
             .from(expenses)
             .leftJoin(expenseHeads, eq(expenses.expenseHeadId, expenseHeads.id))
             .where(eq(expenses.accountId, accountId))
-            .orderBy(desc(expenses.createdAt));
+            .orderBy(desc(expenses.date), desc(expenses.createdAt));
 
         // 3. Get Financial Transactions
         const financeTxs = await db

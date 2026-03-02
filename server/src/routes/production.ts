@@ -21,6 +21,7 @@ import { createError } from '../middleware/errorHandler';
 import { validateRawMaterialStock, validateFinishedProductStock } from '../services/inventory.service';
 import { realtimeService } from '../services/realtime.service';
 import { invalidateInventorySummary, invalidateDashboardKPIs } from '../services/precomputed.service';
+import { getNextProductionBatchCode } from '../utils/generateCode';
 
 const router = Router();
 
@@ -262,9 +263,7 @@ router.post('/batches', async (req: Request, res: Response, next: NextFunction) 
         }
 
         // Generate batch code
-        const countResult = await db.select({ cnt: countFn() }).from(productionBatches);
-        const batchCount = Number(countResult[0]?.cnt || 0);
-        const batchCode = `PB-${String(batchCount + 1).padStart(3, '0')}`;
+        const batchCode = await getNextProductionBatchCode();
 
         // Create batch header
         const [batch] = await db.insert(productionBatches).values({
