@@ -131,6 +131,20 @@ export function Accounts() {
     paymentMode: 'Cash'
   });
 
+  // ── Inline Expense State ──
+  const [inlineExpenseForm, setInlineExpenseForm] = useState({
+    date: new Date().toISOString().split('T')[0],
+    expenseHeadId: '',
+    description: '',
+    amount: '',
+    accountId: '',
+    paymentMode: 'Cash'
+  });
+  const [inlineExpenseHeadSearch, setInlineExpenseHeadSearch] = useState('');
+  const [showInlineExpenseHeadDropdown, setShowInlineExpenseHeadDropdown] = useState(false);
+  const [isInlineSubmitting, setIsInlineSubmitting] = useState(false);
+  const inlineDateRef = React.useRef<HTMLInputElement>(null);
+
   // ── Supplier Advance Refund state ──
   const [showSupplierRefundModal, setShowSupplierRefundModal] = useState(false);
   const [supplierRefundsHistory, setSupplierRefundsHistory] = useState<any[]>([]);
@@ -321,6 +335,47 @@ export function Accounts() {
       if (selectedAccountId) loadAccountLedger(selectedAccountId); // Refresh ledger if active
     } catch (err) {
       setError('Failed to record expense');
+    }
+  };
+
+  const handleInlineExpenseSubmit = async () => {
+    if (!inlineExpenseForm.expenseHeadId || !inlineExpenseForm.amount || !inlineExpenseForm.accountId) {
+      return;
+    }
+    setIsInlineSubmitting(true);
+    try {
+      let finalDate = inlineExpenseForm.date;
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (finalDate === todayStr) {
+        finalDate = new Date().toISOString();
+      } else if (!finalDate.includes('T')) {
+        finalDate = new Date(finalDate + 'T12:00:00').toISOString();
+      }
+
+      const payload = {
+        ...inlineExpenseForm,
+        date: finalDate,
+        amount: parseFloat(inlineExpenseForm.amount)
+      };
+
+      await accountsApi.createExpense(payload);
+
+      setInlineExpenseForm({
+        date: new Date().toISOString().split('T')[0],
+        expenseHeadId: '',
+        description: '',
+        amount: '',
+        accountId: '',
+        paymentMode: 'Cash'
+      });
+      setInlineExpenseHeadSearch('');
+      fetchInitialData();
+      if (selectedAccountId) loadAccountLedger(selectedAccountId);
+      inlineDateRef.current?.focus();
+    } catch (err) {
+      setError('Failed to record expense');
+    } finally {
+      setIsInlineSubmitting(false);
     }
   };
 
@@ -1559,6 +1614,126 @@ export function Accounts() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
+                  {/* Inline Entry Row */}
+                  <tr className="bg-blue-50/30">
+                    <td className="px-4 py-2">
+                      <input
+                        ref={inlineDateRef}
+                        type="date"
+                        className="w-full text-sm border-gray-300 rounded-md p-1"
+                        value={inlineExpenseForm.date}
+                        onChange={e => setInlineExpenseForm(p => ({ ...p, date: e.target.value }))}
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="relative">
+                        <input
+                          type="text"
+                          className="w-full text-sm border-gray-300 rounded-md p-1"
+                          placeholder="Search Category..."
+                          value={inlineExpenseHeadSearch}
+                          onFocus={() => setShowInlineExpenseHeadDropdown(true)}
+                          onChange={e => {
+                            setInlineExpenseHeadSearch(e.target.value);
+                            setShowInlineExpenseHeadDropdown(true);
+                          }}
+                        />
+                        {showInlineExpenseHeadDropdown && (
+                          <div className="absolute z-10 w-64 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
+                            {expenseHeads.filter(h => h.name.toLowerCase().includes(inlineExpenseHeadSearch.toLowerCase())).map(h => (
+                              <div
+                                key={h.id}
+                                className="px-4 py-2 text-sm hover:bg-blue-50 cursor-pointer"
+                                onClick={() => {
+                                  setInlineExpenseForm(p => ({ ...p, expenseHeadId: h.id }));
+                                  setInlineExpenseHeadSearch(h.name);
+                                  setShowInlineExpenseHeadDropdown(false);
+                                }}
+                              >
+                                {h.name}
+                              </div>
+                            ))}
+                            {inlineExpenseHeadSearch && !expenseHeads.find(h => h.name.toLowerCase() === inlineExpenseHeadSearch.toLowerCase()) && (
+                              <div
+                                className="px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-gray-100 font-medium"
+                                onClick={async () => {
+                                  try {
+                                    const res = await mastersApi.createExpenseHead({ name: inlineExpenseHeadSearch, category: 'Variable' });
+                                    if (res.data) {
+                                      setExpenseHeads(prev => [...prev, res.data]);
+                                      setInlineExpenseForm(p => ({ ...p, expenseHeadId: res.data.id }));
+                                      setShowInlineExpenseHeadDropdown(false);
+                                    }
+                                  } catch (e) {
+                                    alert('Failed to create expense head');
+                                  }
+                                }}
+                              >
+                                + Create "{inlineExpenseHeadSearch}"
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        type="text"
+                        className="w-full text-sm border-gray-300 rounded-md p-1"
+                        placeholder="Description"
+                        value={inlineExpenseForm.description}
+                        onChange={e => setInlineExpenseForm(p => ({ ...p, description: e.target.value }))}
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <select
+                        className="w-full text-sm border-gray-300 rounded-md p-1"
+                        value={inlineExpenseForm.accountId}
+                        onChange={e => setInlineExpenseForm(p => ({ ...p, accountId: e.target.value }))}
+                      >
+                        <option value="">Select Account</option>
+                        {accounts.map(a => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-4 py-2">
+                      <select
+                        className="w-full text-sm border-gray-300 rounded-md p-1"
+                        value={inlineExpenseForm.paymentMode}
+                        onChange={e => setInlineExpenseForm(p => ({ ...p, paymentMode: e.target.value }))}
+                      >
+                        <option value="Cash">Cash</option>
+                        <option value="Bank Transfer">Bank Transfer</option>
+                        <option value="Cheque">Cheque</option>
+                        <option value="UPI">UPI</option>
+                        <option value="Card">Card</option>
+                        <option value="Adjustment">Adjustment</option>
+                      </select>
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        type="number"
+                        className="w-full text-sm border-gray-300 rounded-md p-1 text-right"
+                        placeholder="Amount"
+                        value={inlineExpenseForm.amount}
+                        onChange={e => setInlineExpenseForm(p => ({ ...p, amount: e.target.value }))}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') handleInlineExpenseSubmit();
+                        }}
+                      />
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <button
+                        onClick={handleInlineExpenseSubmit}
+                        disabled={isInlineSubmitting || !inlineExpenseForm.expenseHeadId || !inlineExpenseForm.amount || !inlineExpenseForm.accountId}
+                        className="bg-green-600 text-white p-1 rounded hover:bg-green-700 disabled:opacity-50"
+                      >
+                        {isInlineSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                      </button>
+                    </td>
+                  </tr>
+
                   {filteredExpenses.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
