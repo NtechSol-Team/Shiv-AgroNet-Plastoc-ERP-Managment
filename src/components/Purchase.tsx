@@ -461,7 +461,7 @@ export function Purchase() {
         const product = finishedProducts.find(p => p.id === value);
         if (product) {
           updatedItem.materialName = product.name;
-          updatedItem.hsnCode = product.hsnCode || '5608';
+          updatedItem.hsnCode = product.hsnCode || '60059000';
           updatedItem.gstPercent = '12'; // Default for FG? Assume 18 or 12.
         }
       } else if (field === 'expenseHeadId') {

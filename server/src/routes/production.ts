@@ -18,7 +18,7 @@ import { productionBatches, machines, rawMaterials, finishedProducts, stockMovem
 import { eq, desc, sql, count as countFn } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
-import { validateRawMaterialStock, validateFinishedProductStock } from '../services/inventory.service';
+import { createStockMovement, validateRawMaterialStock, validateFinishedProductStock } from '../services/inventory.service';
 import { realtimeService } from '../services/realtime.service';
 import { invalidateInventorySummary, invalidateDashboardKPIs } from '../services/precomputed.service';
 import { getNextProductionBatchCode } from '../utils/generateCode';
@@ -363,23 +363,17 @@ router.post('/batches', async (req: Request, res: Response, next: NextFunction) 
             });
 
             // Stock Movement
-            const [material] = await db.select().from(rawMaterials).where(eq(rawMaterials.id, input.rawMaterialId));
-            // Calculate balance - expensive loop but safe
-            const stockValidation = await validateRawMaterialStock(input.rawMaterialId, 0); // Get current stock
-
-            await db.insert(stockMovements).values({
+            await createStockMovement({
                 date: new Date(),
                 movementType: 'RAW_OUT',
                 itemType: 'raw_material',
                 rawMaterialId: input.rawMaterialId,
-                quantityIn: '0',
-                quantityOut: String(input.quantity),
-                runningBalance: String(stockValidation.currentStock - input.quantity),
+                quantityOut: parseFloat(String(input.quantity)),
                 referenceType: 'production',
                 referenceCode: batchCode,
                 referenceId: batch.id,
                 reason: `Allocated to ${machine.name} for production`,
-            });
+            }, db);
         }
 
         // Insert Outputs (Planned)
@@ -480,22 +474,17 @@ router.put('/batches/:id', async (req: Request, res: Response, next: NextFunctio
 
             // A. Reverse Old Inputs
             for (const oldInput of existingBatch.inputs) {
-                // Restore Stock
-                const stockValidation = await validateRawMaterialStock(oldInput.rawMaterialId, 0);
-                await tx.insert(stockMovements).values({
-                    id: crypto.randomUUID(),
+                await createStockMovement({
                     date: new Date(),
                     movementType: 'RAW_IN', // Returning stock
                     itemType: 'raw_material',
                     rawMaterialId: oldInput.rawMaterialId,
-                    quantityIn: oldInput.quantity,
-                    quantityOut: '0',
-                    runningBalance: String(stockValidation.currentStock + parseFloat(oldInput.quantity)),
+                    quantityIn: parseFloat(oldInput.quantity),
                     referenceType: 'production_edit_reversal',
                     referenceCode: existingBatch.code,
                     referenceId: existingBatch.id,
                     reason: `Edit reversal for ${existingBatch.code}`,
-                });
+                }, tx);
 
                 // Restore Rolls
                 if (oldInput.materialBatchId) {
@@ -592,20 +581,18 @@ router.put('/batches/:id', async (req: Request, res: Response, next: NextFunctio
                 // Since this is a trace log, exact running balance perfection in high concurrency is hard without locking.
                 // We will append.
 
-                await tx.insert(stockMovements).values({
-                    id: crypto.randomUUID(),
+                await createStockMovement({
                     date: new Date(),
                     movementType: 'RAW_OUT',
                     itemType: 'raw_material',
                     rawMaterialId: input.rawMaterialId,
-                    quantityIn: '0',
-                    quantityOut: String(input.quantity),
-                    runningBalance: '0', // TODO: Ideal world we calc real balance, but for now '0' or skipping to avoid expensive query in TX loop
+                    quantityOut: parseFloat(String(input.quantity)),
                     referenceType: 'production',
                     referenceCode: existingBatch.code,
                     referenceId: existingBatch.id,
                     reason: `Allocated (Edit) to ${machineId}`,
-                });
+                }, tx);
+                // END Update
             }
 
             // 5. Update Outputs
@@ -706,19 +693,17 @@ router.post('/batches/:id/complete', async (req: Request, res: Response, next: N
             }
 
             // Create FG_IN Movement
-            await db.insert(stockMovements).values({
+            await createStockMovement({
                 date: new Date(),
                 movementType: 'FG_IN',
                 itemType: 'finished_product',
                 finishedProductId: output.productId,
-                quantityIn: String(output.quantity),
-                quantityOut: '0',
-                runningBalance: '0', // Should be calculated but we'll leave 0 as in original code
+                quantityIn: output.quantity,
                 referenceType: 'production',
                 referenceCode: batch.code,
                 referenceId: batch.id,
                 reason: `Production completed from batch ${batch.code}`,
-            });
+            }, db);
         }
 
         const input = parseFloat(batch.inputQuantity || '0'); // Assuming inputQuantity in header is total
@@ -915,19 +900,17 @@ router.post('/quick-complete', async (req: Request, res: Response, next: NextFun
 
         // Create single FG_IN stock movement for total output
         const firstBatch = machineBatches[0];
-        await db.insert(stockMovements).values({
+        await createStockMovement({
             date: new Date(),
             movementType: 'FG_IN',
             itemType: 'finished_product',
             finishedProductId,
-            quantityIn: String(output),
-            quantityOut: '0',
-            runningBalance: '0', // Calculated separately
+            quantityIn: parseFloat(String(output)),
             referenceType: 'production',
             referenceCode: `${firstBatch.machine?.name || 'Machine'} Production`,
             referenceId: firstBatch.id,
             reason: `Quick production entry from ${firstBatch.machine?.name || 'machine'} (${affectedBatches.length} batch${affectedBatches.length > 1 ? 'es' : ''})`,
-        });
+        }, db);
 
         // Fetch product
         const product = await db.query.finishedProducts.findFirst({
@@ -1038,19 +1021,17 @@ router.delete('/batches/:id', async (req: Request, res: Response, next: NextFunc
                     }
 
                     // Create FG_OUT movement to remove the produced goods
-                    await db.insert(stockMovements).values({
+                    await createStockMovement({
                         date: new Date(),
                         movementType: 'FG_OUT',
                         itemType: 'finished_product',
                         finishedProductId: output.finishedProductId,
-                        quantityIn: '0',
-                        quantityOut: output.outputQuantity,
-                        runningBalance: '0', // Will be calculated by trigger or ignored for now
+                        quantityOut: parseFloat(output.outputQuantity),
                         referenceType: 'batch_delete',
                         referenceCode: batch.code,
                         referenceId: id,
                         reason: `Batch ${batch.code} deleted - finished goods reversed${force ? ' (forced)' : ''}`
-                    });
+                    }, db);
                     console.log(`✓ Reversed FG output for ${batch.code}: -${output.outputQuantity}kg`);
                 }
             }
@@ -1069,22 +1050,17 @@ router.delete('/batches/:id', async (req: Request, res: Response, next: NextFunc
 
         // Reverse stock movements (add back the consumed raw materials)
         for (const input of batchInputs) {
-            // Calculate current stock for running balance
-            const stockValidation = await validateRawMaterialStock(input.rawMaterialId, 0);
-
-            await db.insert(stockMovements).values({
+            await createStockMovement({
                 date: new Date(),
                 movementType: 'RAW_IN',
                 itemType: 'raw_material',
                 rawMaterialId: input.rawMaterialId,
-                quantityIn: input.quantity,
-                quantityOut: '0',
-                runningBalance: String(stockValidation.currentStock + parseFloat(input.quantity)),
+                quantityIn: parseFloat(input.quantity),
                 referenceType: 'batch_delete',
                 referenceCode: batch.code,
                 referenceId: id,
                 reason: `Batch ${batch.code} deleted - raw material restored`
-            });
+            }, db);
 
             // Restore roll status back to "In Stock" if it was consumed
             if (input.materialBatchId) {
@@ -1095,27 +1071,14 @@ router.delete('/batches/:id', async (req: Request, res: Response, next: NextFunc
                     if (Array.isArray(rollIds)) {
                         for (const rollId of rollIds) {
                             const [roll] = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.id, rollId));
-                            if (roll) {
-                                // Restore roll if it was marked consumed
-                                // Also restore weight if it was partially consumed (for now assuming full restore of what was taken)
-                                // Since we don't track exact "deducted amount per roll" easily in `batchInputs` (it just has total quantity),
-                                // we mostly rely on status. A more robust way would be to check if we can restore specific weights.
-                                // For Simplicity/Robustness: We set status to 'In Stock'.
-                                // If it was a partial cut, we might need to rely on the roll's current netWeight which should be correct 
-                                // (remaining weight). But if we want to restore the USED weight, we'd need to add it back.
-                                // LIMITATION: partial consuption restoration logic is complex without detailed ledger of "roll X usage for batch Y".
-                                // CURRENT LOGIC: Restores status to 'In Stock'. 
-
-                                // FIX: If roll is "Consumed", we must restore it.
-                                if (roll.status === 'Consumed') {
-                                    await db.update(rawMaterialRolls)
-                                        .set({
-                                            status: 'In Stock',
-                                            updatedAt: new Date()
-                                        })
-                                        .where(eq(rawMaterialRolls.id, rollId));
-                                    console.log(`✓ Restored roll ${roll.rollCode} to In Stock`);
-                                }
+                            if (roll && roll.status === 'Consumed') {
+                                await db.update(rawMaterialRolls)
+                                    .set({
+                                        status: 'In Stock',
+                                        updatedAt: new Date()
+                                    })
+                                    .where(eq(rawMaterialRolls.id, rollId));
+                                console.log(`✓ Restored roll ${roll.rollCode} to In Stock`);
                             }
                         }
                     }
@@ -1168,228 +1131,7 @@ router.delete('/batches/:id', async (req: Request, res: Response, next: NextFunc
  * 1. Revert original allocations (restore rolls and stock)
  * 2. Apply new allocations
  */
-router.put('/batches/:id', async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        const { id } = req.params;
-        const {
-            allocationDate,
-            machineId,
-            inputs, // Array of { rawMaterialId, quantity, materialBatchId? }
-            outputs // Array of finishedProductId
-        } = req.body;
-
-        // Get the existing batch
-        const batch = await db.query.productionBatches.findFirst({
-            where: eq(productionBatches.id, id),
-            with: {
-                machine: true,
-                inputs: true,
-                outputs: true
-            }
-        });
-
-        if (!batch) throw createError('Batch not found', 404);
-        if (batch.status !== 'in-progress') {
-            throw createError('Can only edit in-progress batches', 400);
-        }
-
-        // Validate new inputs
-        let batchInputs: { rawMaterialId: string, quantity: number, materialBatchId?: string }[] = [];
-        if (inputs && Array.isArray(inputs) && inputs.length > 0) {
-            batchInputs = inputs.map((i: any) => ({
-                rawMaterialId: i.rawMaterialId,
-                quantity: parseFloat(i.quantity),
-                materialBatchId: i.materialBatchId
-            }));
-        } else {
-            throw createError('At least one input material required', 400);
-        }
-
-        if (batchInputs.length > 6) throw createError('Maximum 6 input materials allowed', 400);
-
-        // Validate new outputs
-        let batchOutputs: string[] = [];
-        if (outputs && Array.isArray(outputs) && outputs.length > 0) {
-            batchOutputs = outputs;
-        }
-        if (batchOutputs.length > 4) throw createError('Maximum 4 target products allowed', 400);
-
-        // Step 1: REVERT original allocations
-        // Restore rolls and stock from original inputs
-        for (const input of batch.inputs) {
-            // Calculate current stock for running balance
-            const stockValidation = await validateRawMaterialStock(input.rawMaterialId, 0);
-
-            // Reverse stock movement
-            await db.insert(stockMovements).values({
-                date: new Date(),
-                movementType: 'RAW_IN',
-                itemType: 'raw_material',
-                rawMaterialId: input.rawMaterialId,
-                quantityIn: input.quantity,
-                quantityOut: '0',
-                runningBalance: String(stockValidation.currentStock + parseFloat(input.quantity)),
-                referenceType: 'batch_edit',
-                referenceCode: batch.code,
-                referenceId: id,
-                reason: `Batch ${batch.code} edited - original allocation reversed`
-            });
-
-            // Restore roll status
-            if (input.materialBatchId) {
-                try {
-                    const rollIds = JSON.parse(input.materialBatchId);
-                    if (Array.isArray(rollIds)) {
-                        for (const rollId of rollIds) {
-                            await db.update(rawMaterialRolls)
-                                .set({
-                                    status: 'In Stock',
-                                    updatedAt: new Date()
-                                })
-                                .where(eq(rawMaterialRolls.id, rollId));
-                        }
-                    }
-                } catch (e) {
-                    await db.update(rawMaterialRolls)
-                        .set({
-                            status: 'In Stock',
-                            updatedAt: new Date()
-                        })
-                        .where(eq(rawMaterialRolls.id, input.materialBatchId));
-                }
-            }
-        }
-
-        // Delete old inputs and outputs
-        await db.delete(productionBatchInputs).where(eq(productionBatchInputs.batchId, id));
-        await db.delete(productionBatchOutputs).where(eq(productionBatchOutputs.batchId, id));
-
-        // Step 2: APPLY new allocations
-        // Validate stock for all new inputs
-        let totalInputQty = 0;
-        for (const input of batchInputs) {
-            if (isNaN(input.quantity) || input.quantity <= 0) {
-                throw createError('Invalid input quantity', 400);
-            }
-            const stockValidation = await validateRawMaterialStock(input.rawMaterialId, input.quantity);
-            if (!stockValidation.isValid) {
-                throw createError(`Stock check failed for material: ${stockValidation.message}`, 400);
-            }
-            totalInputQty += input.quantity;
-        }
-
-        // Verify machine is active
-        const [machine] = await db.select().from(machines).where(eq(machines.id, machineId));
-        if (!machine || machine.status !== 'Active') {
-            throw createError('Machine not available or inactive', 400);
-        }
-
-        // Insert new inputs with roll consumption
-        for (const input of batchInputs) {
-            let consumedRollIds: string[] = [];
-
-            const hasValidRollId = input.materialBatchId &&
-                typeof input.materialBatchId === 'string' &&
-                input.materialBatchId.trim().length > 0;
-
-            if (hasValidRollId) {
-                const [roll] = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.id, input.materialBatchId!));
-                if (!roll) {
-                    throw createError(`Roll not found: ${input.materialBatchId}`, 404);
-                }
-                const rollWeight = parseFloat(roll.netWeight);
-                if (input.quantity > rollWeight) {
-                    throw createError(`Requested quantity (${input.quantity}kg) exceeds roll weight (${rollWeight}kg) for ${roll.rollCode}`, 400);
-                }
-
-                await db.update(rawMaterialRolls)
-                    .set({ status: 'Consumed', updatedAt: new Date() })
-                    .where(eq(rawMaterialRolls.id, input.materialBatchId!));
-
-                consumedRollIds.push(input.materialBatchId!);
-            } else {
-                // FIFO allocation
-                const availableRolls = await db.query.rawMaterialRolls.findMany({
-                    where: (rolls, { and, eq }) => and(
-                        eq(rolls.rawMaterialId, input.rawMaterialId),
-                        eq(rolls.status, 'In Stock')
-                    ),
-                    orderBy: (rolls, { asc }) => [asc(rolls.createdAt)]
-                });
-
-                let remainingToConsume = input.quantity;
-                for (const roll of availableRolls) {
-                    if (remainingToConsume <= 0) break;
-                    await db.update(rawMaterialRolls)
-                        .set({ status: 'Consumed', updatedAt: new Date() })
-                        .where(eq(rawMaterialRolls.id, roll.id));
-                    consumedRollIds.push(roll.id);
-                    remainingToConsume -= parseFloat(roll.netWeight);
-                }
-            }
-
-            await db.insert(productionBatchInputs).values({
-                batchId: id,
-                rawMaterialId: input.rawMaterialId,
-                materialBatchId: consumedRollIds.length > 0 ? JSON.stringify(consumedRollIds) : null,
-                quantity: String(input.quantity)
-            });
-
-            // Create new stock movement
-            const stockValidation = await validateRawMaterialStock(input.rawMaterialId, 0);
-            await db.insert(stockMovements).values({
-                date: new Date(),
-                movementType: 'RAW_OUT',
-                itemType: 'raw_material',
-                rawMaterialId: input.rawMaterialId,
-                quantityIn: '0',
-                quantityOut: String(input.quantity),
-                runningBalance: String(stockValidation.currentStock - input.quantity),
-                referenceType: 'production',
-                referenceCode: batch.code,
-                referenceId: id,
-                reason: `Batch ${batch.code} edited - new allocation to ${machine.name}`,
-            });
-        }
-
-        // Insert new outputs
-        for (const productId of batchOutputs) {
-            await db.insert(productionBatchOutputs).values({
-                batchId: id,
-                finishedProductId: productId,
-                outputQuantity: null
-            });
-        }
-
-        // Update batch header
-        await db.update(productionBatches)
-            .set({
-                allocationDate: allocationDate ? new Date(allocationDate) : batch.allocationDate,
-                machineId,
-                rawMaterialId: batchInputs[0].rawMaterialId,
-                finishedProductId: batchOutputs.length > 0 ? batchOutputs[0] : null,
-                inputQuantity: String(totalInputQty),
-                updatedAt: new Date()
-            })
-            .where(eq(productionBatches.id, id));
-
-        // Fetch updated batch for response
-        const updatedBatch = await db.query.productionBatches.findFirst({
-            where: eq(productionBatches.id, id),
-            with: {
-                machine: true,
-                rawMaterial: true,
-                finishedProduct: true,
-                inputs: { with: { rawMaterial: true } },
-                outputs: { with: { finishedProduct: true } }
-            }
-        });
-
-        res.json(successResponse(updatedBatch));
-    } catch (error) {
-        next(error);
-    }
-});
+// Duplicate route removed (consolidated above at line 419)
 
 // ============================================================
 // REVERSE/UNDO PRODUCTION BATCH
@@ -1450,19 +1192,17 @@ router.post('/batches/:id/reverse', async (req: Request, res: Response, next: Ne
             const qty = parseFloat(output.outputQuantity);
 
             // Create FG_OUT movement to remove from stock
-            await db.insert(stockMovements).values({
+            await createStockMovement({
                 date: new Date(),
                 movementType: 'FG_OUT',
                 itemType: 'finished_product',
                 finishedProductId: output.finishedProductId,
-                quantityIn: '0',
-                quantityOut: String(qty),
-                runningBalance: '0', // Will be calculated by inventory system
+                quantityOut: qty,
                 referenceType: 'batch_reversal',
                 referenceCode: batch.code,
                 referenceId: id,
                 reason: `Batch ${batch.code} reversed - removing finished goods from stock`,
-            });
+            }, db);
 
             console.log(`  ✓ Reversed FG output: ${qty}kg for product ${output.finishedProductId}`);
         }
@@ -1473,19 +1213,17 @@ router.post('/batches/:id/reverse', async (req: Request, res: Response, next: Ne
             const qty = parseFloat(input.quantity);
 
             // Create RAW_IN movement to restore to stock
-            await db.insert(stockMovements).values({
+            await createStockMovement({
                 date: new Date(),
                 movementType: 'RAW_IN',
                 itemType: 'raw_material',
                 rawMaterialId: input.rawMaterialId,
-                quantityIn: input.quantity,
-                quantityOut: '0',
-                runningBalance: '0', // Will be calculated by inventory system
+                quantityIn: qty,
                 referenceType: 'batch_reversal',
                 referenceCode: batch.code,
                 referenceId: id,
                 reason: `Batch ${batch.code} reversed - restoring raw materials to stock`,
-            });
+            }, db);
 
             console.log(`  ✓ Restored RM input: ${qty}kg for material ${input.rawMaterialId}`);
         }
@@ -1829,19 +1567,17 @@ router.post('/reduce-fg-stock', async (req: Request, res: Response, next: NextFu
         }
 
         // Create FG_OUT stock movement
-        await db.insert(stockMovements).values({
+        await createStockMovement({
             date: new Date(),
             movementType: 'FG_OUT',
             itemType: 'finished_product',
             finishedProductId,
-            quantityIn: '0',
-            quantityOut: String(reduceQty),
-            runningBalance: '0',
+            quantityOut: reduceQty,
             referenceType: 'production_reversal',
             referenceCode: `FG-REV-${Date.now().toString().slice(-6)}`,
             referenceId: affectedBatches.length > 0 ? finishedProductId : finishedProductId,
             reason: reason || `FIFO production reversal: ${affectedBatches.length} batch(es) restored`,
-        });
+        }, db);
 
         console.log(`✅ FIFO Reduce FG: ${reduceQty} kg reversed across ${affectedBatches.length} production batch(es)`);
 

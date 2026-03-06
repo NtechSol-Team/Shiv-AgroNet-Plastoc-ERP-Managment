@@ -181,6 +181,7 @@ interface InvoiceData {
   customer?: {
     name?: string;
     gstNo?: string;
+    panNumber?: string;
     stateCode?: string;
     address?: string;
     phone?: string;
@@ -501,6 +502,7 @@ export function printInvoice(invoice: InvoiceData): void {
             <div class="value"><strong>${escapeHtml(billToName || '-')}</strong></div>
             <div class="value">${formatMultilineText(billToAddress, '-')}</div>
             <div class="value"><strong>GSTIN:</strong> ${escapeHtml(customerGstin || 'Unregistered')}</div>
+            ${invoice.customer?.panNumber ? `<div class="value"><strong>PAN:</strong> ${escapeHtml(invoice.customer.panNumber)}</div>` : ''}
             <div class="value"><strong>State:</strong> ${escapeHtml(customerStateName)} (Code: ${escapeHtml(customerStateCode || 'NA')})</div>
         </div>
         <div class="address-box">
@@ -533,18 +535,30 @@ export function printInvoice(invoice: InvoiceData): void {
             ${processedItems.map((item, idx) => `
             <tr>
                 <td align="center">${idx + 1}</td>
-                <td><strong>${escapeHtml(item.batchCode ? item.batchCode + ' - ' + (item.finishedProduct?.name || 'Item') : (item.productName || item.finishedProduct?.name || 'Item'))}</strong>${item.pieceCount ? `<br><small>(${escapeHtml(String(Math.round(Number(item.pieceCount))))} pcs)</small>` : ''}</td>
-                <td align="center">${escapeHtml(item.hsnCode || '5608')}</td>
+                <td>
+                    <div style="font-weight: bold; text-transform: uppercase;">${escapeHtml(item.batchCode ? item.batchCode + ' - ' + (item.finishedProduct?.name || item.productName || 'Item') : (item.productName || item.finishedProduct?.name || 'Item'))}</div>
+                    ${item.pieceCount ? `<div style="font-size: 10px; color: #555;">(${escapeHtml(String(Math.round(Number(item.pieceCount))))} pcs)</div>` : ''}
+                </td>
+                <td align="center">${escapeHtml(item.hsnCode || '60059000')}</td>
                 <td align="center">${escapeHtml(item.qty.toFixed(2))} ${escapeHtml(String(item.unit || 'Kg'))}</td>
                 <td align="right">${formatCurrency(item.rate)}</td>
                 <td align="right">${formatCurrency(item.taxableAmt)}</td>
                 ${!isInterState ? `
-                <td align="right">${item.cgstPct}%<br><small>${formatCurrency(item.cgstAmt)}</small></td>
-                <td align="right">${item.sgstPct}%<br><small>${formatCurrency(item.sgstAmt)}</small></td>
+                <td align="right">
+                    <div>${item.cgstPct}%</div>
+                    <div style="font-size: 10px; color: #555;">${formatCurrency(item.cgstAmt)}</div>
+                </td>
+                <td align="right">
+                    <div>${item.sgstPct}%</div>
+                    <div style="font-size: 10px; color: #555;">${formatCurrency(item.sgstAmt)}</div>
+                </td>
                 ` : `
-                <td align="right">${item.igstPct}%<br><small>${formatCurrency(item.igstAmt)}</small></td>
+                <td align="right">
+                    <div>${item.igstPct}%</div>
+                    <div style="font-size: 10px; color: #555;">${formatCurrency(item.igstAmt)}</div>
+                </td>
                 `}
-                <td align="right">${formatCurrency(item.totalAmt)}</td>
+                <td align="right"><strong>${formatCurrency(item.totalAmt)}</strong></td>
             </tr>
             `).join('')}
         </tbody>

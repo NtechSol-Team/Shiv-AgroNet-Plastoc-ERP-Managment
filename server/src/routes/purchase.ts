@@ -331,7 +331,7 @@ router.post('/bills', async (req: Request, res: Response, next: NextFunction) =>
                     }
 
                     materialName = product.name;
-                    hsnCode = product.hsnCode || '5608';
+                    hsnCode = product.hsnCode || '60059000';
                     finishedProductId = item.finishedProductId;
 
                 } else if (type === 'GENERAL') {
@@ -853,7 +853,7 @@ router.put('/bills/:id', async (req: Request, res: Response, next: NextFunction)
                 const [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
                 if (product) {
                     materialName = product.name;
-                    hsnCode = product.hsnCode || '5608';
+                    hsnCode = product.hsnCode || '60059000';
                     finishedProductId = item.finishedProductId;
                 }
             } else if (type === 'GENERAL') {

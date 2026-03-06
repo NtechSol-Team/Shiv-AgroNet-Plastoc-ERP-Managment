@@ -626,7 +626,7 @@ export function Inventory() {
                   <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">HSN Code</label>
                   <input
                     type="text"
-                    value={formData.hsnCode || '5608'}
+                    value={formData.hsnCode || '60059000'}
                     onChange={(e) => setFormData({ ...formData, hsnCode: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm"
                   />

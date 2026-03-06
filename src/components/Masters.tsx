@@ -159,7 +159,7 @@ export function Masters() {
       case 'machine':
         return { name: '', type: 'Net Extrusion', capacity: '', status: 'Active' };
       case 'customer':
-        return { name: '', gstNo: '', stateCode: '24', email: '', phone: '', address: '', outstanding: 0 };
+        return { name: '', gstNo: '', panNumber: '', stateCode: '24', email: '', phone: '', address: '', outstanding: 0 };
       case 'supplier':
         return { name: '', gstNo: '', stateCode: '24', contact: '', address: '', outstanding: 0 };
       case 'expense':
@@ -459,10 +459,17 @@ export function Masters() {
                     const value = e.target.value.toUpperCase();
                     if (value.length >= 2) {
                       const prefix = value.substring(0, 2);
-                      if (/^\d{2}$/.test(prefix)) {
-                        setFormData((prev: any) => ({ ...prev, gstNo: value, stateCode: prefix }));
+                      const isStateCode = /^\\d{2}$/.test(prefix);
+
+                      let newPan = formData.panNumber;
+                      if (value.length >= 12) {
+                        newPan = value.substring(2, 12);
+                      }
+
+                      if (isStateCode) {
+                        setFormData((prev: any) => ({ ...prev, gstNo: value, stateCode: prefix, panNumber: newPan !== undefined ? newPan : prev.panNumber }));
                       } else {
-                        setFormData({ ...formData, gstNo: value });
+                        setFormData({ ...formData, gstNo: value, panNumber: newPan !== undefined ? newPan : formData.panNumber });
                       }
                     } else {
                       setFormData({ ...formData, gstNo: value });
@@ -479,6 +486,12 @@ export function Masters() {
                   </div>
                 )}
               </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">PAN Number</label>
+              <input type="text" value={formData.panNumber || ''} onChange={(e) => setFormData({ ...formData, panNumber: e.target.value.toUpperCase() })}
+                maxLength={10}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="Enter PAN" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Phone *</label>

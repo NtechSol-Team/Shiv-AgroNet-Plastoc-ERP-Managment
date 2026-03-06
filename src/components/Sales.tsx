@@ -117,7 +117,7 @@ export function Sales() {
     finishedProductId: '',
     bellItemId: '', // For bell selection
     product: '',
-    hsnCode: '5608',
+    hsnCode: '60059000',
     quantity: '',
     rate: '',
     discountPercent: '0',
@@ -152,6 +152,7 @@ export function Sales() {
   const [quickAddCustomerForm, setQuickAddCustomerForm] = useState({
     name: '',
     gstNo: '',
+    panNumber: '',
     phone: '',
     email: '',
     stateCode: '24', // Default to Gujarat
@@ -228,6 +229,7 @@ export function Sales() {
         setQuickAddCustomerForm({
           name: '',
           gstNo: '',
+          panNumber: '',
           phone: '',
           email: '',
           stateCode: '24',
@@ -285,21 +287,17 @@ export function Sales() {
     const customer = customers.find(c => c.id === customerId);
     setSelectedCustomer(customer || null);
 
-    // Derive state code from GSTIN if stateCode is missing
-    let derivedStateCode = customer?.stateCode;
-    if (!derivedStateCode && customer?.gstNo && customer.gstNo.length >= 2) {
-      const gstState = customer.gstNo.substring(0, 2);
-      if (/^\d{2}$/.test(gstState)) {
-        derivedStateCode = gstState;
-      }
-    }
+    // Priority: prefix of GST > stateCode > default '24'
+    const gstState = (customer?.gstNo && customer.gstNo.length >= 2) ? customer.gstNo.substring(0, 2) : null;
+    const validGstCode = (gstState && /^\d{2}$/.test(gstState)) ? gstState : null;
+    const derivedStateCode = validGstCode || customer?.stateCode || '24';
 
     setInvoiceForm({
       ...invoiceForm,
       customerId,
       billingAddress: customer?.address || '',
       shippingAddress: invoiceForm.sameAsBilling ? (customer?.address || '') : invoiceForm.shippingAddress,
-      placeOfSupply: derivedStateCode || '24'
+      placeOfSupply: derivedStateCode
     });
   };
 
@@ -319,7 +317,7 @@ export function Sales() {
           finishedProductId: bell.finishedProductId,
           bellItemId: bell.id,
           product: `${bell.code} - ${bell.finishedProduct?.name}`,
-          hsnCode: bell.finishedProduct?.hsnCode || '5608',
+          hsnCode: bell.finishedProduct?.hsnCode || '60059000',
           quantity: bell.grossWeight || bell.netWeight, // Use grossWeight (what customer receives)
           rate: bell.finishedProduct?.ratePerKg || '0',
           taxPercent: bell.finishedProduct?.gstPercent || '18',
@@ -340,7 +338,7 @@ export function Sales() {
           finishedProductId: representative.finishedProductId,
           bellItemId: '', // No single ID
           product: `${groupCode} (Bale)`,
-          hsnCode: representative.finishedProduct?.hsnCode || '5608',
+          hsnCode: representative.finishedProduct?.hsnCode || '60059000',
           quantity: totalWeight.toString(),
           rate: (representative.finishedProduct?.ratePerKg || '0').toString(),
           discountPercent: '0',
@@ -356,7 +354,7 @@ export function Sales() {
           finishedProductId: product.id,
           bellItemId: '', // Clear bell
           product: product.name,
-          hsnCode: product.hsnCode || '5608',
+          hsnCode: product.hsnCode || '60059000',
           quantity: '', // Reset quantity for manual entry
           rate: product.ratePerKg?.toString() || '0',
           taxPercent: product.gstPercent?.toString() || '18',
@@ -404,7 +402,7 @@ export function Sales() {
       finishedProductId: '',
       bellItemId: '',
       product: '',
-      hsnCode: '5608',
+      hsnCode: '60059000',
       quantity: '',
       rate: '',
       discountPercent: '0',
@@ -759,29 +757,39 @@ export function Sales() {
     // Set the editing invoice ID to track we're in edit mode
     setEditingInvoiceId(invoice.id);
 
+    // Find customer to derive correct POS if needed
+    const customer = customers.find((c: any) => c.id === invoice.customerId);
+    if (customer) setSelectedCustomer(customer);
+
+    // Derive state code from GSTIN as fallback/override if record is old/incorrect
+    const gstState = (customer?.gstNo && customer.gstNo.length >= 2) ? customer.gstNo.substring(0, 2) : null;
+    const validGstCode = (gstState && /^\d{2}$/.test(gstState)) ? gstState : null;
+
+    // Priority: Code from GST > Saved POS (if valid code) > Customer State > default '24'
+    const derivedPOS = validGstCode ||
+      ((invoice.placeOfSupply && /^\d{2}$/.test(invoice.placeOfSupply))
+        ? invoice.placeOfSupply
+        : (customer?.stateCode || '24'));
+
     // Populate form with existing invoice data
     setInvoiceForm({
       date: invoice.invoiceDate?.split('T')[0] || new Date().toISOString().split('T')[0],
       dueDate: invoice.dueDate?.split('T')[0] || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       customerId: invoice.customerId || '',
       invoiceType: invoice.invoiceType || 'B2B',
-      placeOfSupply: invoice.placeOfSupply || '24',
+      placeOfSupply: derivedPOS,
       billingAddress: invoice.billingAddress || '',
       shippingAddress: invoice.shippingAddress || '',
       sameAsBilling: true,
       status: invoice.status || 'Pending'
     });
 
-    // Find and set customer
-    const customer = customers.find((c: any) => c.id === invoice.customerId);
-    if (customer) setSelectedCustomer(customer);
-
     // Set items
     const items = invoice.items?.map((item: any, idx: number) => ({
       id: `edit-${idx}`,
       finishedProductId: item.finishedProductId || '',
       product: item.productName || item.finishedProduct?.name || '',
-      hsnCode: item.hsnCode || '5608',
+      hsnCode: item.hsnCode || '60059000',
       quantity: parseFloat(item.quantity) || 0,
       rate: parseFloat(item.rate) || 0,
       discountPercent: parseFloat(item.discountPercent) || 0,
@@ -1086,7 +1094,7 @@ export function Sales() {
               <div className="bg-white border border-gray-300 rounded-sm shadow-sm">
                 {/* Form Header */}
                 <div className="bg-gray-100 px-4 py-2 border-b border-gray-300 flex justify-between items-center sticky top-0 z-10">
-                  <h2 className="text-sm font-bold text-gray-800 uppercase">New Tax Invoice</h2>
+                  <h2 className="text-sm font-bold text-gray-800 uppercase">{editingInvoiceId ? 'Edit Sales Invoice' : 'New Tax Invoice'}</h2>
                   <div className="flex space-x-2">
                     <button onClick={() => { setShowInvoiceForm(false); resetForm(); }} className="px-3 py-1 text-xs font-bold text-gray-600 hover:text-red-600 border border-transparent hover:border-red-200 rounded-sm uppercase">Cancel</button>
                     <button onClick={() => handleSaveInvoice('Draft')} disabled={saving} className="px-3 py-1 bg-white border border-gray-300 text-gray-700 text-xs font-bold uppercase rounded-sm hover:bg-gray-50">Save Draft</button>
@@ -1708,13 +1716,22 @@ export function Sales() {
                       value={quickAddCustomerForm.gstNo}
                       onChange={(e) => {
                         const value = e.target.value.toUpperCase();
-                        setQuickAddCustomerForm((prev) => ({ ...prev, gstNo: value }));
-                        if (value.length >= 2) {
-                          const prefix = value.substring(0, 2);
-                          if (/^\d{2}$/.test(prefix)) {
-                            setQuickAddCustomerForm((prev) => ({ ...prev, stateCode: prefix }));
-                          }
+
+                        let newPan = quickAddCustomerForm.panNumber;
+                        if (value.length >= 12) {
+                          newPan = value.substring(2, 12);
                         }
+
+                        setQuickAddCustomerForm((prev) => {
+                          const stateUpdate = { ...prev, gstNo: value, panNumber: newPan !== undefined ? newPan : prev.panNumber };
+                          if (value.length >= 2) {
+                            const prefix = value.substring(0, 2);
+                            if (/^\d{2}$/.test(prefix)) {
+                              stateUpdate.stateCode = prefix;
+                            }
+                          }
+                          return stateUpdate;
+                        });
                       }}
                       onBlur={handleQuickGstSearch}
                       className="flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 uppercase font-mono"
@@ -1740,6 +1757,18 @@ export function Sales() {
                     value={quickAddCustomerForm.name}
                     onChange={e => setQuickAddCustomerForm({ ...quickAddCustomerForm, name: e.target.value })}
                     className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-bold"
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase">PAN Number</label>
+                  <input
+                    type="text"
+                    value={quickAddCustomerForm.panNumber || ''}
+                    onChange={e => setQuickAddCustomerForm({ ...quickAddCustomerForm, panNumber: e.target.value.toUpperCase() })}
+                    maxLength={10}
+                    className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-mono"
+                    placeholder="Enter PAN..."
                   />
                 </div>
 

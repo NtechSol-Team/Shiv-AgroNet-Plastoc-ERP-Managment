@@ -10,7 +10,9 @@ import {
     purchaseBills,
     purchaseBillItems,
     salesInvoices,
-    invoiceItems
+    invoiceItems,
+    bellItems,
+    bellBatches
 } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { successResponse } from '../types/api';
@@ -116,6 +118,28 @@ router.post('/recalculate-stock', async (req: Request, res: Response, next: Next
             }
             console.log(`✓ Rebuilt ${fgPurchases.length} FG_IN movements from purchases`);
 
+            // 5.5. FG_OUT (Bale Creation): From Bell Batches/Items
+            const bales = await tx
+                .select()
+                .from(bellItems)
+                .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id));
+
+            for (const bale of bales) {
+                await tx.insert(stockMovements).values({
+                    date: bale.bell_items.createdAt || new Date(),
+                    movementType: 'FG_OUT',
+                    itemType: 'finished_product',
+                    finishedProductId: bale.bell_items.finishedProductId,
+                    quantityIn: '0',
+                    quantityOut: bale.bell_items.netWeight,
+                    referenceType: 'bale_creation',
+                    referenceCode: bale.bell_batches?.code || bale.bell_items.code,
+                    referenceId: bale.bell_items.id,
+                    reason: 'Recalculated: Bale Creation'
+                });
+            }
+            console.log(`✓ Rebuilt ${bales.length} FG_OUT movements from bale creations`);
+
             // 6. FG_OUT (Sales): From Sales Invoices
             const sales = await tx
                 .select()
@@ -124,18 +148,22 @@ router.post('/recalculate-stock', async (req: Request, res: Response, next: Next
                 .where(eq(salesInvoices.status, 'Confirmed'));
 
             for (const item of sales) {
-                await tx.insert(stockMovements).values({
-                    date: item.sales_invoices.invoiceDate || new Date(),
-                    movementType: 'FG_OUT',
-                    itemType: 'finished_product',
-                    finishedProductId: item.invoice_items.finishedProductId,
-                    quantityIn: '0',
-                    quantityOut: item.invoice_items.quantity,
-                    referenceType: 'sales',
-                    referenceCode: item.sales_invoices.invoiceNumber,
-                    referenceId: item.sales_invoices.id,
-                    reason: 'Recalculated: Sales Invoice'
-                });
+                // IMPORTANT: ONLY create FG_OUT movement for non-bale items
+                // Bales already deducted stock from FG when they were created
+                if (!item.invoice_items.bellItemId) {
+                    await tx.insert(stockMovements).values({
+                        date: item.sales_invoices.invoiceDate || new Date(),
+                        movementType: 'FG_OUT',
+                        itemType: 'finished_product',
+                        finishedProductId: item.invoice_items.finishedProductId,
+                        quantityIn: '0',
+                        quantityOut: item.invoice_items.quantity,
+                        referenceType: 'sales',
+                        referenceCode: item.sales_invoices.invoiceNumber,
+                        referenceId: item.sales_invoices.id,
+                        reason: 'Recalculated: Sales Invoice'
+                    });
+                }
             }
             console.log(`✓ Rebuilt ${sales.length} FG_OUT movements from sales`);
         });

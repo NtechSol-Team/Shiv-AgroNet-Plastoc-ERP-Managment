@@ -51,6 +51,7 @@ export const customers = pgTable('customers', {
     code: text('code').notNull().unique(),
     name: text('name').notNull(),
     gstNo: text('gst_no'),
+    panNumber: text('pan_number'),
     stateCode: text('state_code').default('24'), // Gujarat = 24
     email: text('email'),
     phone: text('phone').notNull(),
@@ -254,7 +255,7 @@ export const salesInvoices = pgTable('sales_invoices', {
     customerGST: text('customer_gst'),
     billingAddress: text('billing_address'),
     shippingAddress: text('shipping_address'),
-    placeOfSupply: text('place_of_supply').default('Gujarat'),
+    placeOfSupply: text('place_of_supply').default('24'),
     invoiceType: text('invoice_type').default('B2B'), // B2B, B2C
     // Totals
     subtotal: decimal('subtotal', { precision: 12, scale: 2 }).default('0'),
@@ -291,7 +292,7 @@ export const invoiceItems = pgTable('invoice_items', {
     invoiceId: text('invoice_id').notNull().references(() => salesInvoices.id, { onDelete: 'cascade' }),
     finishedProductId: text('finished_product_id').notNull().references(() => finishedProducts.id),
     productName: text('product_name').notNull(),
-    hsnCode: text('hsn_code').default('5608'),
+    hsnCode: text('hsn_code').default('60059000'),
     quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
     rate: decimal('rate', { precision: 10, scale: 2 }).notNull(),
     amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),

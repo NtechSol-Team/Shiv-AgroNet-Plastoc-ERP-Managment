@@ -166,14 +166,15 @@ router.get('/available-bells', async (req: Request, res: Response, next: NextFun
 
 router.post('/invoices', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const {
+        let {
             invoiceDate,
             customerId,
             customerName,
             invoiceType = 'B2B',
             status = 'Draft',
+            placeOfSupply,
             items
-        } = req.body as CreateInvoiceRequest & { items: (InvoiceItem & { bellItemId?: string })[] };
+        } = req.body as CreateInvoiceRequest & { items: (InvoiceItem & { bellItemId?: string })[], placeOfSupply?: string };
 
         // Validate items
         if (!items || items.length === 0) {
@@ -189,8 +190,21 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
             if (!customerId) throw createError('Customer required for B2B invoice', 400);
             [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
             if (!customer) throw createError('Customer not found', 404);
-            isInterState = (customer.stateCode || '24') !== COMPANY_STATE_CODE;
+
+            // Extract state code from GST number (first 2 digits)
+            const gstStateCode = (customer.gstNo && customer.gstNo.length >= 2) ? customer.gstNo.substring(0, 2) : null;
+            const validGstCode = (gstStateCode && /^\d{2}$/.test(gstStateCode)) ? gstStateCode : null;
+
+            // Priority: provided placeOfSupply > code from GST > customer state > default 24
+            const effectivePOS = placeOfSupply || validGstCode || customer.stateCode || COMPANY_STATE_CODE;
+            isInterState = effectivePOS !== COMPANY_STATE_CODE;
             finalCustomerName = customer.name;
+            // Update placeOfSupply for DB insert
+            if (!placeOfSupply) placeOfSupply = effectivePOS;
+        } else {
+            // For B2C, use provided placeOfSupply or default to company state
+            isInterState = (placeOfSupply || COMPANY_STATE_CODE) !== COMPANY_STATE_CODE;
+            if (!placeOfSupply) placeOfSupply = COMPANY_STATE_CODE;
         }
 
         // Generate invoice number
@@ -325,6 +339,7 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
             customerName: finalCustomerName,
             customerGST: customer?.gstNo || null,
             invoiceType,
+            placeOfSupply: placeOfSupply,
             subtotal: String(subtotal),
             discountAmount: String(totalDiscount),
             taxableAmount: String(taxableTotal),
@@ -346,7 +361,7 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
                     invoiceId: invoice.id,
                     finishedProductId: item.finishedProductId,
                     productName: item.productName,
-                    hsnCode: item.product?.hsnCode || '5608',
+                    hsnCode: item.product?.hsnCode || '60059000',
                     quantity: String(item.quantity),
                     rate: String(item.rate),
                     amount: String(item.amount),
@@ -361,30 +376,26 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
                     totalAmount: String(item.total),
                 }).returning();
 
-                // Create FG_OUT movement if confirmed
-                if (status === 'Confirmed') {
-                    if (item.bellItemId) {
-                        // Start Update: Update Bell Status
-                        await db.update(bellItems)
-                            .set({ status: 'Issued' })
-                            .where(eq(bellItems.id, item.bellItemId));
-                        // End Update
-                    }
-
-                    const currentStock = await getFinishedProductStock(item.finishedProductId);
-                    await db.insert(stockMovements).values({
+                if (item.bellItemId) {
+                    // Start Update: Update Bell Status
+                    await db.update(bellItems)
+                        .set({ status: 'Issued' })
+                        .where(eq(bellItems.id, item.bellItemId));
+                    // End Update
+                } else {
+                    // ONLY create FG_OUT movement for non-bale items
+                    // Bales already deducted stock from FG when they were created
+                    await createStockMovement({
                         date: new Date(),
                         movementType: 'FG_OUT',
                         itemType: 'finished_product',
                         finishedProductId: item.finishedProductId,
-                        quantityIn: '0',
-                        quantityOut: String(item.quantity),
-                        runningBalance: String(currentStock - item.quantity),
+                        quantityOut: Number(item.quantity),
                         referenceType: 'sales',
                         referenceCode: invoiceNumber,
                         referenceId: invoice.id,
                         reason: `Sold to ${finalCustomerName}`,
-                    });
+                    }, db);
                 }
 
                 return { ...insertedItem, finishedProduct: item.product };
@@ -442,7 +453,7 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
             customerName,
             invoiceType = 'B2B',
             status = 'Draft',
-            placeOfSupply = '24', // Default to Gujarat
+            placeOfSupply,
             items
         } = req.body as CreateInvoiceRequest & { items: (InvoiceItem & { id?: string })[], placeOfSupply?: string };
 
@@ -469,26 +480,20 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                         await tx.update(bellItems)
                             .set({ status: 'Available' })
                             .where(eq(bellItems.id, item.bellItemId));
+                    } else {
+                        // Reversal stock movement ONLY for non-bale items
+                        await createStockMovement({
+                            date: new Date(),
+                            movementType: 'FG_IN', // Corrected movement type for reversal
+                            itemType: 'finished_product',
+                            finishedProductId: item.finishedProductId,
+                            quantityIn: Number(item.quantity),
+                            referenceType: 'sales',
+                            referenceCode: existingInvoice.invoiceNumber,
+                            referenceId: existingInvoice.id,
+                            reason: `Update reversal for invoice ${existingInvoice.invoiceNumber}`,
+                        }, tx);
                     }
-
-                    // Reversal stock movement
-                    await tx.insert(stockMovements).values({
-                        date: new Date(),
-                        movementType: 'SI_REVERSAL',
-                        itemType: 'finished_product',
-                        finishedProductId: item.finishedProductId,
-                        quantityIn: '0',
-                        quantityOut: item.quantity, // quantityOut for SI_REVERSAL is actually the quantity we are ADDING BACK
-                        runningBalance: '0',
-                        referenceType: 'sales',
-                        referenceCode: existingInvoice.invoiceNumber,
-                        referenceId: existingInvoice.id,
-                        reason: `Update reversal for invoice ${existingInvoice.invoiceNumber}`,
-                    });
-
-                    // Actually, looking at the DELETE route:
-                    // quantityIn: String(item.quantity), // Restore stock
-                    // quantityOut: '0',
                 }
             }
 
@@ -498,8 +503,19 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                 // No, standard flow is to create a new reversal entry.
             }
 
-            // 3. Re-calculate GST logic based on placeOfSupply
-            const isInterState = placeOfSupply !== COMPANY_STATE_CODE;
+            // 3. Re-calculate GST logic based on effective placeOfSupply
+            // Extract state code from GST number if available
+            let validGstCode = null;
+            if (customerId) {
+                const [customer] = await tx.select().from(customers).where(eq(customers.id, customerId));
+                if (customer?.gstNo && customer.gstNo.length >= 2) {
+                    const prefix = customer.gstNo.substring(0, 2);
+                    if (/^\d{2}$/.test(prefix)) validGstCode = prefix;
+                }
+            }
+
+            const effectivePOS = placeOfSupply || validGstCode || existingInvoice.placeOfSupply || COMPANY_STATE_CODE;
+            const isInterState = effectivePOS !== COMPANY_STATE_CODE;
 
             // 4. Validate stock if status is Confirmed
             if (status === 'Confirmed') {
@@ -587,7 +603,7 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                     invoiceDate: new Date(invoiceDate),
                     customerId: customerId || null,
                     customerName: customerName || (customerId ? existingInvoice.customerName : 'Walk-in Customer'),
-                    placeOfSupply,
+                    placeOfSupply: effectivePOS,
                     invoiceType,
                     subtotal: String(subtotal),
                     discountAmount: String(totalDiscount),
@@ -612,7 +628,7 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                     invoiceId: id,
                     finishedProductId: item.finishedProductId,
                     productName: item.productName,
-                    hsnCode: '5608',
+                    hsnCode: '60059000',
                     quantity: String(item.quantity),
                     rate: String(item.rate),
                     amount: String(item.amount),
@@ -631,21 +647,20 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                         await tx.update(bellItems)
                             .set({ status: 'Issued' })
                             .where(eq(bellItems.id, item.bellItemId));
+                    } else {
+                        // ONLY create FG_OUT movement for non-bale items
+                        await createStockMovement({
+                            date: new Date(),
+                            movementType: 'FG_OUT',
+                            itemType: 'finished_product',
+                            finishedProductId: item.finishedProductId,
+                            quantityOut: Number(item.quantity),
+                            referenceType: 'sales',
+                            referenceCode: existingInvoice.invoiceNumber,
+                            referenceId: existingInvoice.id,
+                            reason: `Sold to ${updatedInvoice.customerName}`,
+                        }, tx);
                     }
-
-                    await tx.insert(stockMovements).values({
-                        date: new Date(),
-                        movementType: 'FG_OUT',
-                        itemType: 'finished_product',
-                        finishedProductId: item.finishedProductId,
-                        quantityIn: '0',
-                        quantityOut: String(item.quantity),
-                        runningBalance: '0',
-                        referenceType: 'sales',
-                        referenceCode: existingInvoice.invoiceNumber,
-                        referenceId: existingInvoice.id,
-                        reason: `Sold to ${updatedInvoice.customerName}`,
-                    });
                 }
                 return insertedItem;
             }));
@@ -844,20 +859,19 @@ router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFun
             // 2. Create reversal stock movements for FG items (only if confirmed)
             if (invoice.status === 'Confirmed') {
                 for (const item of invoice.items || []) {
-                    if (item.finishedProductId) {
-                        await tx.insert(stockMovements).values({
-                            id: crypto.randomUUID(),
+                    // Only reverse for non-bale items
+                    if (item.finishedProductId && !item.bellItemId) {
+                        await createStockMovement({
                             date: new Date(),
-                            movementType: 'SI_REVERSAL',
+                            movementType: 'FG_IN',
                             itemType: 'finished_product',
                             finishedProductId: item.finishedProductId,
-                            quantityIn: String(item.quantity), // Restore stock
-                            quantityOut: '0',
+                            quantityIn: parseFloat(item.quantity),
                             referenceType: 'sales_invoice_reversal',
                             referenceId: invoice.id,
                             referenceCode: invoice.invoiceNumber,
                             reason: `Reversal of deleted invoice ${invoice.invoiceNumber}`,
-                        });
+                        }, tx);
                     }
                 }
             }

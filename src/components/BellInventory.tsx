@@ -620,7 +620,7 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                                 >
                                     <option value="All">All Status</option>
                                     <option value="Available">Available Only</option>
-                                    <option value="Issued">Issued Only</option>
+                                    <option value="Issued">Consumed Only</option>
                                 </select>
                                 <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
                             </div>
@@ -777,9 +777,9 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                                                                         </td>
                                                                         <td className="px-4 py-2 text-center">
                                                                             <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] uppercase font-bold tracking-wide ${item.status === 'Available' ? 'bg-green-100 text-green-700' :
-                                                                                item.status === 'Issued' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                                                                                item.status === 'Issued' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'
                                                                                 }`}>
-                                                                                {item.status}
+                                                                                {item.status === 'Issued' ? 'Consumed' : item.status}
                                                                             </span>
                                                                         </td>
                                                                         <td className="px-4 py-2 text-center">

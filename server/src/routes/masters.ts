@@ -189,7 +189,7 @@ router.post('/finished-products', async (req: Request, res: Response, next: Next
         const [item] = await db.insert(finishedProducts).values({
             code, name, length, width, gsm,
             unit: unit || 'kg',
-            hsnCode: hsnCode || '5608',
+            hsnCode: hsnCode || '60059000',
             gstPercent: String(gstPercent || 18),
             ratePerKg: String(ratePerKg || 0),
         }).returning();
@@ -437,7 +437,7 @@ router.get('/customers', async (req: Request, res: Response, next: NextFunction)
 
 router.post('/customers', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { name, gstNo, stateCode, email, phone, address, outstanding } = req.body;
+        const { name, gstNo, panNumber, stateCode, email, phone, address, outstanding } = req.body;
 
         const lastItem = await db.query.customers.findFirst({
             orderBy: (table, { desc }) => [desc(table.code)]
@@ -451,6 +451,7 @@ router.post('/customers', async (req: Request, res: Response, next: NextFunction
 
         const [item] = await db.insert(customers).values({
             code, name, gstNo,
+            panNumber,
             stateCode: inferredStateCode,
             email, phone, address,
             outstanding: String(outstanding || 0),
@@ -467,12 +468,12 @@ router.post('/customers', async (req: Request, res: Response, next: NextFunction
 
 router.put('/customers/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { name, gstNo, stateCode, email, phone, address, outstanding } = req.body;
+        const { name, gstNo, panNumber, stateCode, email, phone, address, outstanding } = req.body;
 
         const inferredStateCode = stateCode || (gstNo ? gstNo.substring(0, 2) : '24');
 
         const updateData: any = {
-            name, gstNo,
+            name, gstNo, panNumber,
             stateCode: inferredStateCode,
             email, phone, address,
             updatedAt: new Date()
