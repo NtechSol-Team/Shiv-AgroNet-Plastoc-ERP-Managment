@@ -32,7 +32,7 @@ import {
 // ... (inside the route)
 
 
-import { eq, desc, asc, sql, count as countFn, and, inArray } from 'drizzle-orm';
+import { eq, desc, asc, sql, count as countFn, and, inArray, gte, lte, ilike } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
 
@@ -77,11 +77,15 @@ router.get('/bills', async (req: Request, res: Response, next: NextFunction) => 
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = (page - 1) * limit;
 
-        const { sortBy = 'createdAt', sortOrder = 'desc', type } = req.query;
+        const { sortBy = 'createdAt', sortOrder = 'desc', type, supplierId, invoiceNumber, startDate, endDate } = req.query;
 
         // 1. Build where clause
         const conditions = [];
         if (type) conditions.push(eq(purchaseBills.type, type as string));
+        if (supplierId) conditions.push(eq(purchaseBills.supplierId, supplierId as string));
+        if (invoiceNumber) conditions.push(ilike(purchaseBills.invoiceNumber, `%${invoiceNumber}%`));
+        if (startDate) conditions.push(gte(purchaseBills.date, new Date(startDate as string)));
+        if (endDate) conditions.push(lte(purchaseBills.date, new Date(endDate as string)));
 
         const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 

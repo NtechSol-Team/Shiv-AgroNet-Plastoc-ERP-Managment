@@ -10,7 +10,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Minus, Search, Loader2, Building2, Package, Trash2, CheckCircle, XCircle, RotateCcw, Link, Edit2 } from 'lucide-react';
+import { Plus, Minus, Search, Loader2, Building2, Package, Trash2, CheckCircle, XCircle, RotateCcw, Link, Edit2, Filter, Calendar } from 'lucide-react';
 import { useRealtimeEvent } from '../hooks/useRealtime';
 import { useRealtimeContext } from '../context/RealtimeContext';
 import { purchaseApi, mastersApi, accountsApi, gstApi } from '../lib/api';
@@ -186,10 +186,15 @@ export function Purchase() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [limit] = useState(20);
+  const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({
     sortBy: 'createdAt',
     sortOrder: 'desc',
-    type: ''
+    type: '',
+    supplierId: '',
+    invoiceNumber: '',
+    startDate: '',
+    endDate: ''
   });
 
   // Payment State
@@ -1165,20 +1170,32 @@ export function Purchase() {
 
         {/* Action Buttons */}
         {!showForm && !showPaymentForm && (
-          <button
-            onClick={() => {
-              if (activeTab === 'bills') {
-                setEditingBillId(null); // Reset edit mode for new bill
-                setShowForm(true);
-              } else {
-                setShowPaymentForm(true);
-              }
-            }}
-            className="px-4 py-1.5 bg-blue-700 text-white text-sm font-bold uppercase rounded-sm hover:bg-blue-800 transition-colors flex items-center shadow-sm"
-          >
-            <Plus className="w-3 h-3 mr-2" />
-            {activeTab === 'bills' ? 'New Purchase Bill' : 'New Payment'}
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => {
+                if (activeTab === 'bills') {
+                  setEditingBillId(null); // Reset edit mode for new bill
+                  setShowForm(true);
+                } else {
+                  setShowPaymentForm(true);
+                }
+              }}
+              className="px-4 py-1.5 bg-blue-700 text-white text-sm font-bold uppercase rounded-sm hover:bg-blue-800 transition-colors flex items-center shadow-sm"
+            >
+              <Plus className="w-3 h-3 mr-2" />
+              {activeTab === 'bills' ? 'New Purchase Bill' : 'New Payment'}
+            </button>
+
+            {activeTab === 'bills' && (
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className={`px-4 py-1.5 border ${showFilters ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-300 text-gray-700'} text-sm font-bold uppercase rounded-sm hover:bg-gray-50 transition-colors flex items-center shadow-sm`}
+              >
+                <Filter className="w-3 h-3 mr-2" />
+                Filter
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -1206,12 +1223,28 @@ export function Purchase() {
       )}
 
       {/* ==================== BILLS VIEW ==================== */}
-      {activeTab === 'bills' && (
-        <div className="mb-4 flex flex-wrap items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Filter By Type:</span>
+      {showFilters && activeTab === 'bills' && !showForm && !showPaymentForm && (
+        <div className="bg-white border border-gray-300 rounded-sm p-4 mb-4 shadow-sm grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-in slide-in-from-top-2">
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Party Name</label>
             <select
-              className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              value={filters.supplierId}
+              onChange={e => {
+                const newFilters = { ...filters, supplierId: e.target.value };
+                setFilters(newFilters);
+                setPage(1);
+                fetchData(1, newFilters);
+              }}
+              className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-medium bg-white"
+            >
+              <option value="">All Suppliers</option>
+              {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Type</label>
+            <select
+              className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-medium bg-white"
               value={filters.type}
               onChange={(e) => {
                 const newFilters = { ...filters, type: e.target.value };
@@ -1226,11 +1259,52 @@ export function Purchase() {
               <option value="GENERAL">General Expense</option>
             </select>
           </div>
-
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">From Date</label>
+            <input
+              type="date"
+              value={filters.startDate}
+              onChange={e => {
+                const newFilters = { ...filters, startDate: e.target.value };
+                setFilters(newFilters);
+                setPage(1);
+                fetchData(1, newFilters);
+              }}
+              className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-medium"
+            />
+          </div>
+          <div className="flex items-end space-x-2">
+            <div className="flex-1">
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">To Date</label>
+              <input
+                type="date"
+                value={filters.endDate}
+                onChange={e => {
+                  const newFilters = { ...filters, endDate: e.target.value };
+                  setFilters(newFilters);
+                  setPage(1);
+                  fetchData(1, newFilters);
+                }}
+                className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-medium"
+              />
+            </div>
+            <button
+              onClick={() => {
+                const reset = { ...filters, supplierId: '', invoiceNumber: '', startDate: '', endDate: '', type: '' };
+                setFilters(reset);
+                setPage(1);
+                fetchData(1, reset);
+              }}
+              className="px-2 py-1.5 text-gray-500 hover:text-red-600 border border-gray-200 rounded-sm hover:border-red-200"
+              title="Clear Filter"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sort By:</span>
+            <span className="text-[10px] font-bold text-gray-500 uppercase">Sort By:</span>
             <select
-              className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 p-1 bg-gray-50 border border-gray-300 rounded-sm text-xs outline-none focus:ring-1 focus:ring-blue-500 font-medium"
               value={filters.sortBy}
               onChange={(e) => {
                 const newFilters = { ...filters, sortBy: e.target.value };
@@ -1243,11 +1317,10 @@ export function Purchase() {
               <option value="code">Bill Number</option>
             </select>
           </div>
-
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Order:</span>
+            <span className="text-[10px] font-bold text-gray-500 uppercase">Order:</span>
             <select
-              className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 p-1 bg-gray-50 border border-gray-300 rounded-sm text-xs outline-none focus:ring-1 focus:ring-blue-500 font-medium"
               value={filters.sortOrder}
               onChange={(e) => {
                 const newFilters = { ...filters, sortOrder: e.target.value };

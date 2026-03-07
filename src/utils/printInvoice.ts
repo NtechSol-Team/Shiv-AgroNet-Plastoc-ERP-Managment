@@ -233,21 +233,38 @@ interface InvoiceData {
 export function printInvoice(invoice: InvoiceData): void {
   const company = APP_CONFIG.company;
 
-  const customerStateCode = getStateCodeFromGSTIN(invoice.customer?.gstNo || invoice.customerGST || '') ||
-    invoice.customer?.stateCode ||
-    company.stateCode;
+  const rawGstin = (invoice.customerGST || invoice.customer?.gstNo || '').trim();
+  const customerGstin = rawGstin.length === 15 ? rawGstin : '';
+  const customerPan = invoice.customer?.panNumber || (rawGstin.length === 10 ? rawGstin : '');
 
-  const isInterState = isInterStateSupply(customerStateCode);
+  // Revised Tax Logic:
+  // 1. If valid 15-char GST is present: Normal state-based logic
+  // 2. If GST is missing/invalid: CGST+SGST if POS is Gujarat (24), IGST if POS is outside Gujarat
+  let isInterState = false;
+  const posValue = (invoice.placeOfSupply || '').trim();
+
+  if (customerGstin) {
+    const customerStateCode = getStateCodeFromGSTIN(customerGstin) || invoice.customer?.stateCode || company.stateCode;
+    isInterState = isInterStateSupply(customerStateCode);
+  } else if (posValue) {
+    const normalizedPOS = posValue.toUpperCase();
+    isInterState = normalizedPOS !== '24' && normalizedPOS !== 'GUJARAT';
+  } else {
+    isInterState = false;
+  }
+
+  const customerStateCode = customerGstin
+    ? (getStateCodeFromGSTIN(customerGstin) || invoice.customer?.stateCode || '24')
+    : (posValue === 'Gujarat' || posValue === '24' ? '24' : (posValue || '24'));
   const customerStateName = getStateName(customerStateCode);
   const companyStateName = getStateName(company.stateCode);
-  const invoiceType = invoice.invoiceType || (invoice.customer?.gstNo ? 'B2B' : 'B2C');
+  const invoiceType = invoice.invoiceType || (customerGstin ? 'B2B' : 'B2C');
 
-  const placeOfSupplyLabel = invoice.placeOfSupply
-    ? `${getStateName(invoice.placeOfSupply)} (${invoice.placeOfSupply})`
-    : `${customerStateName} (${customerStateCode || company.stateCode})`;
+  const placeOfSupplyLabel = posValue
+    ? `${getStateName(posValue)} (${posValue})`
+    : `${customerStateName} (${customerStateCode})`;
 
-  const customerGstin = invoice.customerGST || invoice.customer?.gstNo || '';
-  const reverseChargeText = 'No'; // Default: No reverse charge applicable
+  const reverseChargeText = 'No';
 
   const billToName = (invoice.customerName || invoice.customer?.name || 'Cash Customer').trim();
   const billToAddress = invoice.billingAddress || invoice.customer?.address || '';
@@ -257,7 +274,6 @@ export function printInvoice(invoice: InvoiceData): void {
   const invoiceNo = (invoice.invoiceNumber || invoice.code || '').trim();
   const invoiceDate = formatDate(invoice.invoiceDate || invoice.date || new Date());
   const dueDate = invoice.dueDate ? formatDate(invoice.dueDate) : '';
-  const supplyTypeText = isInterState ? 'Inter-State (IGST)' : 'Intra-State (CGST + SGST)';
 
   // Process items
   const processedItems = (invoice.items || []).map(item => {
@@ -284,16 +300,16 @@ export function printInvoice(invoice: InvoiceData): void {
       qty,
       rate,
       discountAmt,
-      taxableAmt, // Taxable Value
+      taxableAmt,
       gstPct,
-      totalTaxAmt, // Total Tax Amount
+      totalTaxAmt,
       cgstPct, sgstPct, igstPct,
       cgstAmt: calculatedCgst,
       sgstAmt: calculatedSgst,
       igstAmt: calculatedIgst,
       totalAmt,
       pieceCount: item.pieceCount,
-      batchCode: item.batchCode, // Pass through batch code
+      batchCode: item.batchCode,
     };
   });
 
@@ -301,6 +317,7 @@ export function printInvoice(invoice: InvoiceData): void {
   const totalTaxable = processedItems.reduce((sum, item) => sum + item.taxableAmt, 0);
   const totalTax = processedItems.reduce((sum, item) => sum + item.totalTaxAmt, 0);
   const totalDiscount = processedItems.reduce((sum, item) => sum + item.discountAmt, 0);
+  const totalQty = processedItems.reduce((sum, item) => sum + item.qty, 0);
 
   const grandTotal = totalTaxable + totalTax;
   const roundOff = Math.round(grandTotal) - grandTotal;
@@ -309,7 +326,7 @@ export function printInvoice(invoice: InvoiceData): void {
   // Group by HSN for GST Summary
   const hsnSummary: Record<string, any> = {};
   processedItems.forEach(item => {
-    const hsn = item.hsnCode || 'General';
+    const hsn = item.hsnCode || '3901'; // Default HSN if missing
     if (!hsnSummary[hsn]) {
       hsnSummary[hsn] = {
         hsn,
@@ -357,7 +374,7 @@ export function printInvoice(invoice: InvoiceData): void {
             width: 210mm;
             min-height: 297mm;
             margin: 0 auto;
-            padding: 15mm;
+            padding: 12mm;
             border: 1px solid var(--border-color);
             box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
@@ -366,28 +383,28 @@ export function printInvoice(invoice: InvoiceData): void {
         .header-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
         .header-table td { vertical-align: top; }
         
-        .logo { max-width: 150px; margin-bottom: 10px; }
+        .logo { max-width: 150px; margin-bottom: 5px; }
         .company-name { font-size: 20px; font-weight: bold; text-transform: uppercase; }
         .invoice-title { 
             text-align: right; 
-            font-size: 24px; 
+            font-size: 22px; 
             font-weight: bold; 
             color: var(--primary-color);
             text-transform: uppercase;
         }
-        .compliance-text { text-align: right; font-size: 11px; color: #555; }
+        .compliance-text { text-align: right; font-size: 10px; color: #555; }
 
         /* Meta Info Grid */
         .meta-section { 
             display: grid; 
-            grid-template-columns: 1fr 1fr; 
+            grid-template-columns: repeat(4, 1fr); 
             border: 1px solid var(--border-color);
-            margin-bottom: 15px;
+            margin-bottom: 10px;
         }
-        .meta-box { padding: 8px; border-right: 1px solid var(--border-color); }
+        .meta-box { padding: 6px; border-right: 1px solid var(--border-color); }
         .meta-box:last-child { border-right: none; }
-        .label { font-size: 11px; font-weight: bold; color: #666; display: block; }
-        .value { font-size: 13px; font-weight: 500; }
+        .label { font-size: 10px; font-weight: bold; color: #666; display: block; }
+        .value { font-size: 12px; font-weight: 500; }
 
         /* Address Section */
         .address-section { 
@@ -395,9 +412,9 @@ export function printInvoice(invoice: InvoiceData): void {
             grid-template-columns: 1fr 1fr; 
             border: 1px solid var(--border-color); 
             border-top: none;
-            margin-bottom: 15px;
+            margin-bottom: 10px;
         }
-        .address-box { padding: 10px; border-right: 1px solid var(--border-color); }
+        .address-box { padding: 8px; border-right: 1px solid var(--border-color); }
         .address-box:last-child { border-right: none; }
 
         /* Main Item Table */
@@ -410,48 +427,68 @@ export function printInvoice(invoice: InvoiceData): void {
         .items-table th { 
             background: var(--bg-light); 
             border: 1px solid var(--border-color); 
-            padding: 6px; 
-            font-size: 11px; 
+            padding: 5px; 
+            font-size: 10px; 
             text-align: center;
         }
         .items-table td { 
             border: 1px solid var(--border-color); 
-            padding: 8px; 
-            font-size: 12px;
+            padding: 6px; 
+            font-size: 11px;
             vertical-align: top;
         }
 
+        /* GST Summary Table */
+        .gst-summary-table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin-top: 10px;
+            margin-bottom: 15px;
+        }
+        .gst-summary-table th { 
+            background: var(--bg-light); 
+            border: 1px solid var(--border-color); 
+            padding: 4px; 
+            font-size: 9px; 
+            text-align: center;
+        }
+        .gst-summary-table td { 
+            border: 1px solid var(--border-color); 
+            padding: 4px; 
+            font-size: 10px;
+        }
+
         /* Totals & Summary */
-        .summary-wrapper { display: flex; justify-content: space-between; margin-top: 10px; }
-        .bank-details { width: 55%; border: 1px solid var(--border-color); padding: 10px; }
+        .summary-wrapper { display: flex; justify-content: space-between; margin-top: 5px; }
+        .bank-details { width: 55%; border: 1px solid var(--border-color); padding: 8px; }
         .totals-box { width: 40%; }
         
-        .total-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+        .total-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
         .grand-total { 
-            border-top: 2px solid #000; 
-            margin-top: 5px; 
-            padding-top: 5px; 
+            border-top: 1.5px solid #000; 
+            margin-top: 4px; 
+            padding-top: 4px; 
             font-weight: bold; 
-            font-size: 16px; 
+            font-size: 14px; 
         }
 
         /* Footer */
-        .declaration { font-size: 10px; color: #444; margin-top: 20px; line-height: 1.4; }
+        .declaration { font-size: 9px; color: #444; margin-top: 10px; line-height: 1.3; }
         .signature-section { 
-            margin-top: 30px; 
+            margin-top: 20px; 
             text-align: right; 
         }
         .sig-box { 
             display: inline-block; 
-            width: 250px; 
+            width: 200px; 
             text-align: center; 
-            font-size: 12px;
+            font-size: 11px;
         }
 
         /* Print Optimization */
         @media print {
             body { background: none; padding: 0; }
-            .invoice-container { box-shadow: none; border: none; width: 100%; }
+            .invoice-container { box-shadow: none; border: none; width: 100%; padding: 5mm; }
             .no-print { display: none; }
         }
     </style>
@@ -462,13 +499,12 @@ export function printInvoice(invoice: InvoiceData): void {
     <table class="header-table">
         <tr>
             <td>
-                <!-- Logo optional -->
-                <img class="logo" src="${logoUrl}" onerror="this.style.display='none'" alt="Logo" style="max-height: 80px; width: auto; max-width: 150px; margin-bottom: 10px; display: block;">
+                <img class="logo" src="${logoUrl}" onerror="this.style.display='none'" alt="Logo" style="max-height: 60px; width: auto; max-width: 150px; margin-bottom: 5px; display: block;">
                 <div class="company-name">${escapeHtml(company.legalName || company.name)}</div>
-                <div class="value">${formatMultilineText(`${company.address1}${company.address2 ? `, ${company.address2}` : ''}\n${company.city} - ${company.pincode}, ${company.state}`, '')}</div>
-                <div class="value"><strong>GSTIN:</strong> ${escapeHtml(company.gstin)} | <strong>PAN:</strong> ${escapeHtml(company.pan)}</div>
-                <div class="value"><strong>State:</strong> ${escapeHtml(company.stateName)} (Code: ${escapeHtml(company.stateCode)})</div>
-                <div class="value"><strong>Mobile:</strong> ${escapeHtml(company.mobile)} | <strong>UDYAM:</strong> ${escapeHtml(company.udyamRegistration)}</div>
+                <div class="value" style="font-size: 10px;">${formatMultilineText(`${company.address1}${company.address2 ? `, ${company.address2}` : ''}\n${company.city} - ${company.pincode}, ${company.state}`, '')}</div>
+                <div class="value" style="font-size: 11px;"><strong>GSTIN:</strong> ${escapeHtml(company.gstin)} | <strong>PAN:</strong> ${escapeHtml(company.pan)}</div>
+                <div class="value" style="font-size: 10px;"><strong>State:</strong> ${escapeHtml(company.stateName)} (Code: ${escapeHtml(company.stateCode)})</div>
+                <div class="value" style="font-size: 10px;"><strong>Mobile:</strong> ${escapeHtml(company.mobile)} | <strong>UDYAM:</strong> ${escapeHtml(company.udyamRegistration)}</div>
             </td>
             <td>
                 <div class="invoice-title">${invoiceType === 'B2B' ? 'Tax Invoice' : 'Bill of Supply'}</div>
@@ -491,7 +527,7 @@ export function printInvoice(invoice: InvoiceData): void {
             <span class="value">${escapeHtml(placeOfSupplyLabel)}</span>
         </div>
         <div class="meta-box">
-            <span class="label">Reverse Charge Applicable</span>
+            <span class="label">Reverse Charge</span>
             <span class="value">${reverseChargeText}</span>
         </div>
     </div>
@@ -500,15 +536,15 @@ export function printInvoice(invoice: InvoiceData): void {
         <div class="address-box">
             <span class="label">Bill To:</span>
             <div class="value"><strong>${escapeHtml(billToName || '-')}</strong></div>
-            <div class="value">${formatMultilineText(billToAddress, '-')}</div>
+            <div class="value" style="font-size: 11px;">${formatMultilineText(billToAddress, '-')}</div>
             <div class="value"><strong>GSTIN:</strong> ${escapeHtml(customerGstin || 'Unregistered')}</div>
-            ${invoice.customer?.panNumber ? `<div class="value"><strong>PAN:</strong> ${escapeHtml(invoice.customer.panNumber)}</div>` : ''}
+            ${customerPan ? `<div class="value"><strong>PAN:</strong> ${escapeHtml(customerPan)}</div>` : ''}
             <div class="value"><strong>State:</strong> ${escapeHtml(customerStateName)} (Code: ${escapeHtml(customerStateCode || 'NA')})</div>
         </div>
         <div class="address-box">
             <span class="label">Ship To:</span>
             <div class="value"><strong>${escapeHtml(shipToName || '-')}</strong></div>
-            <div class="value">${formatMultilineText(shipToAddress, '-')}</div>
+            <div class="value" style="font-size: 11px;">${formatMultilineText(shipToAddress, '-')}</div>
             <div class="value"><strong>State:</strong> ${escapeHtml(customerStateName)} (Code: ${escapeHtml(customerStateCode || 'NA')})</div>
         </div>
     </div>
@@ -516,19 +552,14 @@ export function printInvoice(invoice: InvoiceData): void {
     <table class="items-table">
         <thead>
             <tr>
-                <th style="width: 5%;">Sr.</th>
-                <th style="width: 30%;">Description of Goods / Services</th>
-                <th style="width: 10%;">HSN/SAC</th>
+                <th style="width: 3%;">Sr.</th>
+                <th style="width: 35%;">Description of Goods / Services</th>
+                <th style="width: 9%;">HSN/SAC</th>
                 <th style="width: 8%;">Qty</th>
-                <th style="width: 10%;">Rate</th>
-                <th style="width: 12%;">Taxable Val.</th>
-                ${!isInterState ? `
-                <th style="width: 12%;">CGST</th>
-                <th style="width: 12%;">SGST</th>
-                ` : `
-                <th style="width: 24%;">IGST</th>
-                `}
-                <th style="width: 15%;">Total</th>
+                <th style="width: 11%;">Rate</th>
+                <th style="width: 11%;">Taxable Val.</th>
+                <th style="width: 12%;">Tax Amt</th>
+                <th style="width: 11%;">Total</th>
             </tr>
         </thead>
         <tbody>
@@ -537,49 +568,100 @@ export function printInvoice(invoice: InvoiceData): void {
                 <td align="center">${idx + 1}</td>
                 <td>
                     <div style="font-weight: bold; text-transform: uppercase;">${escapeHtml(item.batchCode ? item.batchCode + ' - ' + (item.finishedProduct?.name || item.productName || 'Item') : (item.productName || item.finishedProduct?.name || 'Item'))}</div>
-                    ${item.pieceCount ? `<div style="font-size: 10px; color: #555;">(${escapeHtml(String(Math.round(Number(item.pieceCount))))} pcs)</div>` : ''}
+                    ${item.pieceCount ? `<div style="font-size: 9px; color: #555;">(${escapeHtml(String(Math.round(Number(item.pieceCount))))} pcs)</div>` : ''}
                 </td>
-                <td align="center">${escapeHtml(item.hsnCode || '60059000')}</td>
+                <td align="center">${escapeHtml(item.hsnCode || '3901')}</td>
                 <td align="center">${escapeHtml(item.qty.toFixed(2))} ${escapeHtml(String(item.unit || 'Kg'))}</td>
                 <td align="right">${formatCurrency(item.rate)}</td>
                 <td align="right">${formatCurrency(item.taxableAmt)}</td>
-                ${!isInterState ? `
                 <td align="right">
-                    <div>${item.cgstPct}%</div>
-                    <div style="font-size: 10px; color: #555;">${formatCurrency(item.cgstAmt)}</div>
+                    <div>${item.gstPct}%</div>
+                    <div style="font-size: 9px; color: #555;">${formatCurrency(item.totalTaxAmt)}</div>
                 </td>
-                <td align="right">
-                    <div>${item.sgstPct}%</div>
-                    <div style="font-size: 10px; color: #555;">${formatCurrency(item.sgstAmt)}</div>
-                </td>
-                ` : `
-                <td align="right">
-                    <div>${item.igstPct}%</div>
-                    <div style="font-size: 10px; color: #555;">${formatCurrency(item.igstAmt)}</div>
-                </td>
-                `}
                 <td align="right"><strong>${formatCurrency(item.totalAmt)}</strong></td>
             </tr>
             `).join('')}
+        </tbody>
+        <tfoot>
+            <tr style="font-weight: bold; background-color: var(--bg-light);">
+                <td colspan="3" align="right">TOTAL</td>
+                <td align="center">${totalQty.toFixed(2)}</td>
+                <td colspan="4"></td>
+            </tr>
+        </tfoot>
+    </table>
+
+    <div style="font-weight: bold; font-size: 10px; margin-top: 10px;">GST SUMMARY</div>
+    <table class="gst-summary-table">
+        <thead>
+            <tr>
+                <th rowspan="2">HSN/SAC</th>
+                <th rowspan="2">Taxable Value</th>
+                ${!isInterState ? `
+                <th colspan="2">Central Tax (CGST)</th>
+                <th colspan="2">State Tax (SGST)</th>
+                ` : `
+                <th colspan="2">Integrated Tax (IGST)</th>
+                `}
+                <th rowspan="2">Total Tax Amount</th>
+            </tr>
+            <tr>
+                <th>Rate</th>
+                <th>Amount</th>
+                ${!isInterState ? `
+                <th>Rate</th>
+                <th>Amount</th>
+                ` : ''}
+            </tr>
+        </thead>
+        <tbody>
+            ${summaryRows.map(row => `
+            <tr>
+                <td align="center">${escapeHtml(row.hsn)}</td>
+                <td align="right">${formatCurrency(row.taxable)}</td>
+                ${!isInterState ? `
+                <td align="center">${row.cgstRate}%</td>
+                <td align="right">${formatCurrency(row.cgst)}</td>
+                <td align="center">${row.sgstRate}%</td>
+                <td align="right">${formatCurrency(row.sgst)}</td>
+                ` : `
+                <td align="center">${row.igstRate}%</td>
+                <td align="right">${formatCurrency(row.igst)}</td>
+                `}
+                <td align="right">${formatCurrency(row.cgst + row.sgst + row.igst)}</td>
+            </tr>
+            `).join('')}
+            <tr style="font-weight: bold; background-color: var(--bg-light);">
+                <td align="center">Total</td>
+                <td align="right">${formatCurrency(summaryRows.reduce((a, b) => a + b.taxable, 0))}</td>
+                ${!isInterState ? `
+                <td></td>
+                <td align="right">${formatCurrency(summaryRows.reduce((a, b) => a + b.cgst, 0))}</td>
+                <td></td>
+                <td align="right">${formatCurrency(summaryRows.reduce((a, b) => a + b.sgst, 0))}</td>
+                ` : `
+                <td></td>
+                <td align="right">${formatCurrency(summaryRows.reduce((a, b) => a + b.igst, 0))}</td>
+                `}
+                <td align="right">${formatCurrency(summaryRows.reduce((a, b) => a + b.cgst + b.sgst + b.igst, 0))}</td>
+            </tr>
         </tbody>
     </table>
 
     <div class="summary-wrapper">
         <div class="bank-details">
-            <span class="label">Bank Account Details:</span>
-            <div class="value"><strong>Bank Name:</strong> ${escapeHtml(company.bankDetails?.bankName || '')}</div>
-            <div class="value"><strong>A/c Name:</strong> ${escapeHtml(company.bankDetails?.accountHolder || '')}</div>
-            <div class="value"><strong>A/c No:</strong> ${escapeHtml(company.bankDetails?.accountNumber || '')}</div>
-            <div class="value"><strong>IFSC:</strong> ${escapeHtml(company.bankDetails?.ifscCode || '')}</div>
-            <div class="value"><strong>Branch:</strong> ${escapeHtml(company.bankDetails?.branchName || '')}</div>
+            <span class="label" style="font-size: 11px; margin-bottom: 5px;">Bank Account Details:</span>
+            <div class="value" style="font-size: 13px; margin-bottom: 2px;"><strong>Bank Name:</strong> ${escapeHtml(company.bankDetails?.bankName || '')}</div>
+            <div class="value" style="font-size: 13px; margin-bottom: 2px;"><strong>A/c Name:</strong> ${escapeHtml(company.bankDetails?.accountHolder || '')}</div>
+            <div class="value" style="font-size: 13px; margin-bottom: 2px;"><strong>A/c No:</strong> ${escapeHtml(company.bankDetails?.accountNumber || '')}</div>
+            <div class="value" style="font-size: 13px;"><strong>IFSC:</strong> ${escapeHtml(company.bankDetails?.ifscCode || '')}</div>
             
             ${invoice.transportDetails || invoice.vehicleNumber || invoice.eWayBillNo || invoice.remarks ? `
-            <div style="margin-top: 10px; border-top: 1px solid #eee; padding-top: 5px;">
+            <div style="margin-top: 5px; border-top: 1px solid #eee; padding-top: 3px;">
                 <span class="label">Transport / Remarks:</span>
-                ${invoice.transportDetails ? `<div class="value"><strong>Transport:</strong> ${formatMultilineText(invoice.transportDetails)}</div>` : ''}
-                ${invoice.vehicleNumber ? `<div class="value"><strong>Vehicle No:</strong> <span class="mono">${escapeHtml(invoice.vehicleNumber)}</span></div>` : ''}
-                ${invoice.eWayBillNo ? `<div class="value"><strong>E-Way No:</strong> <span class="mono">${escapeHtml(invoice.eWayBillNo)}</span></div>` : ''}
-                ${invoice.remarks ? `<div class="value"><strong>Remarks:</strong> ${formatMultilineText(invoice.remarks)}</div>` : ''}
+                ${invoice.transportDetails ? `<div class="value" style="font-size: 10px;"><strong>Transport:</strong> ${formatMultilineText(invoice.transportDetails)}</div>` : ''}
+                ${invoice.vehicleNumber ? `<div class="value" style="font-size: 10px;"><strong>Vehicle No:</strong> ${escapeHtml(invoice.vehicleNumber)}</div>` : ''}
+                ${invoice.remarks ? `<div class="value" style="font-size: 10px;"><strong>Remarks:</strong> ${formatMultilineText(invoice.remarks)}</div>` : ''}
             </div>
             ` : ''}
         </div>
@@ -596,7 +678,7 @@ export function printInvoice(invoice: InvoiceData): void {
             <div class="total-row"><span>Round Off:</span><span>${roundOff > 0 ? '+' : ''}${roundOff.toFixed(2)}</span></div>
             <div class="total-row grand-total"><span>Grand Total:</span><span>₹ ${formatCurrency(finalGrandTotal)}</span></div>
             
-            <div style="margin-top: 10px;">
+            <div style="margin-top: 5px;">
                 <span class="label">Amount in Words:</span>
                 <div class="value"><em>${escapeHtml(formatAmountInWords(finalGrandTotal))}</em></div>
             </div>

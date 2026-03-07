@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Printer, Search, X, Trash2, Loader2, Building2, MapPin, FileText, Download, Receipt, ArrowRight, RotateCcw, History, Info, MessageCircle, Link, Edit2 } from 'lucide-react';
+import { Plus, Printer, Search, X, Trash2, Loader2, Building2, MapPin, FileText, Download, Receipt, ArrowRight, RotateCcw, History, Info, MessageCircle, Link, Edit2, Filter, Calendar } from 'lucide-react';
 import { useRealtimeEvent } from '../hooks/useRealtime';
 import { useRealtimeContext } from '../context/RealtimeContext';
 import { salesApi, mastersApi, accountsApi, gstApi } from '../lib/api';
@@ -161,11 +161,20 @@ export function Sales() {
 
   const [availableAdvances, setAvailableAdvances] = useState<any[]>([]);
 
+  // Filter State
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState({
+    customerId: '',
+    placeOfSupply: '',
+    startDate: '',
+    endDate: ''
+  });
+
   const { lastEvent } = useRealtimeContext();
 
   useEffect(() => {
     fetchData();
-  }, [page, limit]);
+  }, [page, limit, filters]);
 
   // Auto-refresh on real-time events
   useRealtimeEvent(lastEvent, ['sales_updated', 'accounts_updated', 'inventory_updated', 'masters_updated'], () => {
@@ -250,7 +259,7 @@ export function Sales() {
     setLoading(true);
     try {
       const [invoicesResult, customersResult, productsResult, summaryResult, accountsResult, receiptsResult, bellsResult] = await Promise.all([
-        salesApi.getInvoices(page, limit),
+        salesApi.getInvoices(page, limit, filters),
         mastersApi.getCustomers(),
         mastersApi.getFinishedProducts(),
         salesApi.getSummary(),
@@ -848,21 +857,32 @@ export function Sales() {
 
         {/* Action Buttons */}
         {!showInvoiceForm && !showReceiptForm && (
-          <button
-            onClick={() => {
-              if (activeTab === 'invoices') {
-                setEditingInvoiceId(null); // Reset edit mode for new invoice
-                setShowInvoiceForm(true);
-              } else {
-                setShowReceiptForm(true);
-              }
-            }}
-            className="px-4 py-1.5 bg-blue-700 text-white text-sm font-bold uppercase rounded-sm hover:bg-blue-800 transition-colors flex items-center shadow-sm"
-          >
-            <Plus className="w-3 h-3 mr-2" />
-            {activeTab === 'invoices' ? 'New Invoice' : 'New Receipt'}
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => {
+                if (activeTab === 'invoices') {
+                  setEditingInvoiceId(null); // Reset edit mode for new invoice
+                  setShowInvoiceForm(true);
+                } else {
+                  setShowReceiptForm(true);
+                }
+              }}
+              className="px-4 py-1.5 bg-blue-700 text-white text-sm font-bold uppercase rounded-sm hover:bg-blue-800 transition-colors flex items-center shadow-sm"
+            >
+              <Plus className="w-3 h-3 mr-2" />
+              {activeTab === 'invoices' ? 'New Invoice' : 'New Receipt'}
+            </button>
 
+            {activeTab === 'invoices' && (
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className={`px-4 py-1.5 border ${showFilters ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-300 text-gray-700'} text-sm font-bold uppercase rounded-sm hover:bg-gray-50 transition-colors flex items-center shadow-sm`}
+              >
+                <Filter className="w-3 h-3 mr-2" />
+                Filter
+              </button>
+            )}
+          </div>
         )}
 
         {/* Tab Switcher for Receipts/Advances */}
@@ -884,6 +904,61 @@ export function Sales() {
       {/* Error & Success Messages */}
       {error && <div className="bg-red-50 text-red-700 text-xs font-bold p-2 border border-red-200 mb-4">{error}</div>}
       {success && <div className="bg-green-50 text-green-700 text-xs font-bold p-2 border border-green-200 mb-4">{success}</div>}
+
+      {/* Filter Panel */}
+      {showFilters && activeTab === 'invoices' && !showInvoiceForm && !showReceiptForm && (
+        <div className="bg-white border border-gray-300 rounded-sm p-4 mb-4 shadow-sm grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-in slide-in-from-top-2">
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Party Name</label>
+            <select
+              value={filters.customerId}
+              onChange={e => setFilters({ ...filters, customerId: e.target.value })}
+              className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-medium bg-white"
+            >
+              <option value="">All Customers</option>
+              {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">State</label>
+            <select
+              value={filters.placeOfSupply}
+              onChange={e => setFilters({ ...filters, placeOfSupply: e.target.value })}
+              className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-medium bg-white"
+            >
+              <option value="">All States</option>
+              {GST_STATES.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">From Date</label>
+            <input
+              type="date"
+              value={filters.startDate}
+              onChange={e => setFilters({ ...filters, startDate: e.target.value })}
+              className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-medium"
+            />
+          </div>
+          <div className="flex items-end space-x-2">
+            <div className="flex-1">
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">To Date</label>
+              <input
+                type="date"
+                value={filters.endDate}
+                onChange={e => setFilters({ ...filters, endDate: e.target.value })}
+                className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-medium"
+              />
+            </div>
+            <button
+              onClick={() => setFilters({ customerId: '', placeOfSupply: '', startDate: '', endDate: '' })}
+              className="px-2 py-1.5 text-gray-500 hover:text-red-600 border border-gray-200 rounded-sm hover:border-red-200"
+              title="Clear Filters"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* KPI Strip (Only show when not in form modes) */}
       {

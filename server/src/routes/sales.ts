@@ -18,7 +18,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from '../db/index';
 import { invoices, invoiceItems, customers, finishedProducts, stockMovements, paymentTransactions, invoicePaymentAllocations, bankCashAccounts, salesInvoices, generalLedger, bellItems, bellBatches } from '../db/schema';
-import { eq, desc, sql, count as countFn, and, inArray } from 'drizzle-orm';
+import { eq, desc, sql, count as countFn, and, inArray, gte, lte } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
 import { createStockMovement, validateFinishedProductStock, getFinishedProductStock } from '../services/inventory.service';
@@ -74,8 +74,20 @@ router.get('/invoices', async (req: Request, res: Response, next: NextFunction) 
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = (page - 1) * limit;
 
+        const { customerId, placeOfSupply, startDate, endDate } = req.query;
+
+        const conditions = [];
+        if (customerId) conditions.push(eq(invoices.customerId, customerId as string));
+        if (placeOfSupply) conditions.push(eq(invoices.placeOfSupply, placeOfSupply as string));
+        if (startDate) conditions.push(gte(invoices.invoiceDate, new Date(startDate as string)));
+        if (endDate) conditions.push(lte(invoices.invoiceDate, new Date(endDate as string)));
+
+        const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
         // 1. Get total count
-        const totalResult = await db.select({ count: countFn() }).from(invoices);
+        const totalResult = await db.select({ count: countFn() })
+            .from(invoices)
+            .where(whereClause);
         const total = Number(totalResult[0]?.count || 0);
 
         // 2. Get invoices (paginated)
@@ -83,6 +95,7 @@ router.get('/invoices', async (req: Request, res: Response, next: NextFunction) 
             .select()
             .from(invoices)
             .leftJoin(customers, eq(invoices.customerId, customers.id))
+            .where(whereClause)
             .orderBy(desc(invoices.createdAt))
             .limit(limit)
             .offset(offset);

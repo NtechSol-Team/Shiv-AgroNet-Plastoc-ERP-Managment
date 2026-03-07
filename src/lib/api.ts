@@ -349,7 +349,10 @@ export const productionApi = {
 
 // ==================== SALES API ====================
 export const salesApi = {
-    getInvoices: (page = 1, limit = 20) => fetchApi<any>(`/sales/invoices?page=${page}&limit=${limit}`),
+    getInvoices: (page = 1, limit = 20, params?: any) => {
+        const query = new URLSearchParams({ page: String(page), limit: String(limit), ...params }).toString();
+        return fetchApi<any>(`/sales/invoices?${query}`);
+    },
     getInvoice: (id: string) => fetchApi<any>(`/sales/invoices/${id}`),
     createInvoice: (data: any) =>
         fetchApi<any>('/sales/invoices', {
