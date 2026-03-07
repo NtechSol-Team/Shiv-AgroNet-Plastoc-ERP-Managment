@@ -240,13 +240,7 @@ export function Inventory() {
           <p className="text-sm text-slate-500 mt-1">Real-time stock tracking and movement history</p>
         </div>
         <div className="flex items-center space-x-3">
-          <button
-            onClick={() => setActiveTab('movements')}
-            className="px-4 py-2 border border-slate-200 text-slate-700 font-medium rounded-xl hover:bg-slate-50 transition-colors flex items-center space-x-2"
-          >
-            <Filter className="w-4 h-4" />
-            <span>Filter</span>
-          </button>
+          {/* Filter button removed as it was redundant with the Stock Ledger tab */}
         </div>
       </div>
 
