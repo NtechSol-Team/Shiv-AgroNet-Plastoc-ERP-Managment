@@ -422,14 +422,19 @@ export async function getProfitabilityMetrics(startDate?: Date, endDate?: Date):
     }
 
     // 4. Fetch Average Costs for All Products in range
-    const productIds = [...new Set(items.map(i => i.productId))];
+    const productIds = items.map(i => i.productId).filter((id): id is string => id !== null);
+    const uniqueProductIds = [...new Set(productIds)];
+
+    if (uniqueProductIds.length === 0) {
+        return { sales: salesVal, grossProfit: 0, netProfit: -expVal, margin: 0 };
+    }
 
     // Trading Costs (Direct Purchase)
     const tradingCosts = await db.select({
         productId: purchaseBillItems.finishedProductId,
         avgRate: sql<string>`AVG(rate::numeric)`
     }).from(purchaseBillItems)
-        .where(and(inArray(purchaseBillItems.finishedProductId, productIds)))
+        .where(and(inArray(purchaseBillItems.finishedProductId, uniqueProductIds)))
         .groupBy(purchaseBillItems.finishedProductId);
 
     // RM Costs (Production Input)
@@ -439,7 +444,7 @@ export async function getProfitabilityMetrics(startDate?: Date, endDate?: Date):
     }).from(productionBatches)
         .innerJoin(productionBatchInputs, eq(productionBatchInputs.batchId, productionBatches.id))
         .innerJoin(purchaseBillItems, eq(purchaseBillItems.rawMaterialId, productionBatchInputs.rawMaterialId))
-        .where(and(inArray(productionBatches.finishedProductId, productIds)))
+        .where(and(inArray(productionBatches.finishedProductId, uniqueProductIds)))
         .groupBy(productionBatches.finishedProductId);
 
     const costMap: Record<string, number> = {};
@@ -453,8 +458,10 @@ export async function getProfitabilityMetrics(startDate?: Date, endDate?: Date):
     let totalCOGS = 0;
     let totalTaxable = 0;
     items.forEach(item => {
-        const cost = costMap[item.productId] || 0;
-        totalCOGS += parseNum(item.quantity) * cost;
+        if (item.productId) {
+            const cost = costMap[item.productId] || 0;
+            totalCOGS += parseNum(item.quantity) * cost;
+        }
         totalTaxable += parseNum(item.taxableAmount);
     });
 

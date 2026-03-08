@@ -307,7 +307,7 @@ export const invoiceItems = pgTable('invoice_items', {
     sgst: decimal('sgst', { precision: 10, scale: 2 }).default('0'),
     igst: decimal('igst', { precision: 10, scale: 2 }).default('0'),
     totalAmount: decimal('total_amount', { precision: 12, scale: 2 }).notNull(),
-    bellItemId: text('bell_item_id').references(() => bellItems.id),
+    bellItemId: text('bell_item_id').references((): any => bellItems.id),
     createdAt: timestamp('created_at').defaultNow(),
 }, (table) => ({
     invoiceIdx: index('invoice_items_invoice_idx').on(table.invoiceId),
@@ -600,7 +600,7 @@ export const productSamples = pgTable('product_samples', {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
     partyId: text('party_id').references(() => suppliers.id), // Can be null if generic sample
     finishedProductId: text('finished_product_id').notNull().references(() => finishedProducts.id),
-    bellItemId: text('bell_item_id').references(() => bellItems.id), // Link to specific bale
+    bellItemId: text('bell_item_id').references((): any => bellItems.id), // Link to specific bale
     quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
     date: timestamp('date').defaultNow().notNull(),
     batchCode: text('batch_code'), // Optional link to specific batch
@@ -649,7 +649,7 @@ export const bellItems = pgTable('bell_items', {
     productSampleId: text('product_sample_id'), // Link to sample
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),
-}, (table) => ({
+}, (table): any => ({
     batchIdx: index('bell_items_batch_idx').on(table.batchId),
     statusIdx: index('bell_items_status_idx').on(table.status),
     finishedProductIdx: index('bell_items_finished_product_idx').on(table.finishedProductId),
