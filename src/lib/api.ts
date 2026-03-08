@@ -354,6 +354,7 @@ export const salesApi = {
         return fetchApi<any>(`/sales/invoices?${query}`);
     },
     getInvoice: (id: string) => fetchApi<any>(`/sales/invoices/${id}`),
+    getAvailableRolls: () => fetchApi<any[]>('/sales/available-rolls'),
     createInvoice: (data: any) =>
         fetchApi<any>('/sales/invoices', {
             method: 'POST',

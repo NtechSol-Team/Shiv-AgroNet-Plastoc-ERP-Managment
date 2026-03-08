@@ -10,7 +10,7 @@ import {
   Package, TrendingUp, AlertTriangle, DollarSign, Boxes, Loader2,
   ArrowDownRight, CreditCard, Wallet,
   Activity, History, ShoppingCart, Target, Scale,
-  Calendar, ChevronDown, Filter
+  Calendar, ChevronDown, Filter, Cog, Archive
 } from 'lucide-react';
 import { useRealtimeEvent } from '../hooks/useRealtime';
 import { useRealtimeContext } from '../context/RealtimeContext';
@@ -82,7 +82,11 @@ interface KpiData {
 // COMPONENT
 // ============================================================
 
-export function Dashboard() {
+interface DashboardProps {
+  onModuleChange?: (module: string) => void;
+}
+
+export function Dashboard({ onModuleChange }: DashboardProps) {
   const [loading, setLoading] = useState(true);
   const [profitLoading, setProfitLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -256,8 +260,10 @@ export function Dashboard() {
         </div>
       </div>
 
+
+
       {/* Profitability Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           {
             label: 'Total Sales',
@@ -296,7 +302,7 @@ export function Dashboard() {
             trend: (dynamicProfit?.margin || 0) >= 0 ? 'Positive' : 'Negative'
           },
         ].map((item, i) => (
-          <div key={i} className="group bg-white p-5 rounded-3xl border border-slate-200 shadow-sm hover:shadow-lg transition-all duration-300 relative overflow-hidden flex flex-col justify-between min-h-[140px]">
+          <div key={i} className="group bg-white p-4 rounded-3xl border border-slate-200 shadow-sm hover:shadow-lg transition-all duration-300 relative overflow-hidden flex flex-col justify-between min-h-[120px]">
             <div className={`p-3 rounded-2xl ${item.bg} w-fit group-hover:scale-110 transition-transform duration-300`}>
               <item.icon className={`w-6 h-6 ${item.color}`} />
             </div>
@@ -315,13 +321,13 @@ export function Dashboard() {
       {/* Asset Valuation Section */}
       <div className="space-y-4">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-slate-900 text-white rounded-lg shadow-md">
-            <Scale className="w-5 h-5" />
+          <div className="p-1.5 bg-slate-900 text-white rounded-lg shadow-md">
+            <Scale className="w-4 h-4" />
           </div>
-          <h2 className="text-xl font-black text-slate-800 tracking-tight">Asset Valuation (Stock-in-Hand)</h2>
+          <h2 className="text-lg font-bold text-slate-800 tracking-tight">Asset Valuation (Stock-in-Hand)</h2>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-indigo-100 hover:shadow-xl transition-all duration-500 flex items-center justify-between group overflow-hidden relative">
+          <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm hover:shadow-indigo-100 hover:shadow-xl transition-all duration-500 flex items-center justify-between group overflow-hidden relative">
             <div className="absolute top-0 right-0 p-8 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity rotate-12 group-hover:rotate-0 duration-700 pointer-events-none">
               <Boxes className="w-32 h-32 text-indigo-900" />
             </div>

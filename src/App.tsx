@@ -15,14 +15,22 @@ import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { MasterDataProvider } from './context/MasterDataContext';
 import { RealtimeProvider } from './context/RealtimeContext';
+import { useShortcuts } from './hooks/useShortcuts';
 
 export default function App() {
   const [activeModule, setActiveModule] = useState('dashboard');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  // Initialize keyboard shortcuts
+  useShortcuts({
+    onModuleChange: setActiveModule,
+    onSearchOpen: () => setIsSearchOpen(true),
+  });
 
   const renderModule = () => {
     switch (activeModule) {
       case 'dashboard':
-        return <Dashboard />;
+        return <Dashboard onModuleChange={setActiveModule} />;
       case 'masters':
         return <Masters />;
       case 'purchase':
@@ -57,7 +65,12 @@ export default function App() {
 
           {/* Main Content Area - Pushed right by 16rem */}
           <div className="flex-1 flex flex-col ml-64 min-w-0 transition-all duration-300">
-            <TopBar title={activeModule} />
+            <TopBar
+              title={activeModule}
+              isSearchOpen={isSearchOpen}
+              onSearchClose={() => setIsSearchOpen(false)}
+              onModuleChange={setActiveModule}
+            />
 
             <main className="flex-1 overflow-y-auto p-4 md:p-8">
               <div className="max-w-full mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">

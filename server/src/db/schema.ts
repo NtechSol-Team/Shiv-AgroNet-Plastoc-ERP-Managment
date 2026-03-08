@@ -1,4 +1,4 @@
-import { pgTable, text, decimal, timestamp, boolean, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, decimal, integer, boolean, index, jsonb, primaryKey, pgEnum, foreignKey } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 // ==================== MASTERS ====================
@@ -290,7 +290,10 @@ export const salesInvoices = pgTable('sales_invoices', {
 export const invoiceItems = pgTable('invoice_items', {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
     invoiceId: text('invoice_id').notNull().references(() => salesInvoices.id, { onDelete: 'cascade' }),
-    finishedProductId: text('finished_product_id').notNull().references(() => finishedProducts.id),
+    finishedProductId: text('finished_product_id').references(() => finishedProducts.id),
+    rawMaterialId: text('raw_material_id').references(() => rawMaterials.id),
+    rawMaterialRollId: text('raw_material_roll_id').references(() => rawMaterialRolls.id),
+    generalItemId: text('general_item_id').references(() => generalItems.id),
     productName: text('product_name').notNull(),
     hsnCode: text('hsn_code').default('60059000'),
     quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
@@ -546,6 +549,9 @@ export const salesInvoicesRelations = relations(salesInvoices, ({ one, many }) =
 export const invoiceItemsRelations = relations(invoiceItems, ({ one }) => ({
     invoice: one(salesInvoices, { fields: [invoiceItems.invoiceId], references: [salesInvoices.id] }),
     finishedProduct: one(finishedProducts, { fields: [invoiceItems.finishedProductId], references: [finishedProducts.id] }),
+    rawMaterial: one(rawMaterials, { fields: [invoiceItems.rawMaterialId], references: [rawMaterials.id] }),
+    rawMaterialRoll: one(rawMaterialRolls, { fields: [invoiceItems.rawMaterialRollId], references: [rawMaterialRolls.id] }),
+    generalItem: one(generalItems, { fields: [invoiceItems.generalItemId], references: [generalItems.id] }),
 }));
 
 export const bankCashAccountsRelations = relations(bankCashAccounts, ({ many }) => ({
@@ -638,7 +644,9 @@ export const bellItems = pgTable('bell_items', {
     grossWeight: decimal('gross_weight', { precision: 10, scale: 2 }).notNull(), // What customer receives
     weightLoss: decimal('weight_loss', { precision: 10, scale: 2 }).default('0'), // In grams
     netWeight: decimal('net_weight', { precision: 10, scale: 2 }).notNull(), // grossWeight - (weightLoss/1000), used for stock deduction
-    status: text('status').default('Available'), // Available, Issued, Deleted
+    status: text('status').default('Available'), // Available, Issued, Sold, Deleted
+    invoiceItemId: text('invoice_item_id'), // Link to sales line item
+    productSampleId: text('product_sample_id'), // Link to sample
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => ({
@@ -648,6 +656,16 @@ export const bellItems = pgTable('bell_items', {
     // Composite indexes for common query patterns
     productStatusIdx: index('bell_items_product_status_idx').on(table.finishedProductId, table.status),
     batchStatusIdx: index('bell_items_batch_status_idx').on(table.batchId, table.status),
+    invoiceItemIdx: index('bell_items_invoice_item_idx').on(table.invoiceItemId),
+    sampleIdx: index('bell_items_sample_idx').on(table.productSampleId),
+    invoiceItemFk: foreignKey({
+        columns: [table.invoiceItemId],
+        foreignColumns: [invoiceItems.id],
+    }).onDelete('set null'),
+    sampleFk: foreignKey({
+        columns: [table.productSampleId],
+        foreignColumns: [productSamples.id],
+    }).onDelete('set null'),
 }));
 
 // ==================== FINANCE MODULE ====================

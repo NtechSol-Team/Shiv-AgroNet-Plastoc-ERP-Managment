@@ -17,7 +17,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from '../db/index';
-import { invoices, invoiceItems, customers, finishedProducts, stockMovements, paymentTransactions, invoicePaymentAllocations, bankCashAccounts, salesInvoices, generalLedger, bellItems, bellBatches } from '../db/schema';
+import { invoices, invoiceItems, customers, finishedProducts, stockMovements, paymentTransactions, invoicePaymentAllocations, bankCashAccounts, salesInvoices, generalLedger, bellItems, bellBatches, rawMaterials, rawMaterialRolls, generalItems } from '../db/schema';
 import { eq, desc, sql, count as countFn, and, inArray, gte, lte } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 import { createError } from '../middleware/errorHandler';
@@ -38,12 +38,16 @@ const COMPANY_STATE_CODE = '24';
 // ============================================================
 
 interface InvoiceItem {
-    finishedProductId: string;
+    finishedProductId?: string;
+    rawMaterialId?: string;
+    rawMaterialRollId?: string;
+    generalItemId?: string;
     bellItemId?: string; // Added bellItemId
     quantity: number;
     rate: number;
     discount?: number;
     gstPercent: number;
+    childItems?: any[]; // For bale groups
 }
 
 interface CreateInvoiceRequest {
@@ -177,6 +181,21 @@ router.get('/available-bells', async (req: Request, res: Response, next: NextFun
     }
 });
 
+router.get('/available-rolls', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const availableRolls = await db.query.rawMaterialRolls.findMany({
+            where: (rawMaterialRolls, { eq }) => eq(rawMaterialRolls.status, 'In Stock'),
+            with: {
+                rawMaterial: true,
+                purchaseBill: true
+            }
+        });
+        res.json(successResponse(availableRolls));
+    } catch (error) {
+        next(error);
+    }
+});
+
 router.post('/invoices', async (req: Request, res: Response, next: NextFunction) => {
     try {
         let {
@@ -258,13 +277,17 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
         // If confirming, validate all stock first
         if (status === 'Confirmed') {
             for (const item of items) {
-                if (item.bellItemId) {
+                if (item.rawMaterialRollId) {
+                    const [roll] = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
+                    if (!roll) throw createError(`Roll not found`, 404);
+                    if (roll.status !== 'In Stock') throw createError(`Roll ${roll.rollCode} is already ${roll.status}`, 400);
+                } else if (item.bellItemId) {
                     // Start Update: Bell Item Logic
                     const [bell] = await db.select().from(bellItems).where(eq(bellItems.id, item.bellItemId));
                     if (!bell) throw createError(`Bell item not found not found`, 404);
                     if (bell.status !== 'Available') throw createError(`Bell item ${bell.code} is already ${bell.status}`, 400);
                     // End Update
-                } else {
+                } else if (item.finishedProductId) {
                     const validation = await validateFinishedProductStock(item.finishedProductId, item.quantity);
                     if (!validation.isValid) {
                         const [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
@@ -282,29 +305,56 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
         let totalIgst = 0;
 
         const processedItems = await Promise.all(items.map(async item => {
-            // Get product for name
-            const [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+            let productName = 'Unknown Item';
+            let hsnCode = '60059000';
+            let product = null;
 
-            // Start Update: Get Bell Name if applicable
-            let productName = product?.name || 'Unknown Product';
-            if (item.bellItemId) {
-                // Modified to fetch Batch Code instead of Bell Item Code
-                const bellData = await db
-                    .select({
-                        code: bellItems.code,
-                        batchCode: bellBatches.code
-                    })
-                    .from(bellItems)
-                    .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id))
-                    .where(eq(bellItems.id, item.bellItemId));
+            if (item.finishedProductId) {
+                // Get product for name
+                [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+                productName = product?.name || 'Unknown Product';
+                hsnCode = product?.hsnCode || '60059000';
 
-                if (bellData[0]) {
-                    // Use Batch Code if available (e.g. PB-008), fallback to Item Code (PB-008-001)
-                    const itemCode = bellData[0].batchCode || bellData[0].code;
-                    productName = `${itemCode} - ${productName}`;
+                // Start Update: Get Bell Name if applicable
+                if (item.bellItemId) {
+                    // Modified to fetch Batch Code instead of Bell Item Code
+                    const bellData = await db
+                        .select({
+                            code: bellItems.code,
+                            batchCode: bellBatches.code
+                        })
+                        .from(bellItems)
+                        .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id))
+                        .where(eq(bellItems.id, item.bellItemId));
+
+                    if (bellData[0]) {
+                        // Use Batch Code if available (e.g. PB-008), fallback to Item Code (PB-008-001)
+                        const itemCode = bellData[0].batchCode || bellData[0].code;
+                        productName = `${itemCode} - ${productName}`;
+                    }
+                }
+                // End Update
+            } else if (item.rawMaterialRollId) {
+                const [roll] = await db.select().from(rawMaterialRolls)
+                    .leftJoin(rawMaterials, eq(rawMaterialRolls.rawMaterialId, rawMaterials.id))
+                    .where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
+                if (roll && roll.raw_materials) {
+                    productName = `${roll.raw_material_rolls.rollCode} - ${roll.raw_materials.name}`;
+                    hsnCode = roll.raw_materials.hsnCode || '3901';
+                }
+            } else if (item.rawMaterialId) {
+                const [material] = await db.select().from(rawMaterials).where(eq(rawMaterials.id, item.rawMaterialId));
+                if (material) {
+                    productName = material.name;
+                    hsnCode = material.hsnCode || '3901';
+                }
+            } else if (item.generalItemId) {
+                const [genItem] = await db.select().from(generalItems).where(eq(generalItems.id, item.generalItemId));
+                if (genItem) {
+                    productName = genItem.name;
+                    hsnCode = '00000000'; // Default for general items
                 }
             }
-            // End Update
 
             const amount = item.quantity * item.rate;
             // Frontend passes total discount amount for the line item
@@ -329,6 +379,7 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
             return {
                 ...item,
                 productName,
+                hsnCode,
                 product,
                 amount,
                 taxableAmount,
@@ -336,7 +387,7 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
                 sgst,
                 igst,
                 total: taxableAmount + gstAmount,
-            };
+            } as any;
         }));
 
         const totalTax = totalCgst + totalSgst + totalIgst;
@@ -370,16 +421,19 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
         // Insert items
         const insertedItems = await Promise.all(
             processedItems.map(async (item) => {
-                const [insertedItem] = await db.insert(invoiceItems).values({
+                const [insertedItem] = (await db.insert(invoiceItems).values({
                     invoiceId: invoice.id,
-                    finishedProductId: item.finishedProductId,
+                    finishedProductId: item.finishedProductId || null,
+                    rawMaterialId: item.rawMaterialId || null,
+                    rawMaterialRollId: item.rawMaterialRollId || null,
+                    generalItemId: item.generalItemId || null,
                     productName: item.productName,
-                    hsnCode: item.product?.hsnCode || '60059000',
+                    hsnCode: item.hsnCode || '60059000',
                     quantity: String(item.quantity),
                     rate: String(item.rate),
                     amount: String(item.amount),
                     discountAmount: String(item.discount || 0),
-                    bellItemId: item.bellItemId, // Start Update: Added bellItemId
+                    bellItemId: item.bellItemId,
 
                     taxableAmount: String(item.taxableAmount),
                     gstPercent: String(item.gstPercent),
@@ -387,28 +441,66 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
                     sgst: String(item.sgst),
                     igst: String(item.igst),
                     totalAmount: String(item.total),
-                }).returning();
+                }).returning()) as any[];
 
-                if (item.bellItemId) {
-                    // Start Update: Update Bell Status
-                    await db.update(bellItems)
-                        .set({ status: 'Issued' })
-                        .where(eq(bellItems.id, item.bellItemId));
-                    // End Update
-                } else {
-                    // ONLY create FG_OUT movement for non-bale items
-                    // Bales already deducted stock from FG when they were created
-                    await createStockMovement({
-                        date: new Date(),
-                        movementType: 'FG_OUT',
-                        itemType: 'finished_product',
-                        finishedProductId: item.finishedProductId,
-                        quantityOut: Number(item.quantity),
-                        referenceType: 'sales',
-                        referenceCode: invoiceNumber,
-                        referenceId: invoice.id,
-                        reason: `Sold to ${finalCustomerName}`,
-                    }, db);
+                if (status === 'Confirmed') {
+                    if (item.rawMaterialRollId) {
+                        await db.update(rawMaterialRolls)
+                            .set({ status: 'Sold' })
+                            .where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
+
+                        await createStockMovement({
+                            date: new Date(),
+                            movementType: 'RAW_OUT',
+                            itemType: 'raw_material',
+                            rawMaterialId: item.rawMaterialId!,
+                            quantityOut: Number(item.quantity),
+                            referenceType: 'sales',
+                            referenceCode: invoiceNumber,
+                            referenceId: invoice.id,
+                            reason: `Sold Roll ${item.productName} to ${finalCustomerName}`,
+                        }, db);
+                    } else if (item.bellItemId || (item.childItems && item.childItems.length > 0)) {
+                        // Start Update: Update Bell Status and Link to Invoice Item
+                        const baleIds = item.bellItemId ? [item.bellItemId] : (item.childItems || []).map((b: any) => b.id);
+
+                        for (const baleId of baleIds) {
+                            await db.update(bellItems)
+                                .set({
+                                    status: 'Sold',
+                                    invoiceItemId: insertedItem.id,
+                                    updatedAt: new Date()
+                                })
+                                .where(eq(bellItems.id, baleId));
+                        }
+                        // End Update
+                    } else if (item.finishedProductId) {
+                        // ONLY create FG_OUT movement for non-bale items
+                        // Bales already deducted stock from FG when they were created
+                        await createStockMovement({
+                            date: new Date(),
+                            movementType: 'FG_OUT',
+                            itemType: 'finished_product',
+                            finishedProductId: item.finishedProductId,
+                            quantityOut: Number(item.quantity),
+                            referenceType: 'sales',
+                            referenceCode: invoiceNumber,
+                            referenceId: invoice.id,
+                            reason: `Sold to ${finalCustomerName}`,
+                        }, db);
+                    } else if (item.rawMaterialId) {
+                        await createStockMovement({
+                            date: new Date(),
+                            movementType: 'RAW_OUT',
+                            itemType: 'raw_material',
+                            rawMaterialId: item.rawMaterialId,
+                            quantityOut: Number(item.quantity),
+                            referenceType: 'sales',
+                            referenceCode: invoiceNumber,
+                            referenceId: invoice.id,
+                            reason: `Sold material ${item.productName} to ${finalCustomerName}`,
+                        }, db);
+                    }
                 }
 
                 return { ...insertedItem, finishedProduct: item.product };
@@ -488,23 +580,55 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
         await db.transaction(async (tx) => {
             if (existingInvoice.status === 'Confirmed') {
                 for (const item of existingInvoice.items || []) {
-                    // Update bell status
-                    if (item.bellItemId) {
-                        await tx.update(bellItems)
-                            .set({ status: 'Available' })
-                            .where(eq(bellItems.id, item.bellItemId));
-                    } else {
-                        // Reversal stock movement ONLY for non-bale items
+                    if (item.rawMaterialRollId) {
+                        await tx.update(rawMaterialRolls)
+                            .set({ status: 'In Stock' })
+                            .where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
+
                         await createStockMovement({
                             date: new Date(),
-                            movementType: 'FG_IN', // Corrected movement type for reversal
-                            itemType: 'finished_product',
-                            finishedProductId: item.finishedProductId,
+                            movementType: 'RAW_IN',
+                            itemType: 'raw_material',
+                            rawMaterialId: item.rawMaterialId!,
                             quantityIn: Number(item.quantity),
                             referenceType: 'sales',
                             referenceCode: existingInvoice.invoiceNumber,
                             referenceId: existingInvoice.id,
-                            reason: `Update reversal for invoice ${existingInvoice.invoiceNumber}`,
+                            reason: `Update reversal for roll ${item.productName} in invoice ${existingInvoice.invoiceNumber}`,
+                        }, tx);
+                    } else if (item.finishedProductId) {
+                        // Restore all bales linked to this specific invoice item
+                        const restoredBales = await tx.update(bellItems)
+                            .set({ status: 'Available', invoiceItemId: null })
+                            .where(eq(bellItems.invoiceItemId, item.id))
+                            .returning();
+
+                        // Reversal stock movement ONLY for non-bale items
+                        // Bales already deducted stock from FG when they were produced/created
+                        if (restoredBales.length === 0) {
+                            await createStockMovement({
+                                date: new Date(),
+                                movementType: 'FG_IN',
+                                itemType: 'finished_product',
+                                finishedProductId: item.finishedProductId,
+                                quantityIn: Number(item.quantity),
+                                referenceType: 'sales',
+                                referenceCode: existingInvoice.invoiceNumber,
+                                referenceId: existingInvoice.id,
+                                reason: `Update reversal for invoice ${existingInvoice.invoiceNumber}`,
+                            }, tx);
+                        }
+                    } else if (item.rawMaterialId) {
+                        await createStockMovement({
+                            date: new Date(),
+                            movementType: 'RAW_IN',
+                            itemType: 'raw_material',
+                            rawMaterialId: item.rawMaterialId,
+                            quantityIn: Number(item.quantity),
+                            referenceType: 'sales',
+                            referenceCode: existingInvoice.invoiceNumber,
+                            referenceId: existingInvoice.id,
+                            reason: `Update reversal for material ${item.productName} in invoice ${existingInvoice.invoiceNumber}`,
                         }, tx);
                     }
                 }
@@ -530,21 +654,30 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
             const effectivePOS = placeOfSupply || validGstCode || existingInvoice.placeOfSupply || COMPANY_STATE_CODE;
             const isInterState = effectivePOS !== COMPANY_STATE_CODE;
 
-            // 4. Validate stock if status is Confirmed
+            // 3. Validation
             if (status === 'Confirmed') {
                 for (const item of items) {
-                    if (item.bellItemId) {
-                        const [bell] = await tx.select().from(bellItems).where(eq(bellItems.id, item.bellItemId));
+                    if (item.rawMaterialRollId) {
+                        const [roll] = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
+                        if (!roll) throw createError(`Roll not found`, 404);
+                        // Check if this roll was already in this invoice
+                        const wasInInvoice = existingInvoice.items?.some(i => i.rawMaterialRollId === item.rawMaterialRollId);
+                        if (!wasInInvoice && roll.status !== 'In Stock') {
+                            throw createError(`Roll ${roll.rollCode} is already ${roll.status}`, 400);
+                        }
+                    } else if (item.bellItemId) {
+                        const [bell] = await db.select().from(bellItems).where(eq(bellItems.id, item.bellItemId));
                         if (!bell) throw createError(`Bell item not found`, 404);
-
-                        const wasAlreadyInInvoice = existingInvoice.items?.some(i => i.bellItemId === item.bellItemId);
-                        if (!wasAlreadyInInvoice && bell.status !== 'Available') {
+                        // Start Correction: Check if it was already in this invoice
+                        const wasInInvoice = existingInvoice.items?.some(i => (i.bellItemId || undefined) === item.bellItemId);
+                        if (!wasInInvoice && bell.status !== 'Available') {
                             throw createError(`Bell item ${bell.code} is already ${bell.status}`, 400);
                         }
-                    } else {
+                        // End Correction
+                    } else if (item.finishedProductId) {
                         const validation = await validateFinishedProductStock(item.finishedProductId, item.quantity);
                         if (!validation.isValid) {
-                            const [product] = await tx.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+                            const [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
                             throw createError(`Insufficient stock for ${product?.name || 'product'}: ${validation.message}`, 400);
                         }
                     }
@@ -559,19 +692,49 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
             let totalIgst = 0;
 
             const processedItems = await Promise.all(items.map(async item => {
-                const [product] = await tx.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+                let productName = 'Unknown Item';
+                let hsnCode = '60059000';
+                let product = null;
+                let rawMaterial = null;
 
-                let productName = product?.name || 'Unknown Product';
-                if (item.bellItemId) {
-                    const bellData = await tx
-                        .select({ code: bellItems.code, batchCode: bellBatches.code })
-                        .from(bellItems)
-                        .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id))
-                        .where(eq(bellItems.id, item.bellItemId));
+                if (item.finishedProductId) {
+                    [product] = await tx.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+                    productName = product?.name || 'Unknown Product';
+                    hsnCode = product?.hsnCode || '60059000';
 
-                    if (bellData[0]) {
-                        const itemCode = bellData[0].batchCode || bellData[0].code;
-                        productName = `${itemCode} - ${productName}`;
+                    if (item.bellItemId) {
+                        const bellData = await tx
+                            .select({ code: bellItems.code, batchCode: bellBatches.code })
+                            .from(bellItems)
+                            .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id))
+                            .where(eq(bellItems.id, item.bellItemId));
+
+                        if (bellData[0]) {
+                            const itemCode = bellData[0].batchCode || bellData[0].code;
+                            productName = `${itemCode} - ${productName}`;
+                        }
+                    }
+                } else if (item.rawMaterialRollId) {
+                    const [roll] = await tx.select().from(rawMaterialRolls)
+                        .leftJoin(rawMaterials, eq(rawMaterialRolls.rawMaterialId, rawMaterials.id))
+                        .where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
+                    if (roll && roll.raw_materials) {
+                        productName = `${roll.raw_material_rolls.rollCode} - ${roll.raw_materials.name}`;
+                        hsnCode = roll.raw_materials.hsnCode || '3901';
+                        rawMaterial = roll.raw_materials;
+                    }
+                } else if (item.rawMaterialId) {
+                    const [material] = await tx.select().from(rawMaterials).where(eq(rawMaterials.id, item.rawMaterialId));
+                    if (material) {
+                        productName = material.name;
+                        hsnCode = material.hsnCode || '3901';
+                        rawMaterial = material;
+                    }
+                } else if (item.generalItemId) {
+                    const [genItem] = await tx.select().from(generalItems).where(eq(generalItems.id, item.generalItemId));
+                    if (genItem) {
+                        productName = genItem.name;
+                        hsnCode = '00000000';
                     }
                 }
 
@@ -597,6 +760,9 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                 return {
                     ...item,
                     productName,
+                    hsnCode,
+                    product,
+                    rawMaterial,
                     amount,
                     taxableAmount,
                     cgst,
@@ -637,30 +803,60 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
             await tx.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id));
 
             const insertedItems = await Promise.all(processedItems.map(async (item) => {
-                const [insertedItem] = await tx.insert(invoiceItems).values({
+                const [insertedItem] = (await tx.insert(invoiceItems).values({
                     invoiceId: id,
-                    finishedProductId: item.finishedProductId,
+                    finishedProductId: item.finishedProductId || null,
+                    rawMaterialId: item.rawMaterialId || null,
+                    rawMaterialRollId: item.rawMaterialRollId || null,
+                    generalItemId: item.generalItemId || null,
                     productName: item.productName,
-                    hsnCode: '60059000',
+                    hsnCode: item.hsnCode || '60059000',
                     quantity: String(item.quantity),
                     rate: String(item.rate),
                     amount: String(item.amount),
                     discountAmount: String(item.discount || 0),
                     bellItemId: item.bellItemId,
+
                     taxableAmount: String(item.taxableAmount),
                     gstPercent: String(item.gstPercent),
                     cgst: String(item.cgst),
                     sgst: String(item.sgst),
                     igst: String(item.igst),
                     totalAmount: String(item.total),
-                }).returning();
+                }).returning()) as any[];
 
                 if (status === 'Confirmed') {
-                    if (item.bellItemId) {
-                        await tx.update(bellItems)
-                            .set({ status: 'Issued' })
-                            .where(eq(bellItems.id, item.bellItemId));
-                    } else {
+                    if (item.rawMaterialRollId) {
+                        await tx.update(rawMaterialRolls)
+                            .set({ status: 'Sold' })
+                            .where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
+
+                        await createStockMovement({
+                            date: new Date(),
+                            movementType: 'RAW_OUT',
+                            itemType: 'raw_material',
+                            rawMaterialId: item.rawMaterialId!,
+                            quantityOut: Number(item.quantity),
+                            referenceType: 'sales',
+                            referenceCode: existingInvoice.invoiceNumber,
+                            referenceId: existingInvoice.id,
+                            reason: `Sold Roll ${item.productName} to ${customerName || 'Customer'}`,
+                        }, tx);
+                    } else if (item.bellItemId || (item.childItems && item.childItems.length > 0)) {
+                        // Start Update: Update Bell Status and Link to Invoice Item
+                        const baleIds = item.bellItemId ? [item.bellItemId] : (item.childItems || []).map((b: any) => b.id);
+
+                        for (const baleId of baleIds) {
+                            await tx.update(bellItems)
+                                .set({
+                                    status: 'Sold',
+                                    invoiceItemId: insertedItem.id,
+                                    updatedAt: new Date()
+                                })
+                                .where(eq(bellItems.id, baleId));
+                        }
+                        // End Update
+                    } else if (item.finishedProductId) {
                         // ONLY create FG_OUT movement for non-bale items
                         await createStockMovement({
                             date: new Date(),
@@ -671,7 +867,19 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                             referenceType: 'sales',
                             referenceCode: existingInvoice.invoiceNumber,
                             referenceId: existingInvoice.id,
-                            reason: `Sold to ${updatedInvoice.customerName}`,
+                            reason: `Sold to ${customerName || 'Customer'}`,
+                        }, tx);
+                    } else if (item.rawMaterialId) {
+                        await createStockMovement({
+                            date: new Date(),
+                            movementType: 'RAW_OUT',
+                            itemType: 'raw_material',
+                            rawMaterialId: item.rawMaterialId,
+                            quantityOut: Number(item.quantity),
+                            referenceType: 'sales',
+                            referenceCode: existingInvoice.invoiceNumber,
+                            referenceId: existingInvoice.id,
+                            reason: `Sold material ${item.productName} to ${customerName || 'Customer'}`,
                         }, tx);
                     }
                 }
@@ -862,17 +1070,16 @@ router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFun
         await db.transaction(async (tx) => {
             // 1. Restore bell items to Available status
             for (const item of invoice.items || []) {
-                if (item.bellItemId) {
-                    await tx.update(bellItems)
-                        .set({ status: 'Available' })
-                        .where(eq(bellItems.id, item.bellItemId));
-                }
+                // Restore all bales linked to this invoice item
+                await tx.update(bellItems)
+                    .set({ status: 'Available', invoiceItemId: null })
+                    .where(eq(bellItems.invoiceItemId, item.id));
             }
 
-            // 2. Create reversal stock movements for FG items (only if confirmed)
+            // 2. Create reversal stock movements (only if confirmed)
             if (invoice.status === 'Confirmed') {
                 for (const item of invoice.items || []) {
-                    // Only reverse for non-bale items
+                    // A. Generic Finished Goods (Non-Bale)
                     if (item.finishedProductId && !item.bellItemId) {
                         await createStockMovement({
                             date: new Date(),
@@ -884,6 +1091,38 @@ router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFun
                             referenceId: invoice.id,
                             referenceCode: invoice.invoiceNumber,
                             reason: `Reversal of deleted invoice ${invoice.invoiceNumber}`,
+                        }, tx);
+                    }
+                    // B. Raw Material Rolls
+                    else if (item.rawMaterialRollId) {
+                        await tx.update(rawMaterialRolls)
+                            .set({ status: 'In Stock' })
+                            .where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
+
+                        await createStockMovement({
+                            date: new Date(),
+                            movementType: 'RAW_IN',
+                            itemType: 'raw_material',
+                            rawMaterialId: item.rawMaterialId!,
+                            quantityIn: parseFloat(item.quantity),
+                            referenceType: 'sales_invoice_reversal',
+                            referenceId: invoice.id,
+                            referenceCode: invoice.invoiceNumber,
+                            reason: `Reversal of deleted roll sale ${invoice.invoiceNumber}`,
+                        }, tx);
+                    }
+                    // C. Generic Raw Materials
+                    else if (item.rawMaterialId) {
+                        await createStockMovement({
+                            date: new Date(),
+                            movementType: 'RAW_IN',
+                            itemType: 'raw_material',
+                            rawMaterialId: item.rawMaterialId,
+                            quantityIn: parseFloat(item.quantity),
+                            referenceType: 'sales_invoice_reversal',
+                            referenceId: invoice.id,
+                            referenceCode: invoice.invoiceNumber,
+                            reason: `Reversal of deleted raw material sale ${invoice.invoiceNumber}`,
                         }, tx);
                     }
                 }

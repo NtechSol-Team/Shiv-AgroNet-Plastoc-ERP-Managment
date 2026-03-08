@@ -1077,6 +1077,20 @@ export function Purchase() {
     });
   }, [items, selectedSupplier]);
 
+  // Shortcut for New Entry
+  useEffect(() => {
+    const handleNewEntry = () => {
+      if (activeTab === 'bills') {
+        setEditingBillId(null);
+        setShowForm(true);
+      } else if (activeTab === 'payments') {
+        setShowPaymentForm(true);
+      }
+    };
+    window.addEventListener('app-new-entry', handleNewEntry);
+    return () => window.removeEventListener('app-new-entry', handleNewEntry);
+  }, [activeTab]);
+
   const openAdjustmentModal = async (index: number, rawMaterialId: string) => {
     if (!selectedSupplier) return;
     setLoading(true);
@@ -1562,7 +1576,7 @@ export function Purchase() {
                   </div>
                   <div>
                     <label htmlFor="invoiceNumber" className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Invoice Number <span className="text-red-500">*</span></label>
-                    <input id="invoiceNumber" type="text" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-bold" placeholder="e.g. INV-2024-001" />
+                    <input id="invoiceNumber" type="text" autoFocus value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} className="w-full px-2 py-1 text-sm border border-gray-300 rounded-sm focus:ring-1 focus:ring-blue-500 font-bold" placeholder="e.g. INV-2024-001" />
                   </div>
                   <div className="col-span-1 sm:col-span-2">
                     <label htmlFor="supplierSelect" className="block text-[10px] font-bold text-gray-500 uppercase mb-1">

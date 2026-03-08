@@ -59,7 +59,7 @@ router.post('/', async (req: Request, res: Response, next: Function) => {
 
         await db.transaction(async (tx) => {
             // 1. Create Sample Record
-            const [sample] = await tx
+            const [sample] = (await tx
                 .insert(productSamples)
                 .values({
                     partyId: partyId || null,
@@ -71,31 +71,38 @@ router.post('/', async (req: Request, res: Response, next: Function) => {
                     notes,
                     batchCode
                 })
-                .returning();
+                .returning()) as any[];
 
-            // 2. If it's a Bale, mark it as Issued
+            // 2. If it's a Bale, mark it as Issued and Link to Sample
             if (bellItemId) {
                 const [bale] = await tx.select().from(bellItems).where(eq(bellItems.id, bellItemId));
                 if (!bale) throw createError('Bale not found', 404);
-                if (bale.status !== 'Available') throw createError('Bale is already issued or deleted', 400);
+                if (bale.status !== 'Available') throw createError('Bale is already issued or sold', 400);
 
                 await tx.update(bellItems)
-                    .set({ status: 'Issued', updatedAt: new Date() })
+                    .set({
+                        status: 'Issued',
+                        productSampleId: sample.id,
+                        updatedAt: new Date()
+                    })
                     .where(eq(bellItems.id, bellItemId));
             }
 
-            // 3. Decrease Stock (FG_OUT)
-            await createStockMovement({
-                date: new Date(date || new Date()),
-                movementType: 'FG_OUT',
-                itemType: 'finished_product',
-                finishedProductId,
-                quantityOut: qty,
-                referenceType: bellItemId ? 'Bale Sample' : 'Generic Sample',
-                referenceCode: 'SAMPLE',
-                referenceId: sample.id,
-                reason: `Sample to ${partyId ? 'Party' : 'General'}: ${purpose || 'Not specified'}${bellItemId ? ' (Bale Entry)' : ''}`
-            }, tx);
+            // 3. Decrease Stock (FG_OUT) - ONLY for generic samples
+            // Bales already deducted stock from FG when they were produced
+            if (!bellItemId) {
+                await createStockMovement({
+                    date: new Date(date || new Date()),
+                    movementType: 'FG_OUT',
+                    itemType: 'finished_product',
+                    finishedProductId,
+                    quantityOut: qty,
+                    referenceType: 'Generic Sample',
+                    referenceCode: 'SAMPLE',
+                    referenceId: sample.id,
+                    reason: `Sample to ${partyId ? 'Party' : 'General'}: ${purpose || 'Not specified'}`
+                }, tx);
+            }
 
             res.status(201).json(successResponse(sample, 'Sample recorded successfully'));
         });
@@ -145,31 +152,53 @@ router.put('/:id', async (req: Request, res: Response, next: Function) => {
             const qtyChanged = oldQty !== newQty;
 
             if (productChanged || qtyChanged) {
-                // A. Reverse Old Deduction (FG_IN)
-                await createStockMovement({
-                    date: new Date(),
-                    movementType: 'FG_IN',
-                    itemType: 'finished_product',
-                    finishedProductId: oldSample.finishedProductId,
-                    quantityIn: oldQty,
-                    referenceType: 'sample_edit_rev',
-                    referenceCode: 'SAMPLE-EDIT',
-                    referenceId: id,
-                    reason: `Sample Edit: Reversing old quantity ${oldQty}`
-                }, tx);
+                // Determine if OLD sample was a bale or generic
+                if (!oldSample.bellItemId) {
+                    // A. Reverse Old Deduction (FG_IN)
+                    await createStockMovement({
+                        date: new Date(),
+                        movementType: 'FG_IN',
+                        itemType: 'finished_product',
+                        finishedProductId: oldSample.finishedProductId,
+                        quantityIn: oldQty,
+                        referenceType: 'sample_edit_rev',
+                        referenceCode: 'SAMPLE-EDIT',
+                        referenceId: id,
+                        reason: `Sample Edit: Reversing old quantity ${oldQty}`
+                    }, tx);
+                }
 
-                // B. Apply New Deduction (FG_OUT)
-                await createStockMovement({
-                    date: new Date(date || new Date()),
-                    movementType: 'FG_OUT',
-                    itemType: 'finished_product',
-                    finishedProductId: finishedProductId,
-                    quantityOut: newQty,
-                    referenceType: bellItemId ? 'Bale Sample' : 'Generic Sample',
-                    referenceCode: 'SAMPLE',
-                    referenceId: id,
-                    reason: `Sample Edit: Updated to ${newQty}`
-                }, tx);
+                // Determine if NEW sample is a bale or generic
+                if (!bellItemId) {
+                    // B. Apply New Deduction (FG_OUT)
+                    await createStockMovement({
+                        date: new Date(date || new Date()),
+                        movementType: 'FG_OUT',
+                        itemType: 'finished_product',
+                        finishedProductId: finishedProductId,
+                        quantityOut: newQty,
+                        referenceType: 'Generic Sample',
+                        referenceCode: 'SAMPLE',
+                        referenceId: id,
+                        reason: `Sample Edit: Updated to ${newQty}`
+                    }, tx);
+                }
+            }
+
+            // 4. Update Bale Status If Changed
+            if (oldSample.bellItemId !== bellItemId) {
+                // A. Restore Old Bale
+                if (oldSample.bellItemId) {
+                    await tx.update(bellItems)
+                        .set({ status: 'Available', productSampleId: null, updatedAt: new Date() })
+                        .where(eq(bellItems.id, oldSample.bellItemId));
+                }
+                // B. Issue New Bale
+                if (bellItemId) {
+                    await tx.update(bellItems)
+                        .set({ status: 'Issued', productSampleId: id, updatedAt: new Date() })
+                        .where(eq(bellItems.id, bellItemId));
+                }
             }
 
             // 4. Update Sample Record
@@ -208,24 +237,27 @@ router.delete('/:id', async (req: Request, res: Response, next: Function) => {
             }
 
             // 2. Restore Bale Status if linked
+            // 2. Restore Bale Status if linked
             if (sample.bellItemId) {
                 await tx.update(bellItems)
-                    .set({ status: 'Available', updatedAt: new Date() })
+                    .set({ status: 'Available', productSampleId: null, updatedAt: new Date() })
                     .where(eq(bellItems.id, sample.bellItemId));
             }
 
-            // 3. Reverse Stock Deduction (FG_IN)
-            await createStockMovement({
-                date: new Date(),
-                movementType: 'FG_IN',
-                itemType: 'finished_product',
-                finishedProductId: sample.finishedProductId,
-                quantityIn: parseFloat(sample.quantity),
-                referenceType: 'sample_return',
-                referenceCode: 'SAMPLE-REV',
-                referenceId: sample.id,
-                reason: `Sample Deletion: Reversing stock for ${sample.quantity}`
-            }, tx);
+            // 3. Reverse Stock Deduction (FG_IN) - ONLY for generic samples
+            if (!sample.bellItemId) {
+                await createStockMovement({
+                    date: new Date(),
+                    movementType: 'FG_IN',
+                    itemType: 'finished_product',
+                    finishedProductId: sample.finishedProductId,
+                    quantityIn: parseFloat(sample.quantity),
+                    referenceType: 'sample_return',
+                    referenceCode: 'SAMPLE-REV',
+                    referenceId: sample.id,
+                    reason: `Sample Deletion: Reversing stock for ${sample.quantity}`
+                }, tx);
+            }
 
             // 4. Delete Sample Record
             await tx.delete(productSamples).where(eq(productSamples.id, id));

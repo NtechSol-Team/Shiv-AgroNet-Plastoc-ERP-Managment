@@ -8,7 +8,10 @@ import { printInvoice } from '../utils/printInvoice';
 /* Updated Invoice Item Interface matching Backend */
 interface InvoiceItem {
   id: string;
-  finishedProductId: string; // Changed from productId to match backend
+  finishedProductId?: string; // Changed from productId to match backend
+  rawMaterialId?: string;
+  rawMaterialRollId?: string;
+  generalItemId?: string;
   product: string;
   hsnCode: string;
   quantity: number;
@@ -85,6 +88,9 @@ export function Sales() {
 
   const [products, setProducts] = useState<any[]>([]);
   const [availableBells, setAvailableBells] = useState<any[]>([]);
+  const [availableRolls, setAvailableRolls] = useState<any[]>([]);
+  const [rawMaterials, setRawMaterials] = useState<any[]>([]);
+  const [generalItems, setGeneralItems] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
@@ -104,7 +110,11 @@ export function Sales() {
 
   const [invoiceItems, setInvoiceItems] = useState<InvoiceItem[]>([]);
   const [currentItem, setCurrentItem] = useState<{
+    selectionCategory: string; // 'BALE' | 'FINISHED_GOOD' | 'RAW_MATERIAL' | 'GENERAL'
     finishedProductId: string;
+    rawMaterialId: string;
+    rawMaterialRollId: string;
+    generalItemId: string;
     bellItemId: string;
     product: string;
     hsnCode: string;
@@ -114,8 +124,12 @@ export function Sales() {
     taxPercent: string;
     childItems?: any[];
   }>({
+    selectionCategory: 'BALE', // Default to Bale
     finishedProductId: '',
-    bellItemId: '', // For bell selection
+    rawMaterialId: '',
+    rawMaterialRollId: '',
+    generalItemId: '',
+    bellItemId: '',
     product: '',
     hsnCode: '60059000',
     quantity: '',
@@ -180,6 +194,20 @@ export function Sales() {
   useRealtimeEvent(lastEvent, ['sales_updated', 'accounts_updated', 'inventory_updated', 'masters_updated'], () => {
     fetchData();
   });
+
+  // Shortcut for New Entry
+  useEffect(() => {
+    const handleNewEntry = () => {
+      if (activeTab === 'invoices') {
+        setEditingInvoiceId(null);
+        setShowInvoiceForm(true);
+      } else if (activeTab === 'receipts') {
+        setShowReceiptForm(true);
+      }
+    };
+    window.addEventListener('app-new-entry', handleNewEntry);
+    return () => window.removeEventListener('app-new-entry', handleNewEntry);
+  }, [activeTab]);
 
   const handleQuickGstSearch = async () => {
     const gstin = quickAddCustomerForm.gstNo;
@@ -258,7 +286,7 @@ export function Sales() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [invoicesResult, customersResult, productsResult, summaryResult, accountsResult, receiptsResult, bellsResult] = await Promise.all([
+      const [invoicesResult, customersResult, productsResult, summaryResult, accountsResult, receiptsResult, bellsResult, rollsResult, rawMaterialsResult, generalItemsResult] = await Promise.all([
         salesApi.getInvoices(page, limit, filters),
         mastersApi.getCustomers(),
         mastersApi.getFinishedProducts(),
@@ -266,6 +294,9 @@ export function Sales() {
         mastersApi.getAccounts(), // Fetch accounts for receipt
         accountsApi.getTransactions({ type: 'RECEIPT', partyType: 'customer' }), // Fetch receipts for customers only
         salesApi.getAvailableBells(),
+        salesApi.getAvailableRolls(),
+        mastersApi.getRawMaterials(),
+        mastersApi.getGeneralItems()
       ]);
 
       if (invoicesResult.data) {
@@ -286,6 +317,9 @@ export function Sales() {
         setSalesReceipts(receipts);
       }
       if (bellsResult.data) setAvailableBells(bellsResult.data);
+      if (rollsResult.data) setAvailableRolls(rollsResult.data);
+      if (rawMaterialsResult.data) setRawMaterials(rawMaterialsResult.data);
+      if (generalItemsResult.data) setGeneralItems(generalItemsResult.data);
     } catch (err) {
       setError('Failed to load data');
     }
@@ -310,14 +344,7 @@ export function Sales() {
     });
   };
 
-  const handleProductSelect = (value: string) => {
-    if (!value) {
-      setCurrentItem({ ...currentItem, finishedProductId: '', bellItemId: '', product: '', quantity: '', rate: '' });
-      return;
-    }
-
-    const [type, id] = value.split(':');
-
+  const handleProductSelect = (id: string, type: string) => {
     if (type === 'bell') {
       const bell = availableBells.find(b => b.id === id);
       if (bell) {
@@ -325,11 +352,69 @@ export function Sales() {
           ...currentItem,
           finishedProductId: bell.finishedProductId,
           bellItemId: bell.id,
-          product: `${bell.code} - ${bell.finishedProduct?.name}`,
+          rawMaterialId: '',
+          rawMaterialRollId: '',
+          generalItemId: '',
+          product: `${bell.code} - ${bell.finishedProduct?.name || 'Bale'}`,
           hsnCode: bell.finishedProduct?.hsnCode || '60059000',
-          quantity: bell.grossWeight || bell.netWeight, // Use grossWeight (what customer receives)
-          rate: bell.finishedProduct?.ratePerKg || '0',
+          quantity: (bell.grossWeight || bell.netWeight || '1').toString(),
+          rate: (bell.finishedProduct?.ratePerKg || '0').toString(),
           taxPercent: bell.finishedProduct?.gstPercent || '18',
+          childItems: []
+        });
+      }
+    } else if (type === 'roll') {
+      const roll = availableRolls.find(r => r.id === id);
+      if (roll) {
+        const material = roll.rawMaterial;
+        setCurrentItem({
+          ...currentItem,
+          finishedProductId: '',
+          bellItemId: '',
+          rawMaterialId: roll.rawMaterialId,
+          rawMaterialRollId: roll.id,
+          generalItemId: '',
+          product: `${roll.rollCode} - ${material?.name || 'Roll'}`,
+          hsnCode: material?.hsnCode || '3901',
+          quantity: roll.netWeight?.toString() || '0',
+          rate: '', // User will enter sale rate
+          taxPercent: '18',
+          childItems: []
+        });
+      }
+    } else if (type === 'rawMaterial') {
+      const material = rawMaterials.find(m => m.id === id);
+      if (material) {
+        setCurrentItem({
+          ...currentItem,
+          finishedProductId: '',
+          bellItemId: '',
+          rawMaterialId: material.id,
+          rawMaterialRollId: '',
+          generalItemId: '',
+          product: material.name,
+          hsnCode: material.hsnCode || '3901',
+          quantity: '',
+          rate: '',
+          taxPercent: '18',
+          childItems: []
+        });
+      }
+    } else if (type === 'generalItem') {
+      const item = generalItems.find(g => g.id === id);
+      if (item) {
+        setCurrentItem({
+          ...currentItem,
+          finishedProductId: '',
+          bellItemId: '',
+          rawMaterialId: '',
+          rawMaterialRollId: '',
+          generalItemId: item.id,
+          product: item.name,
+          hsnCode: '00000000',
+          quantity: '',
+          rate: '',
+          taxPercent: '18',
           childItems: []
         });
       }
@@ -344,8 +429,12 @@ export function Sales() {
         const representative = bellsInGroup[0];
 
         setCurrentItem({
+          ...currentItem,
           finishedProductId: representative.finishedProductId,
           bellItemId: '', // No single ID
+          rawMaterialId: '',
+          rawMaterialRollId: '',
+          generalItemId: '',
           product: `${groupCode} (Bale)`,
           hsnCode: representative.finishedProduct?.hsnCode || '60059000',
           quantity: totalWeight.toString(),
@@ -355,13 +444,16 @@ export function Sales() {
           childItems: bellsInGroup
         });
       }
-    } else {
+    } else { // This is for finished products
       const product = products.find(p => p.id === id);
       if (product) {
         setCurrentItem({
           ...currentItem,
           finishedProductId: product.id,
           bellItemId: '', // Clear bell
+          rawMaterialId: '',
+          rawMaterialRollId: '',
+          generalItemId: '',
           product: product.name,
           hsnCode: product.hsnCode || '60059000',
           quantity: '', // Reset quantity for manual entry
@@ -374,7 +466,8 @@ export function Sales() {
   };
 
   const handleAddItem = () => {
-    if (!currentItem.finishedProductId || !currentItem.quantity || !currentItem.rate) {
+    const hasProduct = currentItem.finishedProductId || currentItem.rawMaterialId || currentItem.rawMaterialRollId || currentItem.generalItemId || (currentItem.childItems && currentItem.childItems.length > 0);
+    if (!hasProduct || !currentItem.quantity || !currentItem.rate) {
       setError('Please fill product, quantity and rate');
       return;
     }
@@ -391,7 +484,10 @@ export function Sales() {
 
     const newItem: InvoiceItem = {
       id: Date.now().toString(),
-      finishedProductId: currentItem.finishedProductId,
+      finishedProductId: currentItem.finishedProductId || undefined,
+      rawMaterialId: currentItem.rawMaterialId || undefined,
+      rawMaterialRollId: currentItem.rawMaterialRollId || undefined,
+      generalItemId: currentItem.generalItemId || undefined,
       product: currentItem.product,
       hsnCode: currentItem.hsnCode,
       quantity: qty,
@@ -408,7 +504,11 @@ export function Sales() {
 
     // Reset form
     setCurrentItem({
+      selectionCategory: currentItem.selectionCategory, // Keep the same category for convenience
       finishedProductId: '',
+      rawMaterialId: '',
+      rawMaterialRollId: '',
+      generalItemId: '',
       bellItemId: '',
       product: '',
       hsnCode: '60059000',
@@ -426,9 +526,17 @@ export function Sales() {
   };
 
   const handleEditItem = (item: InvoiceItem) => {
-    // Load item data back into the currentItem state for editing
+    let category = 'FINISHED_GOOD';
+    if (item.bellItemId || (item.childItems && item.childItems.length > 0)) category = 'BALE';
+    else if (item.rawMaterialId || item.rawMaterialRollId) category = 'RAW_MATERIAL';
+    else if (item.generalItemId) category = 'GENERAL';
+
     setCurrentItem({
+      selectionCategory: category,
       finishedProductId: item.finishedProductId || '',
+      rawMaterialId: item.rawMaterialId || '',
+      rawMaterialRollId: item.rawMaterialRollId || '',
+      generalItemId: item.generalItemId || '',
       bellItemId: item.bellItemId || '',
       product: item.product,
       hsnCode: item.hsnCode,
@@ -491,31 +599,20 @@ export function Sales() {
         invoiceType: invoiceForm.invoiceType,
         status: status,
         placeOfSupply: invoiceForm.placeOfSupply,
-        items: invoiceItems.flatMap(item => {
-          if (item.childItems && item.childItems.length > 0) {
-            return item.childItems.map(child => {
-              // Use grossWeight (what the customer physically receives / what the form preview uses)
-              // Fall back to netWeight only if grossWeight is not available
-              const childQty = parseFloat(child.grossWeight);
-              return {
-                finishedProductId: child.finishedProductId,
-                bellItemId: child.id,
-                quantity: childQty,
-                rate: item.rate,
-                gstPercent: item.taxPercent,
-                discount: (childQty * item.rate * item.discountPercent) / 100
-              };
-            });
-          }
-          return [{
-            finishedProductId: item.finishedProductId,
-            bellItemId: item.bellItemId,
-            quantity: item.quantity,
-            rate: item.rate,
-            gstPercent: item.taxPercent,
-            discount: (item.quantity * item.rate * item.discountPercent) / 100
-          }];
-        })
+        items: invoiceItems.map(item => ({
+          finishedProductId: item.finishedProductId || undefined,
+          rawMaterialId: item.rawMaterialId || undefined,
+          rawMaterialRollId: item.rawMaterialRollId || undefined,
+          generalItemId: item.generalItemId || undefined,
+          bellItemId: item.bellItemId || undefined,
+          productName: item.product,
+          hsnCode: item.hsnCode,
+          quantity: item.quantity,
+          rate: item.rate,
+          discount: (item.quantity * item.rate * item.discountPercent) / 100,
+          gstPercent: item.taxPercent,
+          childItems: item.childItems || undefined
+        }))
       };
 
       // Call updateInvoice if editing, otherwise createInvoice
@@ -1314,45 +1411,120 @@ export function Sales() {
                           <tr className="bg-blue-50/50">
                             <td className="px-3 py-1 text-xs text-gray-400 text-center">+</td>
                             <td className="px-3 py-1">
-                              <select
-                                value={currentItem.finishedProductId}
-                                onChange={e => handleProductSelect(e.target.value)}
-                                className="w-full text-sm bg-transparent border-0 border-b border-blue-300 focus:ring-0 p-1 font-medium"
-                              >
-                                <option value="">Select Bale/Batch...</option>
-                                <optgroup label="Bale Batches">
-                                  {/* Group Bells by Batch Code */}
-                                  {Object.values(availableBells.reduce((acc: any, bell) => {
-                                    // FILTER: Skip bells that are already in invoiceItems (top-level or children)
-                                    const isUsed = invoiceItems.some(item =>
-                                      item.bellItemId === bell.id ||
-                                      (item.childItems && item.childItems.some(child => child.id === bell.id))
-                                    );
+                              <div className="flex flex-col space-y-1">
+                                <select
+                                  value={currentItem.selectionCategory}
+                                  onChange={e => setCurrentItem({
+                                    ...currentItem,
+                                    selectionCategory: e.target.value,
+                                    finishedProductId: '',
+                                    rawMaterialId: '',
+                                    rawMaterialRollId: '',
+                                    generalItemId: '',
+                                    bellItemId: '',
+                                    product: '',
+                                    hsnCode: e.target.value === 'BALE' ? '60059000' : e.target.value === 'RAW_MATERIAL' ? '3901' : '00000000'
+                                  })}
+                                  className="w-full text-[10px] uppercase font-bold text-blue-600 bg-blue-50/50 border-0 border-b border-blue-200 focus:ring-0 p-0.5"
+                                >
+                                  <option value="BALE">Bale Sell</option>
+                                  <option value="FINISHED_GOOD">Finished Good</option>
+                                  <option value="RAW_MATERIAL">Raw Material Resell</option>
+                                  <option value="GENERAL">Other Items</option>
+                                </select>
 
-                                    if (isUsed) return acc;
+                                <select
+                                  value={currentItem.finishedProductId || currentItem.rawMaterialRollId || currentItem.rawMaterialId || currentItem.generalItemId}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    if (!val) return;
+                                    const [type, id] = val.split(':');
+                                    handleProductSelect(id, type);
+                                  }}
+                                  className="w-full text-sm bg-transparent border-0 border-b border-blue-300 focus:ring-0 p-1 font-medium"
+                                >
+                                  <option value="">Select {
+                                    currentItem.selectionCategory === 'BALE' ? 'Bale Batch' :
+                                      currentItem.selectionCategory === 'FINISHED_GOOD' ? 'Product' :
+                                        currentItem.selectionCategory === 'RAW_MATERIAL' ? 'Roll or Material' : 'Item'
+                                  }...</option>
 
-                                    // Prefer Batch Code, fallback to Bell Code
-                                    const key = bell.batch?.code || bell.code;
-                                    if (!acc[key]) acc[key] = { code: key, count: 0, bells: [], products: [] };
-                                    acc[key].count++;
-                                    acc[key].bells.push(bell);
-                                    // For Reference: All constituent items
-                                    const details = bell.childItems || [];
-                                    const refString = bell.finishedProduct?.name +
-                                      ` | ${bell.size}/${bell.gsm} | Pcs:${bell.pieceCount} | Wt:${bell.netWeight}`;
+                                  {currentItem.selectionCategory === 'BALE' && availableBells.length > 0 && (
+                                    <>
+                                      {/* Group Bells by Batch Code */}
+                                      {Object.values(availableBells.reduce((acc: any, bell) => {
+                                        const isUsed = invoiceItems.some(item =>
+                                          item.bellItemId === bell.id ||
+                                          (item.childItems && item.childItems.some(child => child.id === bell.id))
+                                        );
+                                        if (isUsed) return acc;
+                                        const key = bell.batch?.code || bell.code;
+                                        if (!acc[key]) acc[key] = { code: key, count: 0, bells: [], products: [] };
+                                        acc[key].count++;
+                                        acc[key].bells.push(bell);
+                                        const refString = bell.finishedProduct?.name +
+                                          ` | ${bell.size}/${bell.gsm} | Wt:${bell.netWeight}`;
+                                        acc[key].products.push(refString);
+                                        return acc;
+                                      }, {})).map((group: any) => (
+                                        <option key={`group-${group.code}`} value={`bellGroup:${group.code}`}>
+                                          {group.code} ({group.count} Bales) — {group.products.join(' || ')}
+                                        </option>
+                                      ))}
+                                    </>
+                                  )}
 
-                                    acc[key].products.push(refString);
-                                    return acc;
-                                  }, {})).map((group: any) => (
-                                    <option key={`group-${group.code}`} value={`bellGroup:${group.code}`}>
-                                      {group.code} ({group.count} Items) — {group.products.join(' || ')}
-                                    </option>
-                                  ))}
-                                </optgroup>
+                                  {currentItem.selectionCategory === 'RAW_MATERIAL' && (
+                                    <>
+                                      {availableRolls.length > 0 && (
+                                        <optgroup label="Specific Rolls">
+                                          {availableRolls.map(roll => {
+                                            const isUsed = invoiceItems.some(item => item.rawMaterialRollId === roll.id);
+                                            if (isUsed) return null;
+                                            return (
+                                              <option key={`roll-${roll.id}`} value={`roll:${roll.id}`}>
+                                                {roll.rollCode} — {roll.rawMaterial?.name} ({roll.netWeight}kg)
+                                              </option>
+                                            );
+                                          })}
+                                        </optgroup>
+                                      )}
 
-                              </select>
+                                      {rawMaterials.length > 0 && (
+                                        <optgroup label="Generic Raw Materials">
+                                          {rawMaterials.map(material => (
+                                            <option key={`mat-${material.id}`} value={`rawMaterial:${material.id}`}>
+                                              {material.name} (Stock: {material.stock}kg)
+                                            </option>
+                                          ))}
+                                        </optgroup>
+                                      )}
+                                    </>
+                                  )}
+
+                                  {currentItem.selectionCategory === 'FINISHED_GOOD' && products.length > 0 && (
+                                    <>
+                                      {products.map(product => (
+                                        <option key={`prod-${product.id}`} value={`product:${product.id}`}>
+                                          {product.name}
+                                        </option>
+                                      ))}
+                                    </>
+                                  )}
+
+                                  {currentItem.selectionCategory === 'GENERAL' && generalItems.length > 0 && (
+                                    <>
+                                      {generalItems.map(item => (
+                                        <option key={`gen-${item.id}`} value={`generalItem:${item.id}`}>
+                                          {item.name}
+                                        </option>
+                                      ))}
+                                    </>
+                                  )}
+                                </select>
+                              </div>
                             </td>
-                            <td className="px-3 py-1"><input type="number" value={currentItem.quantity} onChange={e => setCurrentItem({ ...currentItem, quantity: e.target.value })} className={`w-full text-right text-sm bg-transparent border-0 border-b border-blue-300 focus:ring-0 p-1 ${currentItem.bellItemId ? 'text-gray-500 font-bold bg-gray-50' : ''}`} placeholder="0" readOnly={!!currentItem.bellItemId} /></td>
+                            <td className="px-3 py-1"><input type="number" value={currentItem.quantity} onChange={e => setCurrentItem({ ...currentItem, quantity: e.target.value })} className={`w-full text-right text-sm bg-transparent border-0 border-b border-blue-300 focus:ring-0 p-1 ${(currentItem.bellItemId || currentItem.rawMaterialRollId) ? 'text-gray-500 font-bold bg-gray-50' : ''}`} placeholder="0" readOnly={!!(currentItem.bellItemId || currentItem.rawMaterialRollId)} /></td>
                             <td className="px-3 py-1"><input type="number" value={currentItem.rate} onChange={e => setCurrentItem({ ...currentItem, rate: e.target.value })} className="w-full text-right text-sm bg-transparent border-0 border-b border-blue-300 focus:ring-0 p-1" placeholder="0.00" /></td>
                             <td className="px-3 py-1"><input type="number" value={currentItem.discountPercent} onChange={e => setCurrentItem({ ...currentItem, discountPercent: e.target.value })} className="w-full text-right text-sm bg-transparent border-0 border-b border-blue-300 focus:ring-0 p-1" placeholder="0" /></td>
                             <td className="px-3 py-1">
