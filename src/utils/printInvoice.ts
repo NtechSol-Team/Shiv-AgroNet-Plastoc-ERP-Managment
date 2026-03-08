@@ -350,6 +350,8 @@ export function printInvoice(invoice: InvoiceData): void {
   ];
 
   const logoUrl = `${window.location.origin}/product-logo.png`;
+  const signUrl = `${window.location.origin}/Shiv%20Agro%20Sign.png`;
+  const qrUrl = `${window.location.origin}/bank%20QR.jpeg`;
 
   const printContent = `
 <!DOCTYPE html>
@@ -382,24 +384,27 @@ export function printInvoice(invoice: InvoiceData): void {
         /* Header Section */
         .header-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
         .header-table td { vertical-align: top; }
+        .header-logo-cell { width: 20%; text-align: left; }
+        .header-center-cell { width: 60%; text-align: center; }
+        .header-right-cell { width: 20%; text-align: right; }
         
-        .logo { max-width: 150px; margin-bottom: 5px; }
-        .company-name { font-size: 20px; font-weight: bold; text-transform: uppercase; }
+        .logo { max-width: 150px; margin-bottom: 5px; max-height: 80px; }
+        .company-name { font-size: 22px; font-weight: bold; text-transform: uppercase; color: var(--primary-color); margin-bottom: 4px; }
         .invoice-title { 
-            text-align: right; 
-            font-size: 22px; 
+            font-size: 16px; 
             font-weight: bold; 
             color: var(--primary-color);
             text-transform: uppercase;
         }
-        .compliance-text { text-align: right; font-size: 10px; color: #555; }
+        .compliance-text { font-size: 8px; color: #555; margin-top: 4px; }
 
         /* Meta Info Grid */
         .meta-section { 
             display: grid; 
             grid-template-columns: repeat(4, 1fr); 
             border: 1px solid var(--border-color);
-            margin-bottom: 10px;
+            margin-bottom: 0;
+            border-bottom: none;
         }
         .meta-box { padding: 6px; border-right: 1px solid var(--border-color); }
         .meta-box:last-child { border-right: none; }
@@ -411,7 +416,7 @@ export function printInvoice(invoice: InvoiceData): void {
             display: grid; 
             grid-template-columns: 1fr 1fr; 
             border: 1px solid var(--border-color); 
-            border-top: none;
+            border-top: 1px solid var(--border-color);
             margin-bottom: 10px;
         }
         .address-box { padding: 8px; border-right: 1px solid var(--border-color); }
@@ -459,9 +464,23 @@ export function printInvoice(invoice: InvoiceData): void {
         }
 
         /* Totals & Summary */
-        .summary-wrapper { display: flex; justify-content: space-between; margin-top: 5px; }
-        .bank-details { width: 55%; border: 1px solid var(--border-color); padding: 8px; }
-        .totals-box { width: 40%; }
+        .summary-wrapper { 
+            display: flex; 
+            justify-content: space-between; 
+            margin-top: 5px; 
+            border: 1px solid var(--border-color); 
+        }
+        .bank-details { 
+            width: 55%; 
+            padding: 8px; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: flex-start; 
+            border-right: 1px solid var(--border-color); 
+        }
+        .bank-info-left { flex: 1; }
+        .bank-qr { width: 90px; height: 90px; object-fit: contain; margin-left: 10px; border: 1px solid #eee; padding: 2px; }
+        .totals-box { width: 45%; padding: 8px; }
         
         .total-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
         .grand-total { 
@@ -483,6 +502,15 @@ export function printInvoice(invoice: InvoiceData): void {
             width: 200px; 
             text-align: center; 
             font-size: 11px;
+        }
+        .signature-img {
+            max-width: 150px;
+            max-height: 50px;
+            margin-top: 10px;
+            margin-bottom: 5px;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         /* Print Optimization */
@@ -509,15 +537,17 @@ export function printInvoice(invoice: InvoiceData): void {
 <div class="invoice-container">
     <table class="header-table">
         <tr>
-            <td>
-                <img class="logo" src="${logoUrl}" onerror="this.style.display='none'" alt="Logo" style="max-height: 60px; width: auto; max-width: 150px; margin-bottom: 5px; display: block;">
-                <div class="company-name">${escapeHtml(company.legalName || company.name)}</div>
-                <div class="value" style="font-size: 10px;">${formatMultilineText(`${company.address1}${company.address2 ? `, ${company.address2}` : ''}\n${company.city} - ${company.pincode}, ${company.state}`, '')}</div>
-                <div class="value" style="font-size: 11px;"><strong>GSTIN:</strong> ${escapeHtml(company.gstin)} | <strong>PAN:</strong> ${escapeHtml(company.pan)}</div>
-                <div class="value" style="font-size: 10px;"><strong>State:</strong> ${escapeHtml(company.stateName)} (Code: ${escapeHtml(company.stateCode)})</div>
-                <div class="value" style="font-size: 10px;"><strong>Mobile:</strong> ${escapeHtml(company.mobile)} | <strong>UDYAM:</strong> ${escapeHtml(company.udyamRegistration)}</div>
+            <td class="header-logo-cell">
+                <img class="logo" src="${logoUrl}" onerror="this.style.display='none'" alt="Logo">
             </td>
-            <td>
+            <td class="header-center-cell">
+                <div class="company-name">${escapeHtml(company.legalName || company.name)}</div>
+                <div class="value" style="font-size: 11px;">${formatMultilineText(`${company.address1}${company.address2 ? `, ${company.address2}` : ''}\n${company.city} - ${company.pincode}, ${company.state}`, '')}</div>
+                <div class="value" style="font-size: 11px; margin-top: 2px;"><strong>GSTIN:</strong> ${escapeHtml(company.gstin)} | <strong>PAN:</strong> ${escapeHtml(company.pan)}</div>
+                <div class="value" style="font-size: 11px;"><strong>State:</strong> ${escapeHtml(company.stateName)} (Code: ${escapeHtml(company.stateCode)})</div>
+                <div class="value" style="font-size: 11px;"><strong>Mobile:</strong> ${escapeHtml(company.mobile)} | <strong>UDYAM:</strong> ${escapeHtml(company.udyamRegistration)}</div>
+            </td>
+            <td class="header-right-cell">
                 <div class="invoice-title">${invoiceType === 'B2B' ? 'Tax Invoice' : 'Bill of Supply'}</div>
                 <div class="compliance-text">(Issued under Rule 46 of the CGST Rules, 2017)</div>
             </td>
@@ -578,8 +608,10 @@ export function printInvoice(invoice: InvoiceData): void {
             <tr>
                 <td align="center">${idx + 1}</td>
                 <td>
-                    <div style="font-weight: bold; text-transform: uppercase;">${escapeHtml(item.batchCode ? item.batchCode + ' - ' + (item.finishedProduct?.name || item.productName || 'Item') : (item.productName || item.finishedProduct?.name || 'Item'))}</div>
-                    ${item.pieceCount ? `<div style="font-size: 9px; color: #555;">(${escapeHtml(String(Math.round(Number(item.pieceCount))))} pcs)</div>` : ''}
+                    <div style="font-weight: bold; text-transform: uppercase;">
+                        ${item.batchCode ? 'WARP KNIT FABRIC<br/>' + escapeHtml(item.batchCode) + ' - ' + escapeHtml(item.finishedProduct?.name || item.productName || 'Item') : escapeHtml(item.productName || item.finishedProduct?.name || 'Item')}
+                        ${item.pieceCount ? `<span style="font-size: 10px; color: #333; font-weight: normal;">(${escapeHtml(String(Math.round(Number(item.pieceCount))))} pcs)</span>` : ''}
+                    </div>
                 </td>
                 <td align="center">${escapeHtml(item.hsnCode || '3901')}</td>
                 <td align="center">${escapeHtml(item.qty.toFixed(2))} ${escapeHtml(String(item.unit || 'Kg'))}</td>
@@ -661,20 +693,23 @@ export function printInvoice(invoice: InvoiceData): void {
 
     <div class="summary-wrapper">
         <div class="bank-details">
-            <span class="label" style="font-size: 11px; margin-bottom: 5px;">Bank Account Details:</span>
-            <div class="value" style="font-size: 13px; margin-bottom: 2px;"><strong>Bank Name:</strong> ${escapeHtml(company.bankDetails?.bankName || '')}</div>
-            <div class="value" style="font-size: 13px; margin-bottom: 2px;"><strong>A/c Name:</strong> ${escapeHtml(company.bankDetails?.accountHolder || '')}</div>
-            <div class="value" style="font-size: 13px; margin-bottom: 2px;"><strong>A/c No:</strong> ${escapeHtml(company.bankDetails?.accountNumber || '')}</div>
-            <div class="value" style="font-size: 13px;"><strong>IFSC:</strong> ${escapeHtml(company.bankDetails?.ifscCode || '')}</div>
-            
-            ${invoice.transportDetails || invoice.vehicleNumber || invoice.eWayBillNo || invoice.remarks ? `
-            <div style="margin-top: 5px; border-top: 1px solid #eee; padding-top: 3px;">
-                <span class="label">Transport / Remarks:</span>
-                ${invoice.transportDetails ? `<div class="value" style="font-size: 10px;"><strong>Transport:</strong> ${formatMultilineText(invoice.transportDetails)}</div>` : ''}
-                ${invoice.vehicleNumber ? `<div class="value" style="font-size: 10px;"><strong>Vehicle No:</strong> ${escapeHtml(invoice.vehicleNumber)}</div>` : ''}
-                ${invoice.remarks ? `<div class="value" style="font-size: 10px;"><strong>Remarks:</strong> ${formatMultilineText(invoice.remarks)}</div>` : ''}
+            <div class="bank-info-left">
+                <span class="label" style="font-size: 11px; margin-bottom: 5px;">Bank Account Details:</span>
+                <div class="value" style="font-size: 13px; margin-bottom: 2px;"><strong>Bank Name:</strong> ${escapeHtml(company.bankDetails?.bankName || '')}</div>
+                <div class="value" style="font-size: 13px; margin-bottom: 2px;"><strong>A/c Name:</strong> ${escapeHtml(company.bankDetails?.accountHolder || '')}</div>
+                <div class="value" style="font-size: 13px; margin-bottom: 2px;"><strong>A/c No:</strong> ${escapeHtml(company.bankDetails?.accountNumber || '')}</div>
+                <div class="value" style="font-size: 13px;"><strong>IFSC:</strong> ${escapeHtml(company.bankDetails?.ifscCode || '')}</div>
+                
+                ${invoice.transportDetails || invoice.vehicleNumber || invoice.eWayBillNo || invoice.remarks ? `
+                <div style="margin-top: 5px; border-top: 1px solid #eee; padding-top: 3px;">
+                    <span class="label">Transport / Remarks:</span>
+                    ${invoice.transportDetails ? `<div class="value" style="font-size: 10px;"><strong>Transport:</strong> ${formatMultilineText(invoice.transportDetails)}</div>` : ''}
+                    ${invoice.vehicleNumber ? `<div class="value" style="font-size: 10px;"><strong>Vehicle No:</strong> ${escapeHtml(invoice.vehicleNumber)}</div>` : ''}
+                    ${invoice.remarks ? `<div class="value" style="font-size: 10px;"><strong>Remarks:</strong> ${formatMultilineText(invoice.remarks)}</div>` : ''}
+                </div>
+                ` : ''}
             </div>
-            ` : ''}
+            <img class="bank-qr" src="${qrUrl}" onerror="this.style.display='none'" alt="Bank QR Code" />
         </div>
         
         <div class="totals-box">
@@ -707,7 +742,7 @@ export function printInvoice(invoice: InvoiceData): void {
     <div class="signature-section">
         <div class="sig-box">
             For <strong>${escapeHtml(company.legalName || company.name)}</strong>
-            <br><br><br><br>
+            <img class="signature-img" src="${signUrl}" onerror="this.style.display='none'" alt="Signature" />
             Authorized Signatory
         </div>
     </div>
