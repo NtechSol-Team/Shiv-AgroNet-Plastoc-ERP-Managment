@@ -594,6 +594,7 @@ export const productSamples = pgTable('product_samples', {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
     partyId: text('party_id').references(() => suppliers.id), // Can be null if generic sample
     finishedProductId: text('finished_product_id').notNull().references(() => finishedProducts.id),
+    bellItemId: text('bell_item_id').references(() => bellItems.id), // Link to specific bale
     quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
     date: timestamp('date').defaultNow().notNull(),
     batchCode: text('batch_code'), // Optional link to specific batch
@@ -605,6 +606,7 @@ export const productSamples = pgTable('product_samples', {
 export const productSamplesRelations = relations(productSamples, ({ one }) => ({
     party: one(suppliers, { fields: [productSamples.partyId], references: [suppliers.id] }),
     finishedProduct: one(finishedProducts, { fields: [productSamples.finishedProductId], references: [finishedProducts.id] }),
+    bellItem: one(bellItems, { fields: [productSamples.bellItemId], references: [bellItems.id] }),
 }));
 
 // ==================== BELL INVENTORY ====================
