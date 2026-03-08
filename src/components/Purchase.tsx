@@ -172,6 +172,18 @@ export function Purchase() {
   const [expenseHeads, setExpenseHeads] = useState<ExpenseHead[]>([]);
   const [summary, setSummary] = useState<any>(null);
 
+  // Listen for Cmd+K actions
+  useEffect(() => {
+    const handleOpenNewPurchase = () => {
+      setShowForm(true);
+    };
+
+    window.addEventListener('open-new-purchase', handleOpenNewPurchase);
+    return () => {
+      window.removeEventListener('open-new-purchase', handleOpenNewPurchase);
+    };
+  }, []);
+
   // Form State
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
   const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);

@@ -86,6 +86,18 @@ export function Sales() {
   const [totalPages, setTotalPages] = useState(1);
   const [limit] = useState(20);
 
+  // Listen for Cmd+K actions
+  useEffect(() => {
+    const handleOpenNewInvoice = () => {
+      setShowInvoiceForm(true);
+    };
+
+    window.addEventListener('open-new-invoice', handleOpenNewInvoice);
+    return () => {
+      window.removeEventListener('open-new-invoice', handleOpenNewInvoice);
+    };
+  }, []);
+
   const [products, setProducts] = useState<any[]>([]);
   const [availableBells, setAvailableBells] = useState<any[]>([]);
   const [availableRolls, setAvailableRolls] = useState<any[]>([]);

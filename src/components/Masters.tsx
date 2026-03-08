@@ -66,9 +66,24 @@ const GST_STATES = [
 
 export function Masters() {
   const [activeTab, setActiveTab] = useState<MasterType>('raw-material');
+  const [sortBy, setSortBy] = useState<'name' | 'createdAt'>('createdAt');
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+
+  // Listen for Cmd+K actions
+  useEffect(() => {
+    const handleOpenAddRawMaterial = () => {
+      setActiveTab('raw-material');
+      setShowAddForm(true);
+    };
+
+    window.addEventListener('open-add-raw-material', handleOpenAddRawMaterial);
+    return () => {
+      window.removeEventListener('open-add-raw-material', handleOpenAddRawMaterial);
+    };
+  }, []);
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

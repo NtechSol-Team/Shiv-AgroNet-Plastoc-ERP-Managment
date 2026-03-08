@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db/index';
-import { productionBatches, salesInvoices, purchaseBills, purchaseBillItems, finishedProducts, rawMaterials, expenses, stockMovements } from '../db/schema';
+import { productionBatches, salesInvoices, purchaseBills, purchaseBillItems, finishedProducts, rawMaterials, expenses, stockMovements, customers, suppliers } from '../db/schema';
 import { eq, desc, sql } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 
@@ -287,6 +287,30 @@ router.get('/expenses', async (req, res, next) => {
                 expenseCount: report.length,
             },
         }));
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Ledger Summary (Consolidated for all customers or all suppliers)
+router.get('/ledger-summary/:type', async (req, res, next) => {
+    try {
+        const { type } = req.params;
+        if (type !== 'customer' && type !== 'supplier') {
+            return res.status(400).json({ success: false, message: 'Invalid party type' });
+        }
+
+        if (type === 'customer') {
+            const data = await db.query.customers.findMany({
+                orderBy: [desc(customers.outstanding)],
+            });
+            res.json(successResponse(data));
+        } else {
+            const data = await db.query.suppliers.findMany({
+                orderBy: [desc(suppliers.outstanding)],
+            });
+            res.json(successResponse(data));
+        }
     } catch (error) {
         next(error);
     }

@@ -6,7 +6,9 @@ import {
 } from 'lucide-react';
 import { useRealtimeEvent } from '../hooks/useRealtime';
 import { useRealtimeContext } from '../context/RealtimeContext';
-import { accountsApi, mastersApi, financeApi } from '../lib/api';
+import { accountsApi, mastersApi, financeApi, reportsApi } from '../lib/api';
+import { utils, writeFile } from 'xlsx';
+import { Download } from 'lucide-react';
 
 // ============================================================
 // TYPE DEFINITIONS
@@ -103,6 +105,16 @@ export function Accounts() {
 
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+
+  // Consolidated Totals
+  const totalCustomerOutstanding = React.useMemo(() =>
+    customers.reduce((sum, c: any) => sum + parseFloat(c.outstanding || '0'), 0),
+    [customers]
+  );
+  const totalSupplierOutstanding = React.useMemo(() =>
+    suppliers.reduce((sum, s: any) => sum + parseFloat(s.outstanding || '0'), 0),
+    [suppliers]
+  );
 
   const [recalculating, setRecalculating] = useState(false);
   const [showRecalculateConfirm, setShowRecalculateConfirm] = useState(false);
@@ -1023,6 +1035,22 @@ export function Accounts() {
       {/* CUSTOMER LEDGER TAB */}
       {activeTab === 'customer' && (
         <div className="space-y-6">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">Customer Ledgers</h2>
+              <p className="text-sm text-gray-500">Manage customer accounts and outstanding balances</p>
+            </div>
+            <div className="bg-green-50 border border-green-100 px-4 py-2 rounded-lg flex items-center gap-3">
+              <div className="bg-green-100 p-1.5 rounded-md">
+                <TrendingUp className="w-4 h-4 text-green-700" />
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-green-600 uppercase tracking-widest">Total Receivables</p>
+                <p className="text-lg font-black text-green-800 leading-none">₹{totalCustomerOutstanding.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+              </div>
+            </div>
+          </div>
+
           <div className="flex gap-4">
             <div className="w-1/3">
               <label className="block text-sm font-medium text-gray-700 mb-1">Select Customer</label>
@@ -1056,6 +1084,28 @@ export function Accounts() {
                 </div>
                 <div className="flex gap-2">
                   <button
+                    onClick={async () => {
+                      const type = activeTab as 'customer' | 'supplier';
+                      const result = await reportsApi.getLedgerSummary(type);
+                      if (result.data) {
+                        const exportData = result.data.map((item: any) => ({
+                          'Code': item.code,
+                          'Name': item.name,
+                          'Phone': item.phone || item.contact || '-',
+                          'Outstanding Balance': parseFloat(item.outstanding || 0).toFixed(2),
+                        }));
+                        const ws = utils.json_to_sheet(exportData);
+                        const wb = utils.book_new();
+                        utils.book_append_sheet(wb, ws, 'Outstanding Summary');
+                        writeFile(wb, `${type}_consolidated_outstanding_${new Date().toISOString().split('T')[0]}.xlsx`);
+                      }
+                    }}
+                    className="p-2 border border-blue-300 rounded hover:bg-blue-50 text-blue-600 flex items-center gap-1 text-sm font-medium"
+                    title="Download Consolidated Outstanding Report (Excel)"
+                  >
+                    <Download className="w-4 h-4" /> Consolidated
+                  </button>
+                  <button
                     onClick={() => {
                       const customerName = customers.find(c => c.id === selectedCustomerId)?.name || 'Customer';
                       const printContent = `
@@ -1063,75 +1113,113 @@ export function Accounts() {
                           <head>
                             <title>Ledger - ${customerName}</title>
                             <script src="https://cdn.tailwindcss.com"></script>
+                            <style>
+                              @media print {
+                                body { padding: 0; background: white; }
+                                .no-print { display: none !important; }
+                                .print-border { border: 2px solid #000 !important; }
+                              }
+                              .font-professional { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+                            </style>
                           </head>
-                          <body class="p-8 bg-white text-gray-900">
-                            <div class="max-w-4xl mx-auto border p-8">
-                              <h1 class="text-2xl font-bold mb-2">Customer Ledger Statement</h1>
-                              <p class="text-lg font-medium text-gray-700 mb-6">${customerName}</p>
+                          <body class="p-8 bg-gray-50 font-professional">
+                            <div class="max-w-4xl mx-auto bg-white shadow-xl border-t-8 border-blue-600 p-10 rounded-b-lg print-border">
+                              <div class="flex justify-between items-start mb-8 border-b-2 border-gray-100 pb-6">
+                                <div>
+                                  <h1 class="text-3xl font-black text-blue-900 tracking-tight uppercase">SHIV AGRO</h1>
+                                  <p class="text-sm text-gray-500 font-medium">Manufacturer of Net Bags & Agro Products</p>
+                                </div>
+                                <div class="text-right">
+                                  <h2 class="text-xl font-bold text-gray-800">Ledger Statement</h2>
+                                  <p class="text-sm text-gray-500">Date: ${new Date().toLocaleDateString('en-IN')}</p>
+                                </div>
+                              </div>
                               
-                              <div className="mb-6 p-4 bg-gray-50 rounded border">
-                                <p class="text-sm text-gray-500">Opening Balance</p>
-                                <p class="text-xl font-bold text-gray-700">₹${ledgerData.summary?.openingBalance || '0'}</p>
-                                
-                                ${parseFloat(ledgerData.summary?.advanceAmount || '0') > 0 ? `
-                                <p class="text-sm text-gray-500 mt-2">Unallocated Advance</p>
-                                <p class="text-xl font-bold text-blue-700">₹${ledgerData.summary?.advanceAmount}</p>
-                                ` : ''}
-
-                                <p class="text-sm text-gray-500 mt-2">Total Outstanding (including Opening Balance)</p>
-                                <p class="text-2xl font-bold ${parseFloat(ledgerData.summary?.totalOutstanding || '0') < 0 ? 'text-blue-700' : 'text-red-700'}">
-                                  ₹${Math.abs(parseFloat(ledgerData.summary?.totalOutstanding || '0')).toFixed(2)} ${parseFloat(ledgerData.summary?.totalOutstanding || '0') < 0 ? '(Cr)' : ''}
-                                </p>
+                              <div class="grid grid-cols-2 gap-8 mb-8">
+                                <div class="bg-gray-50 p-4 rounded-lg border border-gray-100">
+                                  <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Party Details</h3>
+                                  <p class="text-lg font-bold text-gray-900 leading-tight">${customerName}</p>
+                                  <p class="text-sm text-gray-600 mt-1">Code: ${customers.find(c => c.id === selectedCustomerId)?.code || 'N/A'}</p>
+                                </div>
+                                <div class="bg-blue-600 p-4 rounded-lg text-white shadow-lg">
+                                  <h3 class="text-xs font-bold text-blue-200 uppercase tracking-widest mb-1">Total Outstanding</h3>
+                                  <p class="text-3xl font-black">
+                                    ₹${Math.abs(parseFloat(ledgerData.summary?.totalOutstanding || '0')).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                    <span class="text-sm font-medium ml-1">${parseFloat(ledgerData.summary?.totalOutstanding || '0') < 0 ? 'Cr' : 'Dr'}</span>
+                                  </p>
+                                </div>
                               </div>
 
-                              <h2 class="font-bold border-b pb-2 mt-8 mb-4">Unpaid Invoices</h2>
-                              <table class="w-full text-sm mb-8">
+                              <div class="grid grid-cols-3 gap-4 mb-10">
+                                <div class="border border-gray-100 p-3 rounded text-center">
+                                  <p class="text-xs text-gray-400 font-bold uppercase">Opening Balance</p>
+                                  <p class="text-lg font-bold text-gray-800">₹${parseFloat(ledgerData.summary?.openingBalance || '0').toLocaleString('en-IN')}</p>
+                                </div>
+                                <div class="border border-gray-100 p-3 rounded text-center">
+                                  <p class="text-xs text-gray-400 font-bold uppercase">Total Invoices</p>
+                                  <p class="text-lg font-bold text-gray-800">₹${ledgerData.invoices.reduce((s: any, i: any) => s + parseFloat(i.grandTotal), 0).toLocaleString('en-IN')}</p>
+                                </div>
+                                <div class="border border-gray-100 p-3 rounded text-center">
+                                  <p class="text-xs text-gray-400 font-bold uppercase">Total Payments</p>
+                                  <p class="text-lg font-bold text-green-600">₹${ledgerData.payments.reduce((s: any, p: any) => s + parseFloat(p.amount), 0).toLocaleString('en-IN')}</p>
+                                </div>
+                              </div>
+
+                              <h2 class="text-sm font-black text-gray-900 border-b-2 border-blue-600 inline-block pb-1 mb-4 uppercase tracking-wider">Unpaid Invoices</h2>
+                              <table class="w-full text-sm mb-10">
                                 <thead>
-                                  <tr class="text-left border-b-2 border-gray-800">
-                                    <th class="py-2">Date</th>
-                                    <th class="py-2">Invoice #</th>
-                                    <th class="py-2 text-right">Total Amount</th>
-                                    <th class="py-2 text-right">Balance Due</th>
+                                  <tr class="text-left bg-gray-900 text-white">
+                                    <th class="p-3">Date</th>
+                                    <th class="p-3">Invoice #</th>
+                                    <th class="p-3 text-right">Total Amount</th>
+                                    <th class="p-3 text-right">Balance Due</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  ${ledgerData.invoices.length === 0 ? '<tr><td colspan="4" class="py-4 text-center text-gray-500">No unpaid invoices</td></tr>' :
+                                  ${ledgerData.invoices.length === 0 ? '<tr><td colspan="4" class="p-6 text-center text-gray-400 italic bg-gray-50">No pending invoices found</td></tr>' :
                           ledgerData.invoices.map((i: any) => `
-                                    <tr class="border-b border-gray-200">
-                                      <td class="py-2">${new Date(i.invoiceDate).toLocaleDateString()}</td>
-                                      <td class="py-2 font-mono">${i.invoiceNumber}</td>
-                                      <td class="py-2 text-right">₹${i.grandTotal}</td>
-                                      <td class="py-2 text-right font-bold text-red-600">₹${i.balanceAmount}</td>
+                                    <tr class="border-b border-gray-100 hover:bg-gray-50">
+                                      <td class="p-3 font-medium">${new Date(i.invoiceDate).toLocaleDateString()}</td>
+                                      <td class="p-3 font-mono text-blue-700">${i.invoiceNumber}</td>
+                                      <td class="p-3 text-right font-medium">₹${parseFloat(i.grandTotal).toLocaleString('en-IN')}</td>
+                                      <td class="p-3 text-right font-bold text-red-600">₹${parseFloat(i.balanceAmount).toLocaleString('en-IN')}</td>
                                     </tr>
                                   `).join('')}
                                 </tbody>
                               </table>
 
-                              <h2 class="font-bold border-b pb-2 mt-8 mb-4">Recent Payments</h2>
+                              <h2 class="text-sm font-black text-gray-900 border-b-2 border-green-600 inline-block pb-1 mb-4 uppercase tracking-wider">Recent Receipt History</h2>
                               <table class="w-full text-sm">
                                 <thead>
-                                  <tr class="text-left border-b-2 border-gray-800">
-                                    <th class="py-2">Date</th>
-                                    <th class="py-2">Receipt #</th>
-                                    <th class="py-2">Mode</th>
-                                    <th class="py-2 text-right">Amount</th>
+                                  <tr class="text-left bg-gray-100 text-gray-800 border-b border-gray-300">
+                                    <th class="p-3">Date</th>
+                                    <th class="p-3">Receipt #</th>
+                                    <th class="p-3 text-center">Mode</th>
+                                    <th class="p-3 text-right">Amount Received</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  ${ledgerData.payments.length === 0 ? '<tr><td colspan="4" class="py-4 text-center text-gray-500">No payments recorded</td></tr>' :
+                                  ${ledgerData.payments.length === 0 ? '<tr><td colspan="4" class="p-6 text-center text-gray-400 italic">No payment history recorded</td></tr>' :
                           ledgerData.payments.map((p: any) => `
-                                    <tr class="border-b border-gray-200">
-                                      <td class="py-2">${new Date(p.date).toLocaleDateString()}</td>
-                                      <td class="py-2 font-mono">${p.code}</td>
-                                      <td class="py-2">${p.mode}</td>
-                                      <td class="py-2 text-right font-bold text-green-600">₹${p.amount}</td>
+                                    <tr class="border-b border-gray-100 hover:bg-gray-50">
+                                      <td class="p-3">${new Date(p.date).toLocaleDateString()}</td>
+                                      <td class="p-3 font-mono">${p.code}</td>
+                                      <td class="p-3 text-center"><span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-bold uppercase">${p.mode}</span></td>
+                                      <td class="p-3 text-right font-black text-green-700">₹${parseFloat(p.amount).toLocaleString('en-IN')}</td>
                                     </tr>
                                   `).join('')}
                                 </tbody>
                               </table>
 
-                              <div class="mt-12 text-center text-xs text-gray-500">
-                                <p>Generated on ${new Date().toLocaleDateString()}</p>
+                              <div class="mt-16 pt-8 border-t border-gray-200 flex justify-between items-end text-[10px] text-gray-400 font-bold uppercase tracking-widest">
+                                <div>
+                                  <p>Shiv Agro - Manufacturing Excellence</p>
+                                  <p class="mt-1">Generated: ${new Date().toLocaleString('en-IN')}</p>
+                                </div>
+                                <div class="text-right">
+                                  <p>Authorised Signatory</p>
+                                  <div class="h-12 w-32 border-b border-gray-300 ml-auto"></div>
+                                </div>
                               </div>
                             </div>
                             <script>window.print();</script>
@@ -1242,6 +1330,22 @@ export function Accounts() {
       {/* SUPPLIER LEDGER TAB */}
       {activeTab === 'supplier' && (
         <div className="space-y-6">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">Supplier Ledgers</h2>
+              <p className="text-sm text-gray-500">Manage supplier accounts and payables</p>
+            </div>
+            <div className="bg-red-50 border border-red-100 px-4 py-2 rounded-lg flex items-center gap-3">
+              <div className="bg-red-100 p-1.5 rounded-md">
+                <TrendingDown className="w-4 h-4 text-red-700" />
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-red-600 uppercase tracking-widest">Total Payables</p>
+                <p className="text-lg font-black text-red-800 leading-none">₹{totalSupplierOutstanding.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+              </div>
+            </div>
+          </div>
+
           <div className="flex gap-4">
             <div className="w-1/3">
               <label className="block text-sm font-medium text-gray-700 mb-1">Select Supplier</label>
@@ -1272,6 +1376,28 @@ export function Accounts() {
                 </div>
                 <div className="flex gap-2">
                   <button
+                    onClick={async () => {
+                      const type = activeTab as 'customer' | 'supplier';
+                      const result = await reportsApi.getLedgerSummary(type);
+                      if (result.data) {
+                        const exportData = result.data.map((item: any) => ({
+                          'Code': item.code,
+                          'Name': item.name,
+                          'Phone': item.phone || item.contact || '-',
+                          'Outstanding Balance': parseFloat(item.outstanding || 0).toFixed(2),
+                        }));
+                        const ws = utils.json_to_sheet(exportData);
+                        const wb = utils.book_new();
+                        utils.book_append_sheet(wb, ws, 'Outstanding Summary');
+                        writeFile(wb, `${type}_consolidated_outstanding_${new Date().toISOString().split('T')[0]}.xlsx`);
+                      }
+                    }}
+                    className="p-2 border border-blue-300 rounded hover:bg-blue-50 text-blue-600 flex items-center gap-1 text-sm font-medium"
+                    title="Download Consolidated Outstanding Report (Excel)"
+                  >
+                    <Download className="w-4 h-4" /> Consolidated
+                  </button>
+                  <button
                     onClick={() => {
                       const supplierName = suppliers.find(s => s.id === selectedSupplierId)?.name || 'Supplier';
                       const printContent = `
@@ -1279,68 +1405,109 @@ export function Accounts() {
                           <head>
                             <title>Ledger - ${supplierName}</title>
                             <script src="https://cdn.tailwindcss.com"></script>
+                            <style>
+                              @media print {
+                                body { padding: 0; background: white; }
+                                .no-print { display: none !important; }
+                                .print-border { border: 2px solid #000 !important; }
+                              }
+                              .font-professional { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+                            </style>
                           </head>
-                          <body class="p-8 bg-white text-gray-900">
-                            <div class="max-w-4xl mx-auto border p-8">
-                              <h1 class="text-2xl font-bold mb-2">Supplier Ledger Statement</h1>
-                              <p class="text-lg font-medium text-gray-700 mb-6">${supplierName}</p>
+                          <body class="p-8 bg-gray-50 font-professional">
+                            <div class="max-w-4xl mx-auto bg-white shadow-xl border-t-8 border-red-600 p-10 rounded-b-lg print-border">
+                              <div class="flex justify-between items-start mb-8 border-b-2 border-gray-100 pb-6">
+                                <div>
+                                  <h1 class="text-3xl font-black text-red-900 tracking-tight uppercase">SHIV AGRO</h1>
+                                  <p class="text-sm text-gray-500 font-medium">Manufacturer of Net Bags & Agro Products</p>
+                                </div>
+                                <div class="text-right">
+                                  <h2 class="text-xl font-bold text-gray-800">Purchase Statement</h2>
+                                  <p class="text-sm text-gray-500">Date: ${new Date().toLocaleDateString('en-IN')}</p>
+                                </div>
+                              </div>
                               
-                              <div className="mb-6 p-4 bg-gray-50 rounded border">
-                                <p class="text-sm text-gray-500">Total Payable</p>
-                                <p class="text-2xl font-bold text-red-700">₹${ledgerData.summary?.totalOutstanding || '0'}</p>
-                                
-                                ${parseFloat(ledgerData.summary?.advanceAmount || '0') > 0 ? `
-                                <p class="text-sm text-gray-500 mt-2">Unallocated Advance</p>
-                                <p class="text-xl font-bold text-blue-700">₹${ledgerData.summary?.advanceAmount}</p>
-                                ` : ''}
+                              <div class="grid grid-cols-2 gap-8 mb-8">
+                                <div class="bg-gray-50 p-4 rounded-lg border border-gray-100">
+                                  <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Party Details</h3>
+                                  <p class="text-lg font-bold text-gray-900 leading-tight">${supplierName}</p>
+                                  <p class="text-sm text-gray-600 mt-1">Code: ${suppliers.find(s => s.id === selectedSupplierId)?.code || 'N/A'}</p>
+                                </div>
+                                <div class="bg-red-600 p-4 rounded-lg text-white shadow-lg">
+                                  <h3 class="text-xs font-bold text-red-200 uppercase tracking-widest mb-1">Total Outstanding</h3>
+                                  <p class="text-3xl font-black">
+                                    ₹${Math.abs(parseFloat(ledgerData.summary?.totalOutstanding || '0')).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                    <span class="text-sm font-medium ml-1">Payable</span>
+                                  </p>
+                                </div>
                               </div>
 
-                              <h2 class="font-bold border-b pb-2 mt-8 mb-4">Purchase Bills</h2>
-                              <table class="w-full text-sm mb-8">
+                              <div class="grid grid-cols-2 gap-4 mb-10">
+                                <div class="border border-gray-100 p-3 rounded text-center">
+                                  <p class="text-xs text-gray-400 font-bold uppercase">Total Bills</p>
+                                  <p class="text-lg font-bold text-gray-800">₹${ledgerData.bills?.reduce((s: any, b: any) => s + parseFloat(b.grandTotal), 0).toLocaleString('en-IN') || '0'}</p>
+                                </div>
+                                <div class="border border-gray-100 p-3 rounded text-center">
+                                  <p class="text-xs text-gray-400 font-bold uppercase">Total Paid</p>
+                                  <p class="text-lg font-bold text-green-600">₹${ledgerData.payments?.reduce((s: any, p: any) => s + parseFloat(p.amount), 0).toLocaleString('en-IN') || '0'}</p>
+                                </div>
+                              </div>
+
+                              <h2 class="text-sm font-black text-gray-900 border-b-2 border-red-600 inline-block pb-1 mb-4 uppercase tracking-wider">Unpaid Purchase Bills</h2>
+                              <table class="w-full text-sm mb-10">
                                 <thead>
-                                  <tr class="text-left border-b-2 border-gray-800">
-                                    <th class="py-2">Date</th>
-                                    <th class="py-2">Bill #</th>
-                                    <th class="py-2 text-right">Total Amount</th>
-                                    <th class="py-2 text-right">Balance Due</th>
+                                  <tr class="text-left bg-gray-900 text-white">
+                                    <th class="p-3">Date</th>
+                                    <th class="p-3">Bill #</th>
+                                    <th class="p-3 text-right">Total Amount</th>
+                                    <th class="p-3 text-right">Balance Due</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  ${!ledgerData.bills || ledgerData.bills.length === 0 ? '<tr><td colspan="4" class="py-4 text-center text-gray-500">No bills recorded</td></tr>' :
+                                  ${!ledgerData.bills || ledgerData.bills.length === 0 ? '<tr><td colspan="4" class="p-6 text-center text-gray-400 italic bg-gray-50">No pending bills found</td></tr>' :
                           ledgerData.bills.map((b: any) => `
-                                    <tr class="border-b border-gray-200">
-                                      <td class="py-2">${new Date(b.date).toLocaleDateString()}</td>
-                                      <td class="py-2 font-mono">${b.code}</td>
-                                      <td class="py-2 text-right">₹${b.grandTotal}</td>
-                                      <td class="py-2 text-right font-bold text-red-600">₹${b.balanceAmount}</td>
+                                    <tr class="border-b border-gray-100 hover:bg-gray-50">
+                                      <td class="p-3 font-medium">${new Date(b.date).toLocaleDateString()}</td>
+                                      <td class="p-3 font-mono text-red-700">${b.code}</td>
+                                      <td class="p-3 text-right font-medium">₹${parseFloat(b.grandTotal).toLocaleString('en-IN')}</td>
+                                      <td class="p-3 text-right font-bold text-red-600">₹${parseFloat(b.balanceAmount).toLocaleString('en-IN')}</td>
                                     </tr>
                                   `).join('')}
                                 </tbody>
                               </table>
 
-                              <h2 class="font-bold border-b pb-2 mt-8 mb-4">Payments Made</h2>
+                              <h2 class="text-sm font-black text-gray-900 border-b-2 border-blue-600 inline-block pb-1 mb-4 uppercase tracking-wider">Payment History</h2>
                               <table class="w-full text-sm">
                                 <thead>
-                                    <th class="py-2 text-right">Amount</th>
-                                    <th class="py-2 text-right">Advance Bal.</th>
+                                  <tr class="text-left bg-gray-100 text-gray-800 border-b border-gray-300">
+                                    <th class="p-3">Date</th>
+                                    <th class="p-3">Voucher #</th>
+                                    <th class="p-3 text-center">Mode</th>
+                                    <th class="p-3 text-right">Amount Paid</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  ${!ledgerData.payments || ledgerData.payments.length === 0 ? '<tr><td colspan="5" class="py-4 text-center text-gray-500">No payments recorded</td></tr>' :
+                                  ${!ledgerData.payments || ledgerData.payments.length === 0 ? '<tr><td colspan="4" class="p-6 text-center text-gray-400 italic">No payment history recorded</td></tr>' :
                           ledgerData.payments.map((p: any) => `
-                                    <tr class="border-b border-gray-200">
-                                      <td class="py-2">${new Date(p.date).toLocaleDateString()}</td>
-                                      <td class="py-2 font-mono">${p.code}</td>
-                                      <td class="py-2">${p.mode}</td>
-                                      <td class="py-2 text-right font-bold text-green-600">₹${parseFloat(p.amount).toLocaleString('en-IN')}</td>
-                                      <td class="py-2 text-right ${parseFloat(p.advanceBalance || '0') > 0 ? 'text-blue-600 font-bold' : 'text-gray-400'}">₹${parseFloat(p.advanceBalance || '0').toLocaleString('en-IN')}</td>
+                                    <tr class="border-b border-gray-100 hover:bg-gray-50">
+                                      <td class="p-3">${new Date(p.date).toLocaleDateString()}</td>
+                                      <td class="p-3 font-mono">${p.code}</td>
+                                      <td class="p-3 text-center"><span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-bold uppercase">${p.mode}</span></td>
+                                      <td class="p-3 text-right font-black text-blue-900">₹${parseFloat(p.amount).toLocaleString('en-IN')}</td>
                                     </tr>
                                   `).join('')}
                                 </tbody>
                               </table>
 
-                              <div class="mt-12 text-center text-xs text-gray-500">
-                                <p>Generated on ${new Date().toLocaleDateString()}</p>
+                              <div class="mt-16 pt-8 border-t border-gray-200 flex justify-between items-end text-[10px] text-gray-400 font-bold uppercase tracking-widest">
+                                <div>
+                                  <p>Shiv Agro - Precision Manufacturing</p>
+                                  <p class="mt-1">Generated: ${new Date().toLocaleString('en-IN')}</p>
+                                </div>
+                                <div class="text-right">
+                                  <p>Authorised Signatory</p>
+                                  <div class="h-12 w-32 border-b border-gray-300 ml-auto"></div>
+                                </div>
                               </div>
                             </div>
                             <script>window.print();</script>

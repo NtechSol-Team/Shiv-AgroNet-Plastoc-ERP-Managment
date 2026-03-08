@@ -123,13 +123,45 @@ export function TopBar({ title, isSearchOpen = false, onSearchClose, onModuleCha
                     </Command.Group>
 
                     <Command.Group heading="Actions" className="px-2 pt-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
-                        <Command.Item className="flex items-center px-3 py-3 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 cursor-pointer aria-selected:bg-slate-50 transition-all">
-                            <Plus className="w-4 h-4 mr-3 text-slate-400" />
+                        <Command.Item
+                            onSelect={() => {
+                                handleSelect('sales');
+                                // Delay so Sales component has time to mount and register listener
+                                setTimeout(() => window.dispatchEvent(new CustomEvent('open-new-invoice')), 150);
+                            }}
+                            className="flex items-center px-3 py-3 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 cursor-pointer aria-selected:bg-slate-50 transition-all group"
+                        >
+                            <Plus className="w-4 h-4 mr-3 text-slate-400 group-aria-selected:text-blue-600" />
                             Create New Invoice
+                            <kbd className="ml-auto pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-slate-50 px-1.5 font-mono text-[10px] font-medium text-slate-400 opacity-0 group-aria-selected:opacity-100">
+                                <span className="text-xs">↵</span> Enter
+                            </kbd>
                         </Command.Item>
-                        <Command.Item className="flex items-center px-3 py-3 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 cursor-pointer aria-selected:bg-slate-50 transition-all">
-                            <Plus className="w-4 h-4 mr-3 text-slate-400" />
+                        <Command.Item
+                            onSelect={() => {
+                                handleSelect('masters');
+                                setTimeout(() => window.dispatchEvent(new CustomEvent('open-add-raw-material')), 150);
+                            }}
+                            className="flex items-center px-3 py-3 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 cursor-pointer aria-selected:bg-slate-50 transition-all group"
+                        >
+                            <Plus className="w-4 h-4 mr-3 text-slate-400 group-aria-selected:text-blue-600" />
                             Add Raw Material
+                            <kbd className="ml-auto pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-slate-50 px-1.5 font-mono text-[10px] font-medium text-slate-400 opacity-0 group-aria-selected:opacity-100">
+                                <span className="text-xs">↵</span> Enter
+                            </kbd>
+                        </Command.Item>
+                        <Command.Item
+                            onSelect={() => {
+                                handleSelect('purchase');
+                                setTimeout(() => window.dispatchEvent(new CustomEvent('open-new-purchase')), 150);
+                            }}
+                            className="flex items-center px-3 py-3 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 cursor-pointer aria-selected:bg-slate-50 transition-all group"
+                        >
+                            <ShoppingCart className="w-4 h-4 mr-3 text-slate-400 group-aria-selected:text-blue-600" />
+                            Create Purchase Bill
+                            <kbd className="ml-auto pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-slate-50 px-1.5 font-mono text-[10px] font-medium text-slate-400 opacity-0 group-aria-selected:opacity-100">
+                                <span className="text-xs">↵</span> Enter
+                            </kbd>
                         </Command.Item>
                     </Command.Group>
                 </Command.List>
