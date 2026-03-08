@@ -486,9 +486,20 @@ export function printInvoice(invoice: InvoiceData): void {
         }
 
         /* Print Optimization */
+        @page {
+            size: A4;
+            margin: 5mm;
+        }
         @media print {
-            body { background: none; padding: 0; }
-            .invoice-container { box-shadow: none; border: none; width: 100%; padding: 5mm; }
+            body { background: none; padding: 0; margin: 0; }
+            .invoice-container { 
+                box-shadow: none; 
+                border: 1px solid #000; 
+                width: 100%; 
+                min-height: 282mm; /* Leave room for print margins to prevent second page */
+                padding: 5mm; 
+                margin: 0;
+            }
             .no-print { display: none; }
         }
     </style>
