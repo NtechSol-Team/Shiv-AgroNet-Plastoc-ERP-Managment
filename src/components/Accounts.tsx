@@ -154,6 +154,7 @@ export function Accounts() {
   });
   const [inlineExpenseHeadSearch, setInlineExpenseHeadSearch] = useState('');
   const [showInlineExpenseHeadDropdown, setShowInlineExpenseHeadDropdown] = useState(false);
+  const [inlineExpenseHeadFocusedIndex, setInlineExpenseHeadFocusedIndex] = useState(-1);
   const [isInlineSubmitting, setIsInlineSubmitting] = useState(false);
   const inlineDateRef = React.useRef<HTMLInputElement>(null);
 
@@ -1796,34 +1797,46 @@ export function Accounts() {
                       <div className="relative">
                         <input
                           type="text"
-                          className="w-full text-sm border-gray-300 rounded-md p-1"
+                          className="w-full text-sm border-gray-300 rounded-md p-1 outline-none focus:ring-1 focus:ring-blue-500"
                           placeholder="Search Category..."
                           value={inlineExpenseHeadSearch}
-                          onFocus={() => setShowInlineExpenseHeadDropdown(true)}
+                          onFocus={() => {
+                            setShowInlineExpenseHeadDropdown(true);
+                            setInlineExpenseHeadFocusedIndex(-1);
+                          }}
                           onChange={e => {
                             setInlineExpenseHeadSearch(e.target.value);
                             setShowInlineExpenseHeadDropdown(true);
+                            setInlineExpenseHeadFocusedIndex(-1);
                           }}
-                        />
-                        {showInlineExpenseHeadDropdown && (
-                          <div className="absolute z-10 w-64 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
-                            {expenseHeads.filter(h => h.name.toLowerCase().includes(inlineExpenseHeadSearch.toLowerCase())).map(h => (
-                              <div
-                                key={h.id}
-                                className="px-4 py-2 text-sm hover:bg-blue-50 cursor-pointer"
-                                onClick={() => {
-                                  setInlineExpenseForm(p => ({ ...p, expenseHeadId: h.id }));
-                                  setInlineExpenseHeadSearch(h.name);
-                                  setShowInlineExpenseHeadDropdown(false);
-                                }}
-                              >
-                                {h.name}
-                              </div>
-                            ))}
-                            {inlineExpenseHeadSearch && !expenseHeads.find(h => h.name.toLowerCase() === inlineExpenseHeadSearch.toLowerCase()) && (
-                              <div
-                                className="px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-gray-100 font-medium"
-                                onClick={async () => {
+                          onKeyDown={e => {
+                            const filtered = expenseHeads.filter(h => h.name.toLowerCase().includes(inlineExpenseHeadSearch.toLowerCase()));
+                            const hasCreateOption = inlineExpenseHeadSearch && !expenseHeads.find(h => h.name.toLowerCase() === inlineExpenseHeadSearch.toLowerCase());
+                            const totalOptions = filtered.length + (hasCreateOption ? 1 : 0);
+
+                            if (!showInlineExpenseHeadDropdown) {
+                              if (e.key === 'ArrowDown') {
+                                setShowInlineExpenseHeadDropdown(true);
+                              }
+                              return;
+                            }
+
+                            if (e.key === 'ArrowDown') {
+                              e.preventDefault();
+                              setInlineExpenseHeadFocusedIndex(prev => (prev < totalOptions - 1 ? prev + 1 : prev));
+                            } else if (e.key === 'ArrowUp') {
+                              e.preventDefault();
+                              setInlineExpenseHeadFocusedIndex(prev => (prev > 0 ? prev - 1 : prev));
+                            } else if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (inlineExpenseHeadFocusedIndex >= 0 && inlineExpenseHeadFocusedIndex < filtered.length) {
+                                const selected = filtered[inlineExpenseHeadFocusedIndex];
+                                setInlineExpenseForm(p => ({ ...p, expenseHeadId: selected.id }));
+                                setInlineExpenseHeadSearch(selected.name);
+                                setShowInlineExpenseHeadDropdown(false);
+                              } else if (hasCreateOption && inlineExpenseHeadFocusedIndex === filtered.length) {
+                                // Trigger create option programmatically
+                                const triggerCreate = async () => {
                                   try {
                                     const res = await mastersApi.createExpenseHead({ name: inlineExpenseHeadSearch, category: 'Variable' });
                                     if (res.data) {
@@ -1831,14 +1844,68 @@ export function Accounts() {
                                       setInlineExpenseForm(p => ({ ...p, expenseHeadId: res.data.id }));
                                       setShowInlineExpenseHeadDropdown(false);
                                     }
-                                  } catch (e) {
+                                  } catch (err) {
                                     alert('Failed to create expense head');
                                   }
-                                }}
-                              >
-                                + Create "{inlineExpenseHeadSearch}"
-                              </div>
-                            )}
+                                };
+                                triggerCreate();
+                              } else if (filtered.length > 0) {
+                                // Default to first if nothing explicitly focused
+                                const selected = filtered[0];
+                                setInlineExpenseForm(p => ({ ...p, expenseHeadId: selected.id }));
+                                setInlineExpenseHeadSearch(selected.name);
+                                setShowInlineExpenseHeadDropdown(false);
+                              }
+                            } else if (e.key === 'Escape') {
+                              setShowInlineExpenseHeadDropdown(false);
+                            }
+                          }}
+                        />
+                        {showInlineExpenseHeadDropdown && (
+                          <div className="absolute z-10 w-64 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
+                            {(() => {
+                              const filtered = expenseHeads.filter(h => h.name.toLowerCase().includes(inlineExpenseHeadSearch.toLowerCase()));
+                              const hasCreateOption = inlineExpenseHeadSearch && !expenseHeads.find(h => h.name.toLowerCase() === inlineExpenseHeadSearch.toLowerCase());
+
+                              return (
+                                <>
+                                  {filtered.map((h, i) => (
+                                    <div
+                                      key={h.id}
+                                      className={`px-4 py-2 text-sm cursor-pointer ${inlineExpenseHeadFocusedIndex === i ? 'bg-blue-100' : 'hover:bg-blue-50'}`}
+                                      onMouseEnter={() => setInlineExpenseHeadFocusedIndex(i)}
+                                      onClick={() => {
+                                        setInlineExpenseForm(p => ({ ...p, expenseHeadId: h.id }));
+                                        setInlineExpenseHeadSearch(h.name);
+                                        setShowInlineExpenseHeadDropdown(false);
+                                      }}
+                                    >
+                                      {h.name}
+                                    </div>
+                                  ))}
+                                  {hasCreateOption && (
+                                    <div
+                                      className={`px-4 py-2 text-sm text-blue-600 cursor-pointer border-t border-gray-100 font-medium ${inlineExpenseHeadFocusedIndex === filtered.length ? 'bg-blue-100' : 'hover:bg-blue-50'}`}
+                                      onMouseEnter={() => setInlineExpenseHeadFocusedIndex(filtered.length)}
+                                      onClick={async () => {
+                                        try {
+                                          const res = await mastersApi.createExpenseHead({ name: inlineExpenseHeadSearch, category: 'Variable' });
+                                          if (res.data) {
+                                            setExpenseHeads(prev => [...prev, res.data]);
+                                            setInlineExpenseForm(p => ({ ...p, expenseHeadId: res.data.id }));
+                                            setShowInlineExpenseHeadDropdown(false);
+                                          }
+                                        } catch (e) {
+                                          alert('Failed to create expense head');
+                                        }
+                                      }}
+                                    >
+                                      + Create "{inlineExpenseHeadSearch}"
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                         )}
                       </div>

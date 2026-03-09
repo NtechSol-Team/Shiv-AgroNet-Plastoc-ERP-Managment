@@ -16,12 +16,12 @@ const createCCAccountSchema = z.object({
     accountNo: z.string().min(1, 'Account No is required'),
     sanctionedLimit: z.coerce.number().min(0, 'Limit must be positive'),
     interestRate: z.coerce.number().min(0, 'Interest Rate must be positive'),
-    stockMargin: z.coerce.number().min(0).max(100).optional(),
-    receivablesMargin: z.coerce.number().min(0).max(100).optional(),
+    stockMargin: z.coerce.number().min(0).max(100).optional().nullable(),
+    receivablesMargin: z.coerce.number().min(0).max(100).optional().nullable(),
     drawingPowerMode: z.enum(['Manual', 'Automatic']).default('Automatic'),
-    securityType: z.string().optional(),
-    validityPeriod: z.string().optional(), // Date string
-    interestCalculationMethod: z.string().optional()
+    securityType: z.string().optional().nullable(),
+    validityPeriod: z.string().optional().nullable(), // Date string
+    interestCalculationMethod: z.string().optional().nullable()
 });
 
 // Validation Schema for CC Account Update
@@ -30,12 +30,12 @@ const updateCCAccountSchema = z.object({
     accountNo: z.string().min(1, 'Account No is required'),
     sanctionedLimit: z.coerce.number().min(0, 'Limit must be positive'),
     interestRate: z.coerce.number().min(0, 'Interest Rate must be positive'),
-    stockMargin: z.coerce.number().min(0).max(100).optional(),
-    receivablesMargin: z.coerce.number().min(0).max(100).optional(),
+    stockMargin: z.coerce.number().min(0).max(100).optional().nullable(),
+    receivablesMargin: z.coerce.number().min(0).max(100).optional().nullable(),
     drawingPowerMode: z.enum(['Manual', 'Automatic']).default('Automatic'),
-    securityType: z.string().optional(),
-    validityPeriod: z.string().optional(),
-    interestCalculationMethod: z.string().optional()
+    securityType: z.string().optional().nullable(),
+    validityPeriod: z.string().optional().nullable(),
+    interestCalculationMethod: z.string().optional().nullable()
 });
 
 /**

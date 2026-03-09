@@ -151,20 +151,10 @@ export async function getCCAccountStatus(accountId: string): Promise<CCStatus> {
  * @param accountId 
  * @param amount - Amount to be debited (Utilization)
  */
-export async function validateCCTransaction(accountId: string, amount: number) {
-    const status = await getCCAccountStatus(accountId);
-
-    // FIX 5: Validate: newOutstandingAmount <= min(Sanctioned Limit, Drawing Power)
-    const newOutstanding = status.outstandingAmount + amount;
-    const limit = Math.min(status.sanctionedLimit, status.drawingPower);
-
-    if (newOutstanding > limit) {
-        return {
-            allowed: false,
-            message: `CC Utilization (${newOutstanding.toFixed(2)}) exceeds Drawing Power (${status.drawingPower.toFixed(2)}) or Limit (${status.sanctionedLimit.toFixed(2)})`
-        };
-    }
-
+export async function validateCCTransaction(accountId: string, amount: number): Promise<{ allowed: boolean; message?: string }> {
+    // We no longer block transactions that exceed the limit.
+    // The balance will simply accumulate and go further into the negative (overdrawn).
+    // The dashboard/UI will reflect this "overdrawn" state.
     return { allowed: true };
 }
 
@@ -237,9 +227,9 @@ export async function createCCAccount(data: any) {
             interestRate: String(data.interestRate),
             interestCalculationMethod: data.interestCalculationMethod || 'Daily Outstanding',
             drawingPowerMode: data.drawingPowerMode || 'Automatic',
-            stockMargin: String(data.stockMargin || 25),
-            receivablesMargin: String(data.receivablesMargin || 40),
-            securityType: data.securityType,
+            stockMargin: data.stockMargin ? String(data.stockMargin) : '25',
+            receivablesMargin: data.receivablesMargin ? String(data.receivablesMargin) : '40',
+            securityType: data.securityType || null,
             validityPeriod: data.validityPeriod ? new Date(data.validityPeriod) : null
         });
 
@@ -273,9 +263,9 @@ export async function updateCCAccount(id: string, data: any) {
                     interestRate: String(data.interestRate),
                     interestCalculationMethod: data.interestCalculationMethod || 'Daily Outstanding',
                     drawingPowerMode: data.drawingPowerMode || 'Automatic',
-                    stockMargin: String(data.stockMargin || 25),
-                    receivablesMargin: String(data.receivablesMargin || 40),
-                    securityType: data.securityType,
+                    stockMargin: data.stockMargin ? String(data.stockMargin) : '25',
+                    receivablesMargin: data.receivablesMargin ? String(data.receivablesMargin) : '40',
+                    securityType: data.securityType || null,
                     validityPeriod: data.validityPeriod ? new Date(data.validityPeriod) : null
                 })
                 .where(eq(ccAccountDetails.accountId, id));
@@ -287,9 +277,9 @@ export async function updateCCAccount(id: string, data: any) {
                 interestRate: String(data.interestRate),
                 interestCalculationMethod: data.interestCalculationMethod || 'Daily Outstanding',
                 drawingPowerMode: data.drawingPowerMode || 'Automatic',
-                stockMargin: String(data.stockMargin || 25),
-                receivablesMargin: String(data.receivablesMargin || 40),
-                securityType: data.securityType,
+                stockMargin: data.stockMargin ? String(data.stockMargin) : '25',
+                receivablesMargin: data.receivablesMargin ? String(data.receivablesMargin) : '40',
+                securityType: data.securityType || null,
                 validityPeriod: data.validityPeriod ? new Date(data.validityPeriod) : null
             });
         }

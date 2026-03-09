@@ -364,9 +364,18 @@ router.post('/transactions', validateRequest(createTransactionSchema), async (re
                     ledgerType = 'LIABILITY';
                     break;
                 case 'REPAYMENT':
-                    // Split Repayment Logic
-                    const principal = principalAmount ? parseFloat(principalAmount) : amt;
-                    const interest = interestAmount ? parseFloat(interestAmount) : 0;
+                    const principalStr = String(principalAmount ?? '');
+                    const interestStr = String(interestAmount ?? '');
+
+                    let principal = principalStr !== '' ? parseFloat(principalStr) : 0;
+                    let interest = interestStr !== '' ? parseFloat(interestStr) : 0;
+
+                    if (principalStr === '' && interestStr === '') {
+                        principal = amt;
+                    }
+
+                    if (Number.isNaN(principal)) principal = 0;
+                    if (Number.isNaN(interest)) interest = 0;
 
                     if (Math.abs((principal + interest) - amt) > 0.01) {
                         throw createError('Principal + Interest does not match Total Amount', 400);
@@ -602,8 +611,19 @@ router.put('/transactions/:id', validateRequest(createTransactionSchema), async 
                     ledgerType = 'LIABILITY';
                     break;
                 case 'REPAYMENT':
-                    const principal = principalAmount ? parseFloat(principalAmount) : newAmt;
-                    const interest = interestAmount ? parseFloat(interestAmount) : 0;
+                    const principalStrPut = String(principalAmount ?? '');
+                    const interestStrPut = String(interestAmount ?? '');
+
+                    let principal = principalStrPut !== '' ? parseFloat(principalStrPut) : 0;
+                    let interest = interestStrPut !== '' ? parseFloat(interestStrPut) : 0;
+
+                    if (principalStrPut === '' && interestStrPut === '') {
+                        principal = newAmt;
+                    }
+
+                    if (Number.isNaN(principal)) principal = 0;
+                    if (Number.isNaN(interest)) interest = 0;
+
                     if (Math.abs((principal + interest) - newAmt) > 0.01) {
                         throw createError('Principal + Interest does not match Total Amount', 400);
                     }

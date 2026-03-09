@@ -266,21 +266,9 @@ export function Masters() {
             : await mastersApi.createAccount(formData);
           break;
         case 'cc-account':
-          // Only Create is supported properly via specialized route?
-          // Actually createCCAccount route exists. Update not explicit in `api.ts` or `cc-accounts.ts`.
-          // I'll assume only Create for now or use generic update logic if I added it.
-          // I didn't add updateCCAccount.
-          // So if editingItem, I might fail or need to add it.
-          // Let's support Create only for now, or fallback to error.
-          // "CC Account Setup" usually implies Create. updates normally done by admin directly or I need to add PUT.
-          if (editingItem) {
-            // Fallback to error or simple account update?
-            // CC Details are complex.
-            setError('Update not implemented for CC Accounts yet.');
-            setSaving(false);
-            return;
-          }
-          result = await mastersApi.createCCAccount(formData);
+          result = editingItem
+            ? await mastersApi.updateCCAccount(editingItem.accountId || editingItem.id, formData)
+            : await mastersApi.createCCAccount(formData);
           break;
         case 'employee':
           result = editingItem
