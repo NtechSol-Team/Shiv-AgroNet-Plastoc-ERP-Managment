@@ -210,6 +210,7 @@ interface InvoiceData {
     amount?: number | string;
     pieceCount?: number | string;
     batchCode?: string;
+    childItems?: any[];
   }>;
   subtotal?: number | string;
   totalDiscount?: number | string;
@@ -609,8 +610,9 @@ export function printInvoice(invoice: InvoiceData): void {
                 <td align="center">${idx + 1}</td>
                 <td>
                     <div style="font-weight: bold; text-transform: uppercase;">
-                        ${item.batchCode ? 'WARP KNIT FABRIC<br/>' + escapeHtml(item.batchCode) + ' - ' + escapeHtml(item.finishedProduct?.name || item.productName || 'Item') : escapeHtml(item.productName || item.finishedProduct?.name || 'Item')}
-                        ${item.pieceCount ? `<span style="font-size: 10px; color: #333; font-weight: normal;">(${escapeHtml(String(Math.round(Number(item.pieceCount))))} pcs)</span>` : ''}
+                        ${item.batchCode || item.finishedProduct || item.childItems?.length || item.productName?.includes('(Bale)') ? 'WARP KNIT FABRIC<br/>' : ''}
+                        ${escapeHtml(item.productName || item.finishedProduct?.name || 'Item')}
+                        ${item.pieceCount && !item.productName?.includes('pcs') ? ` <span style="font-size: 10px; color: #333; font-weight: normal;">(${escapeHtml(String(Math.round(Number(item.pieceCount))))} pcs)</span>` : ''}
                     </div>
                 </td>
                 <td align="center">${escapeHtml(item.hsnCode || '3901')}</td>

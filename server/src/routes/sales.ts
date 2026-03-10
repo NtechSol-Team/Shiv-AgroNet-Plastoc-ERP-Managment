@@ -317,20 +317,27 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
 
                 // Start Update: Get Bell Name if applicable
                 if (item.bellItemId) {
-                    // Modified to fetch Batch Code instead of Bell Item Code
                     const bellData = await db
                         .select({
                             code: bellItems.code,
-                            batchCode: bellBatches.code
+                            batchCode: bellBatches.code,
+                            pieceCount: bellItems.pieceCount
                         })
                         .from(bellItems)
                         .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id))
                         .where(eq(bellItems.id, item.bellItemId));
 
                     if (bellData[0]) {
-                        // Use Batch Code if available (e.g. PB-008), fallback to Item Code (PB-008-001)
                         const itemCode = bellData[0].batchCode || bellData[0].code;
-                        productName = `${itemCode} - ${productName}`;
+                        const pcs = bellData[0].pieceCount || '1';
+                        productName = `${itemCode} - ${productName} (${Math.round(Number(pcs))} pcs)`;
+                    }
+                } else if (item.childItems && item.childItems.length > 0) {
+                    const representative = item.childItems[0];
+                    const itemCode = representative.batch?.code || representative.code || representative.batchCode;
+                    const totalPcs = item.childItems.reduce((sum: number, b: any) => sum + Number(b.pieceCount || 1), 0);
+                    if (itemCode) {
+                        productName = `${itemCode} - ${productName} (${Math.round(totalPcs)} pcs)`;
                     }
                 }
                 // End Update
@@ -704,14 +711,22 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
 
                     if (item.bellItemId) {
                         const bellData = await tx
-                            .select({ code: bellItems.code, batchCode: bellBatches.code })
+                            .select({ code: bellItems.code, batchCode: bellBatches.code, pieceCount: bellItems.pieceCount })
                             .from(bellItems)
                             .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id))
                             .where(eq(bellItems.id, item.bellItemId));
 
                         if (bellData[0]) {
                             const itemCode = bellData[0].batchCode || bellData[0].code;
-                            productName = `${itemCode} - ${productName}`;
+                            const pcs = bellData[0].pieceCount || '1';
+                            productName = `${itemCode} - ${productName} (${Math.round(Number(pcs))} pcs)`;
+                        }
+                    } else if (item.childItems && item.childItems.length > 0) {
+                        const representative = item.childItems[0];
+                        const itemCode = representative.batch?.code || representative.code || representative.batchCode;
+                        const totalPcs = item.childItems.reduce((sum: number, b: any) => sum + Number(b.pieceCount || 1), 0);
+                        if (itemCode) {
+                            productName = `${itemCode} - ${productName} (${Math.round(totalPcs)} pcs)`;
                         }
                     }
                 } else if (item.rawMaterialRollId) {
