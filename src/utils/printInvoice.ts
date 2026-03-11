@@ -347,7 +347,7 @@ export function printInvoice(invoice: InvoiceData): void {
   const terms = invoice.termsAndConditions || [
     'Goods once sold will not be taken back.',
     'Interest @24% p.a. will be charged if payment is not made within due date.',
-    'Subject to ' + company.city + ' Jurisdiction only.'
+    'Subject to Surat Jurisdiction only.'
   ];
 
   const logoUrl = `${window.location.origin}/product-logo.png`;
@@ -733,19 +733,21 @@ export function printInvoice(invoice: InvoiceData): void {
         </div>
     </div>
 
-    <div class="declaration">
-        <strong>Terms & Conditions:</strong>
-        <ol>
-            ${terms.map(t => `<li>${escapeHtml(t)}</li>`).join('')}
-        </ol>
-        <p><strong>Declaration:</strong> We hereby declare that this invoice shows the actual price of the goods/services described and that all particulars are true and correct.</p>
-    </div>
+    <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 15px;">
+        <div class="declaration" style="margin-top: 0; width: 65%;">
+            <strong>Terms & Conditions:</strong>
+            <ol>
+                ${terms.map(t => `<li>${escapeHtml(t)}</li>`).join('')}
+            </ol>
+            <p style="margin-top: 10px;"><strong>Declaration:</strong> We hereby declare that this invoice shows the actual price of the goods/services described and that all particulars are true and correct.</p>
+        </div>
 
-    <div class="signature-section">
-        <div class="sig-box">
-            For <strong>${escapeHtml(company.legalName || company.name)}</strong>
-            <img class="signature-img" src="${signUrl}" onerror="this.style.display='none'" alt="Signature" />
-            Authorized Signatory
+        <div class="signature-section" style="margin-top: 0; width: 30%; display: flex; flex-direction: column; align-items: center; justify-content: flex-end;">
+            <div class="sig-box" style="text-align: center; width: 100%;">
+                <div style="margin-bottom: 5px;">For <strong>${escapeHtml(company.legalName || company.name)}</strong></div>
+                <img class="signature-img" src="${signUrl}" onerror="this.style.display='none'" alt="Signature" style="max-height: 60px; margin: 10px auto;" />
+                <div style="margin-top: 5px;">Authorized Signatory</div>
+            </div>
         </div>
     </div>
 </div>

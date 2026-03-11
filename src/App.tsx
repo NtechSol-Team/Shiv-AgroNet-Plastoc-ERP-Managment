@@ -9,8 +9,8 @@ import { Accounts } from './components/Accounts';
 import { Finance } from './components/Finance';
 import { Samples } from './components/Samples'; // NEW
 import { Reports } from './components/Reports';
+import { MonthlyAnalysis } from './components/MonthlyAnalysis'; // NEW
 import { GstDashboard } from './components/GstDashboard';
-// import { Header } from './components/Header'; // Deprecated
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { MasterDataProvider } from './context/MasterDataContext';
@@ -49,6 +49,8 @@ export default function App() {
         return <Samples />;
       case 'reports':
         return <Reports />;
+      case 'analysis':
+        return <MonthlyAnalysis />;
       case 'gst-dashboard':
         return <GstDashboard />;
       default:

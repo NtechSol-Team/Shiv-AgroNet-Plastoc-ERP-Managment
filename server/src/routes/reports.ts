@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db/index';
 import { productionBatches, salesInvoices, purchaseBills, purchaseBillItems, finishedProducts, rawMaterials, expenses, stockMovements, customers, suppliers } from '../db/schema';
-import { eq, desc, sql } from 'drizzle-orm';
+import { eq, desc, sql, and } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 
 const router = Router();
@@ -311,6 +311,128 @@ router.get('/ledger-summary/:type', async (req, res, next) => {
             });
             res.json(successResponse(data));
         }
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Monthly Profitability / Economics Analysis
+router.get('/monthly-economics', async (req, res, next) => {
+    try {
+        const { month } = req.query; // e.g. "2024-03"
+
+        let startDate: Date | undefined;
+        let endDate: Date | undefined;
+
+        if (month !== 'all') {
+            if (month) {
+                const [year, m] = (month as string).split('-');
+                startDate = new Date(parseInt(year), parseInt(m) - 1, 1);
+                endDate = new Date(parseInt(year), parseInt(m), 0, 23, 59, 59, 999);
+            } else {
+                // Default to current month
+                const now = new Date();
+                startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+            }
+        }
+
+        const dateQuery = startDate && endDate ? and(
+            sql`${sql.raw('date')} >= ${startDate.toISOString()}`,
+            sql`${sql.raw('date')} <= ${endDate.toISOString()}`
+        ) : undefined;
+        const invoiceDateQuery = startDate && endDate ? and(
+            sql`invoice_date >= ${startDate.toISOString()}`,
+            sql`invoice_date <= ${endDate.toISOString()}`
+        ) : undefined;
+        const completionDateQuery = startDate && endDate ? and(
+            sql`completion_date >= ${startDate.toISOString()}`,
+            sql`completion_date <= ${endDate.toISOString()}`
+        ) : undefined;
+
+        // 1. Total Raw Material Purchases (Taxable Amount)
+        const purchaseResult = await db
+            .select({ totalValue: sql<string>`COALESCE(SUM(subtotal), 0)` })
+            .from(purchaseBills)
+            .where(and(
+                startDate && endDate ? sql`date >= ${startDate.toISOString()}` : undefined,
+                startDate && endDate ? sql`date <= ${endDate.toISOString()}` : undefined,
+                eq(purchaseBills.status, 'Confirmed')
+            ));
+
+        const totalPurchases = parseFloat(purchaseResult[0]?.totalValue || '0');
+
+        // 2. Total Expenses & Breakdown
+        const allExpenses = await db.query.expenses.findMany({
+            where: dateQuery,
+            with: { expenseHead: true }
+        });
+
+        let totalExpenses = 0;
+        const expenseBreakdownMap = new Map<string, number>();
+
+        allExpenses.forEach(exp => {
+            const amount = parseFloat(exp.amount || '0');
+            totalExpenses += amount;
+
+            const headName = exp.expenseHead?.name || 'Other';
+            expenseBreakdownMap.set(headName, (expenseBreakdownMap.get(headName) || 0) + amount);
+        });
+
+        const expenseBreakdown = Array.from(expenseBreakdownMap.entries())
+            .map(([name, value]) => ({ name, value }))
+            .sort((a, b) => b.value - a.value); // Sort by highest expense first
+
+        // 3. Total Finished Goods Produced (KG)
+        const productionResult = await db
+            .select({ totalKg: sql<string>`COALESCE(SUM(output_quantity), 0)` })
+            .from(productionBatches)
+            .where(and(
+                completionDateQuery,
+                eq(productionBatches.status, 'completed')
+            ));
+
+        const totalProductionKg = parseFloat(productionResult[0]?.totalKg || '0');
+
+        // 4. Total Sales & Total Sales KG
+        const salesInvoicesResult = await db.query.salesInvoices.findMany({
+            where: and(
+                invoiceDateQuery,
+                eq(salesInvoices.status, 'Confirmed')
+            ),
+            with: { items: true }
+        });
+
+        let totalSalesRevenue = 0;
+        let totalSalesKg = 0;
+
+        salesInvoicesResult.forEach(inv => {
+            totalSalesRevenue += parseFloat(inv.taxableAmount || '0');
+            inv.items.forEach(item => {
+                totalSalesKg += parseFloat(item.quantity || '0');
+            });
+        });
+
+        // 5. Calculate Metrics
+        const totalCost = totalPurchases + totalExpenses;
+        const costPerKg = totalProductionKg > 0 ? totalCost / totalProductionKg : 0;
+        const avgSellingPrice = totalSalesKg > 0 ? totalSalesRevenue / totalSalesKg : 0;
+        const profitPerKg = avgSellingPrice > 0 && costPerKg > 0 ? avgSellingPrice - costPerKg : 0;
+
+        res.json(successResponse({
+            month: month === 'all' ? 'all' : (month || (startDate && `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`)),
+            totalPurchases,
+            totalExpenses,
+            totalCost,
+            totalProductionKg,
+            totalSalesRevenue,
+            totalSalesKg,
+            costPerKg,
+            avgSellingPrice,
+            profitPerKg,
+            expenseBreakdown
+        }));
+
     } catch (error) {
         next(error);
     }

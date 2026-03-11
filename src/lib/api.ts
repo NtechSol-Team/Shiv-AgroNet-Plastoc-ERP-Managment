@@ -501,6 +501,7 @@ export const reportsApi = {
     getStockValuation: () => fetchApi<any>('/reports/stock-valuation'),
     getExpenses: () => fetchApi<any>('/reports/expenses'),
     getLedgerSummary: (type: 'customer' | 'supplier') => fetchApi<any[]>(`/reports/ledger-summary/${type}`),
+    getMonthlyEconomics: (month: string) => fetchApi<any>(`/reports/monthly-economics?month=${month}`),
 };
 
 // ==================== DASHBOARD API ====================
