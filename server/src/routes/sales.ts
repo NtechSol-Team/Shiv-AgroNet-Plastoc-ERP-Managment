@@ -288,10 +288,13 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
                     if (bell.status !== 'Available') throw createError(`Bell item ${bell.code} is already ${bell.status}`, 400);
                     // End Update
                 } else if (item.finishedProductId) {
-                    const validation = await validateFinishedProductStock(item.finishedProductId, item.quantity);
-                    if (!validation.isValid) {
-                        const [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
-                        throw createError(`Insufficient stock for ${product?.name || 'product'}: ${validation.message}`, 400);
+                    // Only validate regular finished goods, bales are discrete and bypassed
+                    if (!item.bellItemId && (!item.childItems || item.childItems.length === 0)) {
+                        const validation = await validateFinishedProductStock(item.finishedProductId, item.quantity);
+                        if (!validation.isValid) {
+                            const [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+                            throw createError(`Insufficient stock for ${product?.name || 'product'}: ${validation.message}`, 400);
+                        }
                     }
                 }
             }
@@ -682,10 +685,13 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                         }
                         // End Correction
                     } else if (item.finishedProductId) {
-                        const validation = await validateFinishedProductStock(item.finishedProductId, item.quantity);
-                        if (!validation.isValid) {
-                            const [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
-                            throw createError(`Insufficient stock for ${product?.name || 'product'}: ${validation.message}`, 400);
+                        // Only validate regular finished goods, bales are discrete and bypassed
+                        if (!item.bellItemId && (!item.childItems || item.childItems.length === 0)) {
+                            const validation = await validateFinishedProductStock(item.finishedProductId, item.quantity, tx);
+                            if (!validation.isValid) {
+                                const [product] = await tx.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+                                throw createError(`Insufficient stock for ${product?.name || 'product'}: ${validation.message}`, 400);
+                            }
                         }
                     }
                 }

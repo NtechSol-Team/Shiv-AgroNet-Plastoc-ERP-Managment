@@ -268,9 +268,10 @@ export async function getAllFinishedProductsWithStock() {
  */
 export async function validateRawMaterialStock(
     rawMaterialId: string,
-    requiredQuantity: number
+    requiredQuantity: number,
+    tx: any = db
 ): Promise<StockValidationResult> {
-    const currentStock = await getRawMaterialStock(rawMaterialId);
+    const currentStock = await getRawMaterialStock(rawMaterialId, tx);
     const isValid = currentStock >= requiredQuantity;
 
     return {
@@ -293,9 +294,10 @@ export async function validateRawMaterialStock(
  */
 export async function validateFinishedProductStock(
     finishedProductId: string,
-    requiredQuantity: number
+    requiredQuantity: number,
+    tx: any = db
 ): Promise<StockValidationResult> {
-    const currentStock = await getFinishedProductStock(finishedProductId);
+    const currentStock = await getFinishedProductStock(finishedProductId, tx);
     const isValid = currentStock >= requiredQuantity;
 
     return {
