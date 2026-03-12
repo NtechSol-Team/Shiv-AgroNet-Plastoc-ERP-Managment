@@ -11,7 +11,8 @@ import {
     ChevronRight,
     Wallet,
     ReceiptText,
-    TrendingUp
+    TrendingUp,
+    Box
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -31,6 +32,7 @@ export function Sidebar({ activeModule, onModuleChange }: SidebarProps) {
         { id: 'finance', label: 'Finance', icon: Wallet },
         { id: 'reports', label: 'Reports', icon: FileText },
         { id: 'analysis', label: 'Analysis', icon: TrendingUp },
+        { id: 'samples', label: 'Samples', icon: Box },
         { id: 'gst-dashboard', label: 'GST Dashboard', icon: ReceiptText },
     ];
 

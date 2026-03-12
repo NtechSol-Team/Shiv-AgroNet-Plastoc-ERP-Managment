@@ -646,6 +646,7 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                                                     value={row.pieceCount}
                                                     onChange={(e) => updateRow(rowIdx, { pieceCount: e.target.value })}
                                                     onKeyDown={(e) => handleCellKey(e, rowIdx, 3)}
+                                                    onFocus={(e) => e.target.select()}
                                                     className="w-full border-none hover:bg-slate-100 focus:bg-white focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 text-xs text-right font-mono bg-transparent outline-none transition-all"
                                                 />
                                             </td>
@@ -656,6 +657,7 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                                                     value={row.grossWeight}
                                                     onChange={(e) => updateRow(rowIdx, { grossWeight: e.target.value })}
                                                     onKeyDown={(e) => handleCellKey(e, rowIdx, 4)}
+                                                    onFocus={(e) => e.target.select()}
                                                     placeholder="0.00"
                                                     className="w-full border-none hover:bg-blue-50 focus:bg-white focus:ring-1 focus:ring-blue-400 rounded px-1 py-0.5 text-xs text-right font-mono font-bold bg-transparent outline-none transition-all text-blue-700 placeholder:text-slate-300"
                                                 />
@@ -670,6 +672,7 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                                                         if (e.key === 'Enter') { e.preventDefault(); addNewRow(); }
                                                         else handleCellKey(e, rowIdx, 5);
                                                     }}
+                                                    onFocus={(e) => e.target.select()}
                                                     placeholder="0"
                                                     className="w-full border-none hover:bg-orange-50 focus:bg-white focus:ring-1 focus:ring-orange-300 rounded px-1 py-0.5 text-xs text-right font-mono bg-transparent outline-none transition-all text-orange-600 placeholder:text-slate-300"
                                                 />
@@ -872,6 +875,7 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                                                                                     type="number"
                                                                                     value={editForm.pieceCount}
                                                                                     onChange={(e) => setEditForm({ ...editForm, pieceCount: e.target.value })}
+                                                                                    onFocus={(e) => e.target.select()}
                                                                                     className="w-20 px-2 py-1 border border-blue-300 rounded text-right text-sm focus:ring-1 focus:ring-blue-500"
                                                                                 />
                                                                             ) : item.pieceCount}
@@ -883,6 +887,7 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                                                                                     step="0.01"
                                                                                     value={editForm.netWeight}
                                                                                     onChange={(e) => setEditForm({ ...editForm, netWeight: e.target.value })}
+                                                                                    onFocus={(e) => e.target.select()}
                                                                                     className="w-24 px-2 py-1 border border-blue-300 rounded text-right text-sm focus:ring-1 focus:ring-blue-500"
                                                                                 />
                                                                             ) : item.netWeight}
