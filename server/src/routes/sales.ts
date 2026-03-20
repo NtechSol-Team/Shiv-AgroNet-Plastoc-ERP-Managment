@@ -118,21 +118,39 @@ router.get('/invoices', async (req: Request, res: Response, next: NextFunction) 
             .select()
             .from(invoiceItems)
             .leftJoin(finishedProducts, eq(invoiceItems.finishedProductId, finishedProducts.id))
-            .leftJoin(bellItems, eq(invoiceItems.bellItemId, bellItems.id))
+            .leftJoin(bellItems, eq(invoiceItems.id, bellItems.invoiceItemId))
             .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id))
             .where(inArray(invoiceItems.invoiceId, invoiceIds));
 
-        // Group items by invoiceId
-        const itemsMap = new Map<string, any[]>();
+        // First, group rows by invoiceItem.id to aggregate childItems (bales)
+        const aggregatedItemsMap = new Map<string, any>();
         allItems.forEach(row => {
-            const iId = row.invoice_items.invoiceId;
+            const itemId = row.invoice_items.id;
+            if (!aggregatedItemsMap.has(itemId)) {
+                aggregatedItemsMap.set(itemId, {
+                    ...row.invoice_items,
+                    finishedProduct: row.finished_products,
+                    childItems: [],
+                    // Summary fields for list view compatibility
+                    pieceCount: row.bell_items?.pieceCount,
+                    batchCode: row.bell_batches?.code,
+                });
+            }
+
+            if (row.bell_items) {
+                aggregatedItemsMap.get(itemId).childItems.push({
+                    ...row.bell_items,
+                    batch: row.bell_batches
+                });
+            }
+        });
+
+        // Group aggregated items by invoiceId
+        const itemsMap = new Map<string, any[]>();
+        aggregatedItemsMap.forEach(item => {
+            const iId = item.invoiceId;
             if (!itemsMap.has(iId)) itemsMap.set(iId, []);
-            itemsMap.get(iId)?.push({
-                ...row.invoice_items,
-                finishedProduct: row.finished_products,
-                pieceCount: row.bell_items?.pieceCount,
-                batchCode: row.bell_batches?.code, // Added batchCode
-            });
+            itemsMap.get(iId)?.push(item);
         });
 
         // 4. Merge
@@ -198,7 +216,7 @@ router.get('/available-rolls', async (req: Request, res: Response, next: NextFun
 
 router.post('/invoices', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        let {
+        const {
             invoiceDate,
             customerId,
             customerName,
@@ -208,320 +226,278 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
             items
         } = req.body as CreateInvoiceRequest & { items: (InvoiceItem & { bellItemId?: string })[], placeOfSupply?: string };
 
-        // Validate items
         if (!items || items.length === 0) {
-            throw createError('At least one item required', 400);
+            throw createError('No items provided', 400);
         }
 
-        // Get customer if B2B
-        let customer = null;
-        let isInterState = false;
-        let finalCustomerName = customerName || 'Walk-in Customer';
+        // Start Transaction
+        const result = await db.transaction(async (tx) => {
+            // 1. Generate invoice number (INV/YYYY-YY/XXX)
+            const today = new Date();
+            const year = today.getFullYear();
+            const fiscalYear = today.getMonth() > 2 ? `${year}-${(year + 1).toString().slice(-2)}` : `${year - 1}-${year.toString().slice(-2)}`;
+            const prefix = `INV/${fiscalYear}/`;
 
-        if (invoiceType === 'B2B') {
-            if (!customerId) throw createError('Customer required for B2B invoice', 400);
-            [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
-            if (!customer) throw createError('Customer not found', 404);
+            const lastInvoiceResult = await tx
+                .select()
+                .from(invoices)
+                .where(sql`${invoices.invoiceNumber} LIKE ${prefix + '%'}`)
+                .orderBy(desc(invoices.createdAt))
+                .limit(1);
 
-            // Extract state code from GST number (first 2 digits)
-            const gstStateCode = (customer.gstNo && customer.gstNo.length >= 2) ? customer.gstNo.substring(0, 2) : null;
-            const validGstCode = (gstStateCode && /^\d{2}$/.test(gstStateCode)) ? gstStateCode : null;
-
-            // Priority: provided placeOfSupply > code from GST > customer state > default 24
-            const effectivePOS = placeOfSupply || validGstCode || customer.stateCode || COMPANY_STATE_CODE;
-            isInterState = effectivePOS !== COMPANY_STATE_CODE;
-            finalCustomerName = customer.name;
-            // Update placeOfSupply for DB insert
-            if (!placeOfSupply) placeOfSupply = effectivePOS;
-        } else {
-            // For B2C, use provided placeOfSupply or default to company state
-            isInterState = (placeOfSupply || COMPANY_STATE_CODE) !== COMPANY_STATE_CODE;
-            if (!placeOfSupply) placeOfSupply = COMPANY_STATE_CODE;
-        }
-
-        // Generate invoice number
-        // Format: SA/25-26/001
-        const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonth = now.getMonth(); // 0-11
-
-        // If month is Jan-Mar (0-2), financial year started previous calendar year
-        // FY 25-26 covers April 2025 to March 2026
-        let startYear = currentYear;
-        if (currentMonth < 3) {
-            startYear = currentYear - 1;
-        }
-
-        const fyString = `${String(startYear).slice(-2)}-${String(startYear + 1).slice(-2)}`;
-        const prefix = `SA/${fyString}/`;
-
-        // Find last invoice with this prefix
-        const lastInvoiceResult = await db.select({ invoiceNumber: invoices.invoiceNumber })
-            .from(invoices)
-            .where(sql`${invoices.invoiceNumber} LIKE ${prefix + '%'}`)
-            .orderBy(desc(invoices.createdAt))
-            .limit(1);
-
-        let sequence = 1;
-        if (lastInvoiceResult.length > 0) {
-            const lastNo = lastInvoiceResult[0].invoiceNumber;
-            const parts = lastNo.split('/');
-            const lastSeq = parseInt(parts[parts.length - 1]);
-            if (!isNaN(lastSeq)) {
-                sequence = lastSeq + 1;
-            }
-        }
-
-        const invoiceNumber = `${prefix}${String(sequence).padStart(3, '0')}`;
-
-        // If confirming, validate all stock first
-        if (status === 'Confirmed') {
-            for (const item of items) {
-                if (item.rawMaterialRollId) {
-                    const [roll] = await db.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
-                    if (!roll) throw createError(`Roll not found`, 404);
-                    if (roll.status !== 'In Stock') throw createError(`Roll ${roll.rollCode} is already ${roll.status}`, 400);
-                } else if (item.bellItemId) {
-                    // Start Update: Bell Item Logic
-                    const [bell] = await db.select().from(bellItems).where(eq(bellItems.id, item.bellItemId));
-                    if (!bell) throw createError(`Bell item not found not found`, 404);
-                    if (bell.status !== 'Available') throw createError(`Bell item ${bell.code} is already ${bell.status}`, 400);
-                    // End Update
-                } else if (item.finishedProductId) {
-                    // Only validate regular finished goods, bales are discrete and bypassed
-                    if (!item.bellItemId && (!item.childItems || item.childItems.length === 0)) {
-                        const validation = await validateFinishedProductStock(item.finishedProductId, item.quantity);
-                        if (!validation.isValid) {
-                            const [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
-                            throw createError(`Insufficient stock for ${product?.name || 'product'}: ${validation.message}`, 400);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Calculate totals from items
-        let subtotal = 0;
-        let totalDiscount = 0;
-        let totalCgst = 0;
-        let totalSgst = 0;
-        let totalIgst = 0;
-
-        const processedItems = await Promise.all(items.map(async item => {
-            let productName = 'Unknown Item';
-            let hsnCode = '60059000';
-            let product = null;
-
-            if (item.finishedProductId) {
-                // Get product for name
-                [product] = await db.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
-                productName = product?.name || 'Unknown Product';
-                hsnCode = product?.hsnCode || '60059000';
-
-                // Start Update: Get Bell Name if applicable
-                if (item.bellItemId) {
-                    const bellData = await db
-                        .select({
-                            code: bellItems.code,
-                            batchCode: bellBatches.code,
-                            pieceCount: bellItems.pieceCount
-                        })
-                        .from(bellItems)
-                        .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id))
-                        .where(eq(bellItems.id, item.bellItemId));
-
-                    if (bellData[0]) {
-                        const itemCode = bellData[0].batchCode || bellData[0].code;
-                        const pcs = bellData[0].pieceCount || '1';
-                        productName = `${itemCode} - ${productName} (${Math.round(Number(pcs))} pcs)`;
-                    }
-                } else if (item.childItems && item.childItems.length > 0) {
-                    const representative = item.childItems[0];
-                    const itemCode = representative.batch?.code || representative.code || representative.batchCode;
-                    const totalPcs = item.childItems.reduce((sum: number, b: any) => sum + Number(b.pieceCount || 1), 0);
-                    if (itemCode) {
-                        productName = `${itemCode} - ${productName} (${Math.round(totalPcs)} pcs)`;
-                    }
-                }
-                // End Update
-            } else if (item.rawMaterialRollId) {
-                const [roll] = await db.select().from(rawMaterialRolls)
-                    .leftJoin(rawMaterials, eq(rawMaterialRolls.rawMaterialId, rawMaterials.id))
-                    .where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
-                if (roll && roll.raw_materials) {
-                    productName = `${roll.raw_material_rolls.rollCode} - ${roll.raw_materials.name}`;
-                    hsnCode = roll.raw_materials.hsnCode || '3901';
-                }
-            } else if (item.rawMaterialId) {
-                const [material] = await db.select().from(rawMaterials).where(eq(rawMaterials.id, item.rawMaterialId));
-                if (material) {
-                    productName = material.name;
-                    hsnCode = material.hsnCode || '3901';
-                }
-            } else if (item.generalItemId) {
-                const [genItem] = await db.select().from(generalItems).where(eq(generalItems.id, item.generalItemId));
-                if (genItem) {
-                    productName = genItem.name;
-                    hsnCode = '00000000'; // Default for general items
+            let sequence = 1;
+            if (lastInvoiceResult.length > 0) {
+                const lastNo = lastInvoiceResult[0].invoiceNumber;
+                const parts = lastNo.split('/');
+                const lastSeq = parseInt(parts[parts.length - 1]);
+                if (!isNaN(lastSeq)) {
+                    sequence = lastSeq + 1;
                 }
             }
 
-            const amount = item.quantity * item.rate;
-            // Frontend passes total discount amount for the line item
-            const discount = item.discount || 0;
-            const taxableAmount = amount - discount;
-            const gstAmount = (taxableAmount * item.gstPercent) / 100;
+            const invoiceNumber = `${prefix}${String(sequence).padStart(3, '0')}`;
 
-            subtotal += amount;
-            totalDiscount += discount; // Summing up all item-level discount amounts
-
-            const cgst = isInterState ? 0 : gstAmount / 2;
-            const sgst = isInterState ? 0 : gstAmount / 2;
-            const igst = isInterState ? gstAmount : 0;
-
-            if (isInterState) {
-                totalIgst += igst;
-            } else {
-                totalCgst += cgst;
-                totalSgst += sgst;
-            }
-
-            return {
-                ...item,
-                productName,
-                hsnCode,
-                product,
-                amount,
-                taxableAmount,
-                cgst,
-                sgst,
-                igst,
-                total: taxableAmount + gstAmount,
-            } as any;
-        }));
-
-        const totalTax = totalCgst + totalSgst + totalIgst;
-        const taxableTotal = subtotal - totalDiscount;
-        // Grand Total = Taxable Total + Total Tax
-        const grandTotal = Math.round(taxableTotal + totalTax);
-
-        // Create invoice
-        const [invoice] = await db.insert(invoices).values({
-            invoiceNumber,
-            invoiceDate: new Date(invoiceDate),
-            customerId: customer?.id || null,
-            customerName: finalCustomerName,
-            customerGST: customer?.gstNo || null,
-            invoiceType,
-            placeOfSupply: placeOfSupply,
-            subtotal: String(subtotal),
-            discountAmount: String(totalDiscount),
-            taxableAmount: String(taxableTotal),
-            cgst: String(totalCgst),
-            sgst: String(totalSgst),
-            igst: String(totalIgst),
-            totalTax: String(totalTax),
-            grandTotal: String(grandTotal),
-            paidAmount: '0',
-            balanceAmount: String(grandTotal),
-            paymentStatus: 'Unpaid',
-            status,
-        }).returning();
-
-        // Insert items
-        const insertedItems = await Promise.all(
-            processedItems.map(async (item) => {
-                const [insertedItem] = (await db.insert(invoiceItems).values({
-                    invoiceId: invoice.id,
-                    finishedProductId: item.finishedProductId || null,
-                    rawMaterialId: item.rawMaterialId || null,
-                    rawMaterialRollId: item.rawMaterialRollId || null,
-                    generalItemId: item.generalItemId || null,
-                    productName: item.productName,
-                    hsnCode: item.hsnCode || '60059000',
-                    quantity: String(item.quantity),
-                    rate: String(item.rate),
-                    amount: String(item.amount),
-                    discountAmount: String(item.discount || 0),
-                    bellItemId: item.bellItemId,
-
-                    taxableAmount: String(item.taxableAmount),
-                    gstPercent: String(item.gstPercent),
-                    cgst: String(item.cgst),
-                    sgst: String(item.sgst),
-                    igst: String(item.igst),
-                    totalAmount: String(item.total),
-                }).returning()) as any[];
-
-                if (status === 'Confirmed') {
+            // 2. If confirming, validate all stock first
+            if (status === 'Confirmed') {
+                for (const item of items) {
                     if (item.rawMaterialRollId) {
-                        await db.update(rawMaterialRolls)
-                            .set({ status: 'Sold' })
-                            .where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
-
-                        await createStockMovement({
-                            date: new Date(),
-                            movementType: 'RAW_OUT',
-                            itemType: 'raw_material',
-                            rawMaterialId: item.rawMaterialId!,
-                            quantityOut: Number(item.quantity),
-                            referenceType: 'sales',
-                            referenceCode: invoiceNumber,
-                            referenceId: invoice.id,
-                            reason: `Sold Roll ${item.productName} to ${finalCustomerName}`,
-                        }, db);
-                    } else if (item.bellItemId || (item.childItems && item.childItems.length > 0)) {
-                        // Start Update: Update Bell Status and Link to Invoice Item
-                        const baleIds = item.bellItemId ? [item.bellItemId] : (item.childItems || []).map((b: any) => b.id);
-
-                        for (const baleId of baleIds) {
-                            await db.update(bellItems)
-                                .set({
-                                    status: 'Sold',
-                                    invoiceItemId: insertedItem.id,
-                                    updatedAt: new Date()
-                                })
-                                .where(eq(bellItems.id, baleId));
-                        }
-                        // End Update
+                        const [roll] = await tx.select().from(rawMaterialRolls).where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
+                        if (!roll) throw createError(`Roll not found`, 404);
+                        if (roll.status !== 'In Stock') throw createError(`Roll ${roll.rollCode} is already ${roll.status}`, 400);
+                    } else if (item.bellItemId) {
+                        const [bell] = await tx.select().from(bellItems).where(eq(bellItems.id, item.bellItemId));
+                        if (!bell) throw createError(`Bell item not found`, 404);
+                        if (bell.status !== 'Available') throw createError(`Bell item ${bell.code} is already ${bell.status}`, 400);
                     } else if (item.finishedProductId) {
-                        // ONLY create FG_OUT movement for non-bale items
-                        // Bales already deducted stock from FG when they were created
-                        await createStockMovement({
-                            date: new Date(),
-                            movementType: 'FG_OUT',
-                            itemType: 'finished_product',
-                            finishedProductId: item.finishedProductId,
-                            quantityOut: Number(item.quantity),
-                            referenceType: 'sales',
-                            referenceCode: invoiceNumber,
-                            referenceId: invoice.id,
-                            reason: `Sold to ${finalCustomerName}`,
-                        }, db);
-                    } else if (item.rawMaterialId) {
-                        await createStockMovement({
-                            date: new Date(),
-                            movementType: 'RAW_OUT',
-                            itemType: 'raw_material',
-                            rawMaterialId: item.rawMaterialId,
-                            quantityOut: Number(item.quantity),
-                            referenceType: 'sales',
-                            referenceCode: invoiceNumber,
-                            referenceId: invoice.id,
-                            reason: `Sold material ${item.productName} to ${finalCustomerName}`,
-                        }, db);
+                        // Only validate regular finished goods, bales are discrete and bypassed
+                        if (!item.bellItemId && (!item.childItems || item.childItems.length === 0)) {
+                            const validation = await validateFinishedProductStock(item.finishedProductId, item.quantity, tx);
+                            if (!validation.isValid) {
+                                const [product] = await tx.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+                                throw createError(`Insufficient stock for ${product?.name || 'product'}: ${validation.message}`, 400);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Process items and calculate totals
+            let subtotal = 0;
+            let totalDiscount = 0;
+            let totalCgst = 0;
+            let totalSgst = 0;
+            let totalIgst = 0;
+
+            const effectivePOS = placeOfSupply || COMPANY_STATE_CODE;
+            const isInterState = effectivePOS !== COMPANY_STATE_CODE;
+
+            const processedItems = await Promise.all(items.map(async item => {
+                let productName = 'Unknown Item';
+                let hsnCode = '60059000';
+                let product = null;
+
+                if (item.finishedProductId) {
+                    [product] = await tx.select().from(finishedProducts).where(eq(finishedProducts.id, item.finishedProductId));
+                    productName = product?.name || 'Unknown Product';
+                    hsnCode = product?.hsnCode || '60059000';
+
+                    if (item.bellItemId) {
+                        const bellData = await tx
+                            .select({ code: bellItems.code, batchCode: bellBatches.code, pieceCount: bellItems.pieceCount })
+                            .from(bellItems)
+                            .leftJoin(bellBatches, eq(bellItems.batchId, bellBatches.id))
+                            .where(eq(bellItems.id, item.bellItemId));
+
+                        if (bellData[0]) {
+                            const itemCode = bellData[0].batchCode || bellData[0].code;
+                            const pcs = bellData[0].pieceCount || '1';
+                            productName = `${itemCode} - ${productName} (${Math.round(Number(pcs))} pcs)`;
+                        }
+                    } else if (item.childItems && item.childItems.length > 0) {
+                        const representative = item.childItems[0];
+                        const itemCode = representative.batch?.code || representative.code || representative.batchCode;
+                        const totalPcs = item.childItems.reduce((sum: number, b: any) => sum + Number(b.pieceCount || 1), 0);
+                        if (itemCode) {
+                            productName = `${itemCode} - ${productName} (${Math.round(totalPcs)} pcs)`;
+                        }
+                    }
+                } else if (item.rawMaterialRollId) {
+                    const [roll] = await tx.select().from(rawMaterialRolls)
+                        .leftJoin(rawMaterials, eq(rawMaterialRolls.rawMaterialId, rawMaterials.id))
+                        .where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
+                    if (roll && roll.raw_materials) {
+                        productName = `${roll.raw_material_rolls.rollCode} - ${roll.raw_materials.name}`;
+                        hsnCode = roll.raw_materials.hsnCode || '3901';
+                    }
+                } else if (item.rawMaterialId) {
+                    const [material] = await tx.select().from(rawMaterials).where(eq(rawMaterials.id, item.rawMaterialId));
+                    if (material) {
+                        productName = material.name;
+                        hsnCode = material.hsnCode || '3901';
                     }
                 }
 
-                return { ...insertedItem, finishedProduct: item.product };
-            })
-        );
+                const amount = item.quantity * item.rate;
+                const discount = item.discount || 0;
+                const taxableAmount = amount - discount;
+                const gstAmount = (taxableAmount * item.gstPercent) / 100;
 
-        // Update customer outstanding if confirmed and B2B
-        if (status === 'Confirmed' && customer) {
-            await syncCustomerOutstanding(customer.id);
-            cacheService.del('masters:customers');
-        }
+                subtotal += amount;
+                totalDiscount += discount;
+
+                const cgst = isInterState ? 0 : gstAmount / 2;
+                const sgst = isInterState ? 0 : gstAmount / 2;
+                const igst = isInterState ? gstAmount : 0;
+
+                if (isInterState) {
+                    totalIgst += igst;
+                } else {
+                    totalCgst += cgst;
+                    totalSgst += sgst;
+                }
+
+                return {
+                    ...item,
+                    productName,
+                    hsnCode,
+                    product,
+                    amount,
+                    taxableAmount,
+                    cgst,
+                    sgst,
+                    igst,
+                    total: taxableAmount + gstAmount,
+                } as any;
+            }));
+
+            const totalTax = totalCgst + totalSgst + totalIgst;
+            const taxableTotal = subtotal - totalDiscount;
+            const grandTotal = Math.round(taxableTotal + totalTax);
+
+            // 4. Fetch customer if B2B
+            let finalCustomerName = customerName || 'Walk-in Customer';
+            let customerEntry = null;
+            if (customerId) {
+                [customerEntry] = await tx.select().from(customers).where(eq(customers.id, customerId));
+                if (customerEntry) finalCustomerName = customerEntry.name;
+            }
+
+            // 5. Create invoice
+            const [invoice] = await tx.insert(invoices).values({
+                invoiceNumber,
+                invoiceDate: new Date(invoiceDate),
+                customerId: customerEntry?.id || null,
+                customerName: finalCustomerName,
+                customerGST: customerEntry?.gstNo || null,
+                invoiceType,
+                placeOfSupply: effectivePOS,
+                subtotal: String(subtotal),
+                discountAmount: String(totalDiscount),
+                taxableAmount: String(taxableTotal),
+                cgst: String(totalCgst),
+                sgst: String(totalSgst),
+                igst: String(totalIgst),
+                totalTax: String(totalTax),
+                grandTotal: String(grandTotal),
+                paidAmount: '0',
+                balanceAmount: String(grandTotal),
+                paymentStatus: 'Unpaid',
+                status,
+            }).returning();
+
+            // 6. Insert items and update inventory if confirmed
+            const insertedItems = await Promise.all(
+                processedItems.map(async (item) => {
+                    const [insertedItem] = (await tx.insert(invoiceItems).values({
+                        invoiceId: invoice.id,
+                        finishedProductId: item.finishedProductId || null,
+                        rawMaterialId: item.rawMaterialId || null,
+                        rawMaterialRollId: item.rawMaterialRollId || null,
+                        generalItemId: item.generalItemId || null,
+                        productName: item.productName,
+                        hsnCode: item.hsnCode || '60059000',
+                        quantity: String(item.quantity),
+                        rate: String(item.rate),
+                        amount: String(item.amount),
+                        discountAmount: String(item.discount || 0),
+                        bellItemId: item.bellItemId,
+
+                        taxableAmount: String(item.taxableAmount),
+                        gstPercent: String(item.gstPercent),
+                        cgst: String(item.cgst),
+                        sgst: String(item.sgst),
+                        igst: String(item.igst),
+                        totalAmount: String(item.total),
+                    }).returning()) as any[];
+
+                    const baleIds = item.bellItemId ? [item.bellItemId] : (item.childItems || []).map((b: any) => b.id);
+                    for (const baleId of baleIds) {
+                        await tx.update(bellItems)
+                            .set({
+                                invoiceItemId: insertedItem.id,
+                                updatedAt: new Date()
+                            })
+                            .where(eq(bellItems.id, baleId));
+                    }
+
+                    if (status === 'Confirmed') {
+                        if (item.rawMaterialRollId) {
+                            await tx.update(rawMaterialRolls).set({ status: 'Sold' }).where(eq(rawMaterialRolls.id, item.rawMaterialRollId));
+                            await createStockMovement({
+                                date: new Date(),
+                                movementType: 'RAW_OUT',
+                                itemType: 'raw_material',
+                                rawMaterialId: item.rawMaterialId!,
+                                quantityOut: Number(item.quantity),
+                                referenceType: 'sales',
+                                referenceCode: invoiceNumber,
+                                referenceId: invoice.id,
+                                reason: `Sold Roll ${item.productName} to ${finalCustomerName}`,
+                            }, tx);
+                        } else if (item.bellItemId || (item.childItems && item.childItems.length > 0)) {
+                            for (const baleId of baleIds) {
+                                await tx.update(bellItems).set({ status: 'Sold' }).where(eq(bellItems.id, baleId));
+                            }
+                        } else if (item.finishedProductId) {
+                            await createStockMovement({
+                                date: new Date(),
+                                movementType: 'FG_OUT',
+                                itemType: 'finished_product',
+                                finishedProductId: item.finishedProductId,
+                                quantityOut: Number(item.quantity),
+                                referenceType: 'sales',
+                                referenceCode: invoiceNumber,
+                                referenceId: invoice.id,
+                                reason: `Sold to ${finalCustomerName}`,
+                            }, tx);
+                        } else if (item.rawMaterialId) {
+                            await createStockMovement({
+                                date: new Date(),
+                                movementType: 'RAW_OUT',
+                                itemType: 'raw_material',
+                                rawMaterialId: item.rawMaterialId,
+                                quantityOut: Number(item.quantity),
+                                referenceType: 'sales',
+                                referenceCode: invoiceNumber,
+                                referenceId: invoice.id,
+                                reason: `Sold material ${item.productName} to ${finalCustomerName}`,
+                            }, tx);
+                        }
+                    }
+
+                    return { ...insertedItem, finishedProduct: item.product };
+                })
+            );
+
+            // 7. Update customer outstanding if confirmed
+            if (status === 'Confirmed' && customerEntry) {
+                await syncCustomerOutstanding(customerEntry.id, tx);
+            }
+
+            return { invoice, customer: customerEntry, items: insertedItems, invoiceNumber, taxableTotal, totalTax, grandTotal };
+        });
+
+        const { invoice, customer, items: insertedItems, invoiceNumber, taxableTotal, totalTax, grandTotal } = result;
 
         // Detailed Console Log for Accounting Entry
         console.log('\n======================================================');
@@ -529,7 +505,7 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
         console.log('======================================================');
         console.log(`Invoice No     : ${invoiceNumber}`);
         console.log(`Date           : ${new Date(invoiceDate).toLocaleString()}`);
-        console.log(`Customer       : ${finalCustomerName} (${invoiceType})`);
+        console.log(`Customer       : ${invoice.customerName} (${invoiceType})`);
         console.log(`Items Count    : ${items.length} item(s)`);
         console.log(`Taxable Amount : ₹${parseFloat(String(taxableTotal)).toFixed(2)}`);
         console.log(`Total Tax      : ₹${parseFloat(String(totalTax)).toFixed(2)}`);
@@ -543,12 +519,13 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
             items: insertedItems,
         }));
 
-        // Broadcast real-time update to all connected clients
+        // Broadcast real-time update
         realtimeService.emit('sales_updated');
         realtimeService.emit('dashboard_updated');
         if (status === 'Confirmed') {
             invalidateInventorySummary();
             invalidateDashboardKPIs();
+            cacheService.del('masters:customers');
         }
     } catch (error) {
         next(error);
@@ -798,11 +775,74 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
             const grandTotal = Math.round(taxableTotal + totalTax);
 
             // 6. Update Invoice Record
+            let finalCustomerName = customerName;
+            if (!finalCustomerName && customerId && customerId !== existingInvoice.customerId) {
+                const [newCustomer] = await tx.select().from(customers).where(eq(customers.id, customerId));
+                finalCustomerName = newCustomer?.name || 'Unknown Customer';
+            } else if (!finalCustomerName) {
+                finalCustomerName = existingInvoice.customerName;
+            }
+
+            // 6. Check for exact payment recalculations if grandTotal drops below paidAmount
+            const currentPaidAmount = parseFloat(existingInvoice.paidAmount || '0');
+            let newPaidAmount = currentPaidAmount;
+            let newBalanceAmount = grandTotal - currentPaidAmount;
+            let finalPaymentStatus: string = existingInvoice.paymentStatus || 'Unpaid';
+
+            if (grandTotal < currentPaidAmount) {
+                // The newly updated invoice total is smaller than what has already been paid for it.
+                // We must un-allocate the excess payment.
+                let excessAmount = currentPaidAmount - grandTotal;
+                newPaidAmount = grandTotal;
+                newBalanceAmount = 0;
+
+                // Process existing allocations LIFO
+                const allocations = await tx.select().from(invoicePaymentAllocations)
+                    .where(eq(invoicePaymentAllocations.invoiceId, id))
+                    .orderBy(desc(invoicePaymentAllocations.createdAt));
+
+                for (const alloc of allocations) {
+                    if (excessAmount <= 0) break;
+
+                    const allocAmount = parseFloat(alloc.amount);
+                    const amountToRevert = Math.min(allocAmount, excessAmount);
+
+                    if (amountToRevert === allocAmount) {
+                        await tx.delete(invoicePaymentAllocations).where(eq(invoicePaymentAllocations.id, alloc.id));
+                    } else {
+                        await tx.update(invoicePaymentAllocations)
+                            .set({ amount: String(allocAmount - amountToRevert) })
+                            .where(eq(invoicePaymentAllocations.id, alloc.id));
+                    }
+
+                    // Revert to advance balance
+                    await tx.update(paymentTransactions)
+                        .set({
+                            isAdvance: true,
+                            advanceBalance: sql`COALESCE(${paymentTransactions.advanceBalance}, 0) + ${amountToRevert}`
+                        })
+                        .where(eq(paymentTransactions.id, alloc.paymentId));
+
+                    excessAmount -= amountToRevert;
+                }
+            } else {
+                newBalanceAmount = Math.max(0, grandTotal - currentPaidAmount);
+            }
+
+            // Determine final payment status manually based on new paid amount and grand total
+            if (newPaidAmount >= grandTotal) {
+                finalPaymentStatus = 'Paid';
+            } else if (newPaidAmount > 0) {
+                finalPaymentStatus = 'Partial';
+            } else {
+                finalPaymentStatus = 'Unpaid';
+            }
+
             const [updatedInvoice] = await tx.update(invoices)
                 .set({
                     invoiceDate: new Date(invoiceDate),
                     customerId: customerId || null,
-                    customerName: customerName || (customerId ? existingInvoice.customerName : 'Walk-in Customer'),
+                    customerName: finalCustomerName,
                     placeOfSupply: effectivePOS,
                     invoiceType,
                     subtotal: String(subtotal),
@@ -813,7 +853,9 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                     igst: String(totalIgst),
                     totalTax: String(totalTax),
                     grandTotal: String(grandTotal),
-                    balanceAmount: String(grandTotal - parseFloat(existingInvoice.paidAmount || '0')),
+                    paidAmount: String(newPaidAmount),
+                    balanceAmount: String(newBalanceAmount),
+                    paymentStatus: finalPaymentStatus,
                     status,
                     updatedAt: new Date(),
                 })
@@ -846,6 +888,17 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                     totalAmount: String(item.total),
                 }).returning()) as any[];
 
+                // Start Update: Always link Bales to preserve relationship in Drafts
+                const baleIds = item.bellItemId ? [item.bellItemId] : (item.childItems || []).map((b: any) => b.id);
+                for (const baleId of baleIds) {
+                    await tx.update(bellItems)
+                        .set({
+                            invoiceItemId: insertedItem.id,
+                            updatedAt: new Date()
+                        })
+                        .where(eq(bellItems.id, baleId));
+                }
+
                 if (status === 'Confirmed') {
                     if (item.rawMaterialRollId) {
                         await tx.update(rawMaterialRolls)
@@ -861,22 +914,15 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                             referenceType: 'sales',
                             referenceCode: existingInvoice.invoiceNumber,
                             referenceId: existingInvoice.id,
-                            reason: `Sold Roll ${item.productName} to ${customerName || 'Customer'}`,
+                            reason: `Sold Roll ${item.productName} to ${finalCustomerName || 'Customer'}`,
                         }, tx);
                     } else if (item.bellItemId || (item.childItems && item.childItems.length > 0)) {
-                        // Start Update: Update Bell Status and Link to Invoice Item
-                        const baleIds = item.bellItemId ? [item.bellItemId] : (item.childItems || []).map((b: any) => b.id);
-
+                        // Already linked above, now mark as Sold if confirmed
                         for (const baleId of baleIds) {
                             await tx.update(bellItems)
-                                .set({
-                                    status: 'Sold',
-                                    invoiceItemId: insertedItem.id,
-                                    updatedAt: new Date()
-                                })
+                                .set({ status: 'Sold' })
                                 .where(eq(bellItems.id, baleId));
                         }
-                        // End Update
                     } else if (item.finishedProductId) {
                         // ONLY create FG_OUT movement for non-bale items
                         await createStockMovement({
@@ -888,7 +934,7 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                             referenceType: 'sales',
                             referenceCode: existingInvoice.invoiceNumber,
                             referenceId: existingInvoice.id,
-                            reason: `Sold to ${customerName || 'Customer'}`,
+                            reason: `Sold to ${finalCustomerName || 'Customer'}`,
                         }, tx);
                     } else if (item.rawMaterialId) {
                         await createStockMovement({
@@ -900,7 +946,7 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
                             referenceType: 'sales',
                             referenceCode: existingInvoice.invoiceNumber,
                             referenceId: existingInvoice.id,
-                            reason: `Sold material ${item.productName} to ${customerName || 'Customer'}`,
+                            reason: `Sold material ${item.productName} to ${finalCustomerName || 'Customer'}`,
                         }, tx);
                     }
                 }
@@ -908,9 +954,9 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
             }));
 
             // 8. Sync Outstanding
-            if (customerId) await syncCustomerOutstanding(customerId);
+            if (customerId) await syncCustomerOutstanding(customerId, tx);
             if (existingInvoice.customerId && existingInvoice.customerId !== customerId) {
-                await syncCustomerOutstanding(existingInvoice.customerId);
+                await syncCustomerOutstanding(existingInvoice.customerId, tx);
             }
         });
 
@@ -921,6 +967,7 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
         if (status === 'Confirmed') {
             invalidateInventorySummary();
             invalidateDashboardKPIs();
+            cacheService.del('masters:customers');
         }
 
     } catch (error) {
@@ -936,7 +983,7 @@ router.put('/invoices/:id', async (req: Request, res: Response, next: NextFuncti
  * POST /sales/invoices/:id/payment
  * Record a payment against a sales invoice
  */
-router.post('/invoices/:id/payment', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/invoices/:id/payments', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
         const { amount, paymentMode = 'Cash', reference } = req.body;
@@ -945,61 +992,67 @@ router.post('/invoices/:id/payment', async (req: Request, res: Response, next: N
             throw createError('Valid payment amount required', 400);
         }
 
-        // Get current invoice
-        const [invoice] = await db.select().from(invoices).where(eq(invoices.id, id));
-        if (!invoice) throw createError('Invoice not found', 404);
+        const result = await db.transaction(async (tx) => {
+            // 1. Get current invoice
+            const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, id));
+            if (!invoice) throw createError('Invoice not found', 404);
 
-        const currentPaid = parseFloat(invoice.paidAmount || '0');
-        const grandTotal = parseFloat(invoice.grandTotal || '0');
-        const newPaid = currentPaid + parseFloat(amount);
-        const newBalance = grandTotal - newPaid;
+            const currentPaid = parseFloat(invoice.paidAmount || '0');
+            const grandTotal = parseFloat(invoice.grandTotal || '0');
+            const newPaid = currentPaid + parseFloat(amount);
+            const newBalance = grandTotal - newPaid;
 
-        // Determine payment status
-        let paymentStatus = 'Unpaid';
-        if (newPaid >= grandTotal) paymentStatus = 'Paid';
-        else if (newPaid > 0) paymentStatus = 'Partial';
+            // 2. Determine payment status
+            let paymentStatus = 'Unpaid';
+            if (newPaid >= grandTotal) paymentStatus = 'Paid';
+            else if (newPaid > 0) paymentStatus = 'Partial';
 
-        // Update invoice
-        await db.update(invoices)
-            .set({
-                paidAmount: String(newPaid),
-                balanceAmount: String(newBalance),
-                paymentStatus,
-                updatedAt: new Date(),
-            })
-            .where(eq(invoices.id, id));
+            // 3. Update invoice
+            const [updatedInvoice] = await tx.update(invoices)
+                .set({
+                    paidAmount: String(newPaid),
+                    balanceAmount: String(newBalance),
+                    paymentStatus,
+                    updatedAt: new Date(),
+                })
+                .where(eq(invoices.id, id))
+                .returning();
 
-        // Generate payment code
-        const paymentCode = await getNextTransactionCode('RECEIPT');
+            // 4. Generate payment code
+            const paymentCode = await getNextTransactionCode('RECEIPT');
 
-        // Record payment transaction
-        await db.insert(paymentTransactions).values({
-            code: paymentCode,
-            date: new Date(),
-            type: 'RECEIPT',
-            referenceType: 'sales',
-            referenceId: id,
-            referenceCode: invoice.invoiceNumber,
-            partyType: 'customer',
-            partyId: invoice.customerId || 'walk-in',
-            partyName: invoice.customerName,
-            mode: paymentMode,
-            amount: String(amount),
-            bankReference: reference || null,
+            // 5. Record payment transaction
+            await tx.insert(paymentTransactions).values({
+                code: paymentCode,
+                date: new Date(),
+                type: 'RECEIPT',
+                referenceType: 'sales',
+                referenceId: id,
+                referenceCode: invoice.invoiceNumber,
+                partyType: 'customer',
+                partyId: invoice.customerId || 'walk-in',
+                partyName: invoice.customerName,
+                mode: paymentMode,
+                amount: String(amount),
+                bankReference: reference || null,
+            });
+
+            // 6. Update customer outstanding
+            if (invoice.customerId) {
+                await syncCustomerOutstanding(invoice.customerId, tx);
+            }
+
+            return { paymentCode, invoiceCode: invoice.invoiceNumber, customerName: invoice.customerName, newPaid, newBalance, paymentStatus };
         });
 
-        // Update customer outstanding
-        if (invoice.customerId) {
-            await syncCustomerOutstanding(invoice.customerId);
-            cacheService.del('masters:customers');
-        }
+        const { paymentCode, invoiceCode, customerName, newPaid, newBalance, paymentStatus } = result;
 
         // Detailed Console Log for Accounting Entry
         console.log('\n======================================================');
         console.log(`[ACCOUNTING LOG] INVOICE PAYMENT Recorded Successfully`);
         console.log('======================================================');
         console.log(`Payment Code   : ${paymentCode}`);
-        console.log(`Invoice No     : ${invoice.invoiceNumber}`);
+        console.log(`Invoice No     : ${invoiceCode}`);
         console.log(`Date           : ${new Date().toLocaleString()}`);
         console.log(`Amount Paid    : ₹${parseFloat(String(amount)).toFixed(2)} ([${paymentMode}])`);
         console.log(`New Paid Total : ₹${parseFloat(String(newPaid)).toFixed(2)}`);
@@ -1009,10 +1062,11 @@ router.post('/invoices/:id/payment', async (req: Request, res: Response, next: N
 
         res.json(successResponse({
             message: 'Payment recorded',
-            paidAmount: newPaid,
-            balanceAmount: newBalance,
-            paymentStatus,
+            paymentCode
         }));
+
+        cacheService.del('masters:customers');
+        realtimeService.emit('sales_updated');
     } catch (error) {
         next(error);
     }
@@ -1089,19 +1143,19 @@ router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFun
         const affectedCustomerId = invoice.customerId;
 
         await db.transaction(async (tx) => {
-            // 1. Restore bell items to Available status
+            // Restore items to stock
             for (const item of invoice.items || []) {
-                // Restore all bales linked to this invoice item
-                await tx.update(bellItems)
+                // 1. Restore bell items (bales) if any
+                const restoredBales = await tx.update(bellItems)
                     .set({ status: 'Available', invoiceItemId: null })
-                    .where(eq(bellItems.invoiceItemId, item.id));
-            }
+                    .where(eq(bellItems.invoiceItemId, item.id))
+                    .returning();
 
-            // 2. Create reversal stock movements (only if confirmed)
-            if (invoice.status === 'Confirmed') {
-                for (const item of invoice.items || []) {
+                // 2. Create reversal stock movements (only if confirmed)
+                if (invoice.status === 'Confirmed') {
                     // A. Generic Finished Goods (Non-Bale)
-                    if (item.finishedProductId && !item.bellItemId) {
+                    // If restoredBales has items, it was a bale sale, so skip FG_IN movement
+                    if (item.finishedProductId && restoredBales.length === 0 && !item.bellItemId) {
                         await createStockMovement({
                             date: new Date(),
                             movementType: 'FG_IN',
@@ -1154,13 +1208,12 @@ router.delete('/invoices/:id', async (req: Request, res: Response, next: NextFun
 
             // 4. Delete the invoice
             await tx.delete(salesInvoices).where(eq(salesInvoices.id, id));
-        });
 
-        // Recalculate customer outstanding AFTER the invoice is deleted from DB
-        // (previously this ran before deletion — causing the outstanding to not update)
-        if (affectedCustomerId) {
-            await syncCustomerOutstanding(affectedCustomerId);
-        }
+            // 5. Update customer outstanding
+            if (affectedCustomerId) {
+                await syncCustomerOutstanding(affectedCustomerId, tx);
+            }
+        });
 
         // Invalidate caches
         cacheService.del('dashboard:kpis');
@@ -1278,155 +1331,150 @@ router.post('/receipts', async (req: Request, res: Response, next: NextFunction)
         const transactionId = crypto.randomUUID();
         const code = `RCPT-${Date.now()}`;
 
-        // Get customer for details
-        const customer = (await db.select().from(customers).where(eq(customers.id, customerId)))[0];
-        if (!customer) {
-            res.status(404).json({ message: 'Customer not found' });
-            return;
-        }
-
-        let finalMode = mode;
-        let finalAccountId = accountId;
-
-        // HANDLE ADVANCE ADJUSTMENT
-        if (useAdvanceReceipt && selectedAdvanceId) {
-            finalMode = 'Adjustment';
-            finalAccountId = null; // No bank account involved
-
-            // 1. Fetch Advance
-            const [advance] = await db.select().from(paymentTransactions).where(eq(paymentTransactions.id, selectedAdvanceId));
-            if (!advance) throw createError('Selected advance not found', 404);
-
-            const currentAdvanceBalance = parseFloat(advance.advanceBalance || '0');
-            const adjustmentAmount = parseFloat(amount);
-
-            if (currentAdvanceBalance < adjustmentAmount) {
-                throw createError('Insufficient advance balance', 400);
+        const result = await db.transaction(async (tx) => {
+            // 1. Get customer for details
+            const [customer] = await tx.select().from(customers).where(eq(customers.id, customerId));
+            if (!customer) {
+                throw createError('Customer not found', 404);
             }
 
-            // 2. Reduce Advance Balance
-            await db.update(paymentTransactions)
-                .set({
-                    advanceBalance: String(currentAdvanceBalance - adjustmentAmount),
-                })
-                .where(eq(paymentTransactions.id, selectedAdvanceId));
-        } else {
-            // Standard Receipt: Bank/Cash validation
-            // If it's NOT an adjustment, we expect an accountId (unless it's some other non-bank mode, but UI forces it)
-            if (!accountId && !useAdvanceReceipt) {
-                // throw createError('Deposit account required', 400); 
-                // Permissive for now if frontend doesn't send it for valid reasons, but good to enforce.
-            }
-        }
+            let finalMode = mode;
+            let finalAccountId = accountId;
 
-        // 3. Create Payment Transaction (The Receipt)
-        // If Adjustment, we label it as such.
-        await db.insert(paymentTransactions).values({
-            id: transactionId,
-            code,
-            date: new Date(),
-            type: 'RECEIPT',
-            referenceType: 'sales',
-            referenceId: transactionId,
-            referenceCode: 'MULTIPLE',
-            partyType: 'customer',
-            partyId: customerId,
-            partyName: customer.name,
-            mode: finalMode,
-            accountId: finalAccountId,
-            amount: amount.toString(),
-            bankReference: useAdvanceReceipt ? `Adj Ref: ${selectedAdvanceId}` : bankReference,
-            status: 'Completed',
-            // Calculate Advance Automatically
-            isAdvance: (parseFloat(amount) - allocations.reduce((sum: number, a: any) => sum + Number(a.amount), 0)) > 0,
-            advanceBalance: String(Math.max(0, parseFloat(amount) - allocations.reduce((sum: number, a: any) => sum + Number(a.amount), 0))),
-            remarks: useAdvanceReceipt ? `Adjusted from Advance` : req.body.remarks
-        });
+            // HANDLE ADVANCE ADJUSTMENT
+            if (useAdvanceReceipt && selectedAdvanceId) {
+                finalMode = 'Adjustment';
+                finalAccountId = null; // No bank account involved
 
-        // 4. Process Allocations
-        for (const allocation of allocations) {
-            await db.insert(invoicePaymentAllocations).values({
-                paymentId: transactionId,
-                invoiceId: allocation.invoiceId,
-                amount: allocation.amount.toString(),
-            });
+                // Fetch Advance
+                const [advance] = await tx.select().from(paymentTransactions).where(eq(paymentTransactions.id, selectedAdvanceId));
+                if (!advance) throw createError('Selected advance not found', 404);
 
-            // Update Invoice
-            const invoice = (await db.select().from(salesInvoices).where(eq(salesInvoices.id, allocation.invoiceId)))[0];
-            if (invoice) {
-                const newPaid = parseFloat(invoice.paidAmount || '0') + Number(allocation.amount);
-                const newBalance = parseFloat(invoice.grandTotal || '0') - newPaid;
+                const currentAdvanceBalance = parseFloat(advance.advanceBalance || '0');
+                const adjustmentAmount = parseFloat(amount);
 
-                await db.update(salesInvoices)
+                if (currentAdvanceBalance < adjustmentAmount) {
+                    throw createError('Insufficient advance balance', 400);
+                }
+
+                // Reduce Advance Balance
+                await tx.update(paymentTransactions)
                     .set({
-                        paidAmount: newPaid.toString(),
-                        balanceAmount: newBalance.toString(),
-                        paymentStatus: newBalance <= 1 ? 'Paid' : 'Partial'
+                        advanceBalance: String(currentAdvanceBalance - adjustmentAmount),
                     })
-                    .where(eq(salesInvoices.id, allocation.invoiceId));
+                    .where(eq(paymentTransactions.id, selectedAdvanceId));
             }
-        }
 
-        // 5. Update Customer Outstanding
-        await syncCustomerOutstanding(customerId);
-
-        // 6. Update Bank/Cash Balance (only if NOT adjustment)
-        if (finalAccountId && !useAdvanceReceipt) {
-            const account = (await db.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, finalAccountId)))[0];
-            if (account) {
-                const newAccountBalance = parseFloat(account.balance || '0') + parseFloat(amount);
-                await db.update(bankCashAccounts)
-                    .set({ balance: newAccountBalance.toString() })
-                    .where(eq(bankCashAccounts.id, finalAccountId));
-            }
-        }
-
-        // 7. Create General Ledger Entries
-        if (useAdvanceReceipt) {
-            // ADJUSTMENT ENTRIES
-            // Debit: Customer (Liability Reduction / Advance Consumption)
-            await db.insert(generalLedger).values({
-                transactionDate: new Date(),
-                voucherNumber: code,
-                voucherType: 'JOURNAL', // Adjustment is a Journal?
-                ledgerId: customerId,
-                ledgerType: 'CUSTOMER',
-                debitAmount: amount.toString(),
-                creditAmount: '0',
-                description: `Adjustment from Advance`,
-                referenceId: transactionId
+            // 3. Create Payment Transaction (The Receipt)
+            await tx.insert(paymentTransactions).values({
+                id: transactionId,
+                code,
+                date: new Date(),
+                type: 'RECEIPT',
+                referenceType: 'sales',
+                referenceId: transactionId,
+                referenceCode: 'MULTIPLE',
+                partyType: 'customer',
+                partyId: customerId,
+                partyName: customer.name,
+                mode: finalMode,
+                accountId: finalAccountId,
+                amount: amount.toString(),
+                bankReference: useAdvanceReceipt ? `Adj Ref: ${selectedAdvanceId}` : bankReference,
+                status: 'Completed',
+                // Calculate Advance Automatically
+                isAdvance: (parseFloat(amount) - (allocations || []).reduce((sum: number, a: any) => sum + Number(a.amount), 0)) > 0,
+                advanceBalance: String(Math.max(0, parseFloat(amount) - (allocations || []).reduce((sum: number, a: any) => sum + Number(a.amount), 0))),
+                remarks: useAdvanceReceipt ? `Adjusted from Advance` : req.body.remarks
             });
-            // Credit: Customer (Receivable Reduction) - Handled below?
-        } else {
-            // DEBIT: Bank/Cash Account
-            if (finalAccountId) {
-                await db.insert(generalLedger).values({
+
+            // 4. Process Allocations
+            if (allocations && allocations.length > 0) {
+                for (const allocation of allocations) {
+                    await tx.insert(invoicePaymentAllocations).values({
+                        paymentId: transactionId,
+                        invoiceId: allocation.invoiceId,
+                        amount: allocation.amount.toString(),
+                    });
+
+                    // Update Invoice
+                    const [invoice] = await tx.select().from(salesInvoices).where(eq(salesInvoices.id, allocation.invoiceId));
+                    if (invoice) {
+                        const newPaid = parseFloat(invoice.paidAmount || '0') + Number(allocation.amount);
+                        const newBalance = parseFloat(invoice.grandTotal || '0') - newPaid;
+
+                        await tx.update(salesInvoices)
+                            .set({
+                                paidAmount: newPaid.toString(),
+                                balanceAmount: newBalance.toString(),
+                                paymentStatus: newBalance <= 1 ? 'Paid' : 'Partial'
+                            })
+                            .where(eq(salesInvoices.id, allocation.invoiceId));
+                    }
+                }
+            }
+
+            // 5. Update Customer Outstanding
+            await syncCustomerOutstanding(customerId, tx);
+
+            // 6. Update Bank/Cash Balance (only if NOT adjustment)
+            if (finalAccountId && !useAdvanceReceipt) {
+                const [account] = await tx.select().from(bankCashAccounts).where(eq(bankCashAccounts.id, finalAccountId));
+                if (account) {
+                    const newAccountBalance = parseFloat(account.balance || '0') + parseFloat(amount);
+                    await tx.update(bankCashAccounts)
+                        .set({ balance: newAccountBalance.toString() })
+                        .where(eq(bankCashAccounts.id, finalAccountId));
+                }
+            }
+
+            // 7. Create General Ledger Entries
+            if (useAdvanceReceipt) {
+                // ADJUSTMENT ENTRIES
+                await tx.insert(generalLedger).values({
                     transactionDate: new Date(),
                     voucherNumber: code,
-                    voucherType: 'RECEIPT',
-                    ledgerId: finalAccountId,
-                    ledgerType: mode === 'Cash' ? 'CASH' : 'BANK',
+                    voucherType: 'JOURNAL',
+                    ledgerId: customerId,
+                    ledgerType: 'CUSTOMER',
                     debitAmount: amount.toString(),
                     creditAmount: '0',
-                    description: `Receipt from ${customer.name}`,
+                    description: `Adjustment from Advance`,
                     referenceId: transactionId
                 });
+            } else {
+                if (finalAccountId) {
+                    await tx.insert(generalLedger).values({
+                        transactionDate: new Date(),
+                        voucherNumber: code,
+                        voucherType: 'RECEIPT',
+                        ledgerId: finalAccountId,
+                        ledgerType: mode === 'Cash' ? 'CASH' : 'BANK',
+                        debitAmount: amount.toString(),
+                        creditAmount: '0',
+                        description: `Receipt from ${customer.name}`,
+                        referenceId: transactionId
+                    });
+                }
             }
-        }
 
-        // CREDIT: Customer Account (Receivables / Payment)
-        // Always Credit Customer for Receipt
-        await db.insert(generalLedger).values({
-            transactionDate: new Date(),
-            voucherNumber: code,
-            voucherType: 'RECEIPT',
-            ledgerId: customerId, // Customer
-            ledgerType: 'CUSTOMER',
-            debitAmount: '0',
-            creditAmount: amount.toString(),
-            description: useAdvanceReceipt ? `Invoice Adjusted with Advance` : `Payment received in ${mode}`,
-            referenceId: transactionId
+            // CREDIT: Customer Account (Receivables / Payment)
+            await tx.insert(generalLedger).values({
+                transactionDate: new Date(),
+                voucherNumber: code,
+                voucherType: 'RECEIPT',
+                ledgerId: customerId,
+                ledgerType: 'CUSTOMER',
+                debitAmount: '0',
+                creditAmount: amount.toString(),
+                description: useAdvanceReceipt ? `Invoice Adjusted with Advance` : `Payment received in ${mode}`,
+                referenceId: transactionId
+            });
+
+            return { customerName: customer.name, finalMode };
         });
+
+        const { customerName, finalMode } = result;
 
         // Invalidate caches
         cacheService.del('dashboard:kpis');
@@ -1439,9 +1487,9 @@ router.post('/receipts', async (req: Request, res: Response, next: NextFunction)
         console.log('======================================================');
         console.log(`Receipt Code   : ${code}`);
         console.log(`Date           : ${new Date().toLocaleString()}`);
-        console.log(`Customer       : ${customer.name}`);
+        console.log(`Customer       : ${customerName}`);
         console.log(`Amount Paid    : ₹${parseFloat(String(amount)).toFixed(2)} ([${finalMode}])`);
-        console.log(`Allocations    : ${allocations.length} invoice(s) settled`);
+        console.log(`Allocations    : ${(allocations || []).length} invoice(s) settled`);
         console.log(`Remarks        : ${useAdvanceReceipt ? 'Advance Adjusted' : 'Regular Receipt'}`);
         console.log('------------------------------------------------------\n');
 
@@ -1455,6 +1503,7 @@ router.post('/receipts', async (req: Request, res: Response, next: NextFunction)
         realtimeService.emit('accounts_updated');
         realtimeService.emit('dashboard_updated');
         invalidateDashboardKPIs();
+        cacheService.del('masters:customers');
 
     } catch (error) {
         next(error);

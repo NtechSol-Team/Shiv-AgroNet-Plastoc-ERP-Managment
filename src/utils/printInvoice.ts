@@ -580,6 +580,7 @@ export function printInvoice(invoice: InvoiceData): void {
             <div class="value"><strong>${escapeHtml(billToName || '-')}</strong></div>
             <div class="value" style="font-size: 11px;">${formatMultilineText(billToAddress, '-')}</div>
             <div class="value"><strong>GSTIN:</strong> ${escapeHtml(customerGstin || 'Unregistered')}</div>
+            <div class="value"><strong>Mobile:</strong> ${escapeHtml(invoice.customer?.phone || '-')}</div>
             ${customerPan ? `<div class="value"><strong>PAN:</strong> ${escapeHtml(customerPan)}</div>` : ''}
             <div class="value"><strong>State:</strong> ${escapeHtml(customerStateName)} (Code: ${escapeHtml(customerStateCode || 'NA')})</div>
         </div>

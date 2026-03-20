@@ -13,7 +13,7 @@ interface BellItem {
     grossWeight: string;
     weightLoss: string; // In grams
     netWeight: string;  // Calculated: grossWeight - (weightLoss/1000)
-    status: 'Available' | 'Issued' | 'Deleted';
+    status: 'Available' | 'Issued' | 'Sold' | 'Deleted';
     finishedProduct?: {
         name: string;
     };
@@ -380,7 +380,9 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
         // Otherwise, only consider items matching the filterStatus
         const relevantItems = batch.items?.filter(i =>
             i.status !== 'Deleted' &&
-            (filterStatus === 'All' || i.status === filterStatus)
+            (filterStatus === 'All' || 
+             (filterStatus === 'Issued' ? (i.status === 'Issued' || i.status === 'Sold') : i.status === filterStatus)
+            )
         ) || [];
 
         // If the batch has no relevant items matching the status filter, hide the batch
@@ -402,7 +404,9 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
     filteredBatches.forEach(batch => {
         const relevantItems = batch.items?.filter(i =>
             i.status !== 'Deleted' &&
-            (filterStatus === 'All' || i.status === filterStatus) &&
+            (filterStatus === 'All' || 
+                (filterStatus === 'Issued' ? (i.status === 'Issued' || i.status === 'Sold') : i.status === filterStatus)
+            ) &&
             (!filterProduct || i.finishedProduct?.name === filterProduct) &&
             (!filterSize || i.size === filterSize) &&
             (!filterGsm || i.gsm === filterGsm)
@@ -860,12 +864,14 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                                                             <tbody className="divide-y divide-gray-100">
                                                                 {batch.items?.filter(i =>
                                                                     i.status !== 'Deleted' &&
-                                                                    (filterStatus === 'All' || i.status === filterStatus) &&
+                                                                    (filterStatus === 'All' || 
+                                                                        (filterStatus === 'Issued' ? (i.status === 'Issued' || i.status === 'Sold') : i.status === filterStatus)
+                                                                    ) &&
                                                                     (!filterProduct || i.finishedProduct?.name === filterProduct) &&
                                                                     (!filterSize || i.size === filterSize) &&
                                                                     (!filterGsm || i.gsm === filterGsm)
                                                                 ).map((item) => (
-                                                                    <tr key={item.id} className={item.status === 'Issued' ? 'bg-gray-50/50' : ''}>
+                                                                    <tr key={item.id} className={['Issued', 'Sold'].includes(item.status) ? 'bg-gray-50/50' : ''}>
                                                                         <td className="px-4 py-2 font-mono text-xs text-blue-600">{item.code}</td>
                                                                         <td className="px-4 py-2 font-medium text-gray-900">{item.finishedProduct?.name || 'Unknown Product'}</td>
                                                                         <td className="px-4 py-2 text-gray-600">{item.size} | {item.gsm} Shade</td>
@@ -894,7 +900,7 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                                                                         </td>
                                                                         <td className="px-4 py-2 text-center">
                                                                             <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] uppercase font-bold tracking-wide ${item.status === 'Available' ? 'bg-green-100 text-green-700' :
-                                                                                item.status === 'Issued' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'
+                                                                                ['Issued', 'Sold'].includes(item.status) ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'
                                                                                 }`}>
                                                                                 {item.status === 'Issued' ? 'Consumed' : item.status}
                                                                             </span>

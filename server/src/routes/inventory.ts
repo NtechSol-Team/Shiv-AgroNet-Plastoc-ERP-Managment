@@ -193,6 +193,7 @@ router.get('/movements/finished-product/:id', async (req: Request, res: Response
     }
 });
 
+
 // ============================================================
 // MANUAL ADJUSTMENTS
 // ============================================================
