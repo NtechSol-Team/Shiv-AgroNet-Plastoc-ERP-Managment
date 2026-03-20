@@ -31,7 +31,6 @@ export function Sidebar({ activeModule, onModuleChange }: SidebarProps) {
         { id: 'accounts', label: 'Accounts', icon: CreditCard },
         { id: 'finance', label: 'Finance', icon: Wallet },
         { id: 'reports', label: 'Reports', icon: FileText },
-        { id: 'analysis', label: 'Analysis', icon: TrendingUp },
         { id: 'samples', label: 'Samples', icon: Box },
         { id: 'gst-dashboard', label: 'GST Dashboard', icon: ReceiptText },
     ];

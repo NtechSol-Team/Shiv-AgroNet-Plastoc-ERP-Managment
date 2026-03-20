@@ -216,7 +216,39 @@ export function MonthlyAnalysis() {
                                     </div>
                                 </div>
                             </div>
-                            {/* Removed Overhead Expense Breakdown Chart per user request */}
+                            
+                            {/* Expense Category Breakdown Chart */}
+                            {data.expenseBreakdown && data.expenseBreakdown.length > 0 && (
+                                <div className="mt-8 pt-6 border-t border-slate-100">
+                                    <h4 className="text-sm font-bold text-slate-800 mb-4 flex items-center">
+                                        Expense Categories
+                                    </h4>
+                                    <div className="h-64">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <BarChart data={data.expenseBreakdown} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                                                <XAxis 
+                                                    dataKey="name" 
+                                                    tick={{ fontSize: 10, fill: '#64748B' }} 
+                                                    axisLine={false} 
+                                                    tickLine={false} 
+                                                />
+                                                <YAxis 
+                                                    tickFormatter={(val) => `₹${(val / 1000).toFixed(0)}k`} 
+                                                    tick={{ fontSize: 10, fill: '#64748B' }} 
+                                                    axisLine={false} 
+                                                    tickLine={false} 
+                                                />
+                                                <Tooltip 
+                                                    formatter={(value: number) => [formatCurrency(value), 'Amount']}
+                                                    contentStyle={{ borderRadius: '1rem', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                                />
+                                                <Bar dataKey="value" fill="#818CF8" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                                            </BarChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+                            )}
 
                             <div className="mt-6 p-4 bg-blue-50 rounded-xl border border-blue-100 flex justify-between items-center">
                                 <div>

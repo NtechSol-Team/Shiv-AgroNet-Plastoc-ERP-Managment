@@ -16,6 +16,7 @@ import { useRealtimeEvent } from '../hooks/useRealtime';
 import { useRealtimeContext } from '../context/RealtimeContext';
 import { dashboardApi } from '../lib/api';
 import { CCDashboardWidget } from './CCDashboardWidget';
+import { MonthlyAnalysis } from './MonthlyAnalysis';
 
 // ============================================================
 // TYPE DEFINITIONS
@@ -549,6 +550,11 @@ export function Dashboard({ onModuleChange }: DashboardProps) {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Embedded Monthly Analysis View */}
+      <div className="mt-8 border-t border-slate-200 pt-8">
+        <MonthlyAnalysis />
       </div>
     </div>
   );
