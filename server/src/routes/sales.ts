@@ -232,27 +232,29 @@ router.post('/invoices', async (req: Request, res: Response, next: NextFunction)
 
         // Start Transaction
         const result = await db.transaction(async (tx) => {
-            // 1. Generate invoice number (INV/YYYY-YY/XXX)
+            // 1. Generate invoice number (SA/YY-YY/XXX)
             const today = new Date();
             const year = today.getFullYear();
-            const fiscalYear = today.getMonth() > 2 ? `${year}-${(year + 1).toString().slice(-2)}` : `${year - 1}-${year.toString().slice(-2)}`;
-            const prefix = `INV/${fiscalYear}/`;
+            const fiscalYear = today.getMonth() > 2
+                ? `${year.toString().slice(-2)}-${(year + 1).toString().slice(-2)}`
+                : `${(year - 1).toString().slice(-2)}-${year.toString().slice(-2)}`;
+            const prefix = `SA/${fiscalYear}/`;
 
+            // Fetch all invoices for this fiscal prefix and find the max sequence number
+            // Using reduce (instead of orderBy createdAt) to be safe against concurrent inserts & gaps
             const lastInvoiceResult = await tx
-                .select()
+                .select({ invoiceNumber: invoices.invoiceNumber })
                 .from(invoices)
-                .where(sql`${invoices.invoiceNumber} LIKE ${prefix + '%'}`)
-                .orderBy(desc(invoices.createdAt))
-                .limit(1);
+                .where(sql`${invoices.invoiceNumber} LIKE ${prefix + '%'}`);
 
             let sequence = 1;
             if (lastInvoiceResult.length > 0) {
-                const lastNo = lastInvoiceResult[0].invoiceNumber;
-                const parts = lastNo.split('/');
-                const lastSeq = parseInt(parts[parts.length - 1]);
-                if (!isNaN(lastSeq)) {
-                    sequence = lastSeq + 1;
-                }
+                const maxSeq = lastInvoiceResult.reduce((max, row) => {
+                    const parts = row.invoiceNumber.split('/');
+                    const seq = parseInt(parts[parts.length - 1]);
+                    return !isNaN(seq) && seq > max ? seq : max;
+                }, 0);
+                sequence = maxSeq + 1;
             }
 
             const invoiceNumber = `${prefix}${String(sequence).padStart(3, '0')}`;

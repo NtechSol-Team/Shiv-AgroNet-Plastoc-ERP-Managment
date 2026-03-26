@@ -219,7 +219,7 @@ export const SERVER_CONFIG = {
     supplier: 'SUPP',
     employee: 'EMP',
     purchaseBill: 'PB',
-    salesInvoice: 'INV',
+    salesInvoice: 'SA',
     payment: 'PAY',
     receipt: 'REC',
     productionBatch: 'BATCH',
