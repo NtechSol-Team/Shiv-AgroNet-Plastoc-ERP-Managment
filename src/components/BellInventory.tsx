@@ -124,6 +124,26 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                 }
             }
 
+            // Auto-calculate Weight Loss based on selWidth and pieceCount
+            if ('selWidth' in patch || 'pieceCount' in patch) {
+                const pcsStr = updated.pieceCount ? updated.pieceCount.trim() : '';
+                const pcs = parseFloat(pcsStr);
+                
+                if (pcsStr === '' || isNaN(pcs) || pcs <= 0) {
+                    setError("Pcs must be greater than 0");
+                    setTimeout(() => setError(null), 3000);
+                } else if (updated.selWidth) {
+                    const widthVal = parseFloat(updated.selWidth);
+                    if (!isNaN(widthVal)) {
+                        if (widthVal >= 5) {
+                            updated.weightLoss = String(500 + pcs * 200);
+                        } else {
+                            updated.weightLoss = String(500 + pcs * 100);
+                        }
+                    }
+                }
+            }
+
             rows[idx] = updated;
             return rows;
         });

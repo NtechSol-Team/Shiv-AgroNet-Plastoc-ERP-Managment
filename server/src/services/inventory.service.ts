@@ -28,7 +28,7 @@ import { invalidateInventorySummary, invalidateDashboardKPIs } from './precomput
 // TYPE DEFINITIONS
 // ============================================================
 
-export type MovementType = 'RAW_IN' | 'RAW_OUT' | 'FG_IN' | 'FG_OUT' | 'ADJUSTMENT';
+export type MovementType = 'RAW_IN' | 'RAW_OUT' | 'FG_IN' | 'FG_OUT' | 'ADJUSTMENT' | 'BALE_SAMPLE' | 'BALE_SAMPLE_REV';
 
 export interface StockMovementInput {
     date: Date;

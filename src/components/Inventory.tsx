@@ -459,6 +459,8 @@ export function Inventory() {
                       <tbody className="divide-y divide-gray-200">
                         {stockMovements.map((movement: any, index: number) => {
                           const isIn = parseFloat(movement.quantityIn) > 0;
+                          const isAudit = parseFloat(movement.quantityIn) === 0 && parseFloat(movement.quantityOut) === 0;
+
                           return (
                             <tr key={index} className="hover:bg-blue-50 transition-colors">
                               <td className="px-4 py-1.5 text-xs text-gray-600">
@@ -471,15 +473,15 @@ export function Inventory() {
                                 })}
                               </td>
                               <td className="px-4 py-1.5">
-                                <span className={`text-[10px] font-bold px-1 rounded ${isIn ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                                  {isIn ? 'STOCK IN' : 'STOCK OUT'}
+                                <span className={`text-[10px] font-bold px-1 rounded ${isAudit ? 'bg-indigo-100 text-indigo-800' : isIn ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                  {isAudit ? 'AUDIT' : isIn ? 'STOCK IN' : 'STOCK OUT'}
                                 </span>
                               </td>
                               <td className="px-4 py-1.5 text-sm font-medium text-gray-900">{movement.rawMaterial?.name || movement.finishedProduct?.name || 'Unknown Item'}</td>
                               <td className="px-4 py-1.5 text-xs font-mono text-gray-500">{movement.referenceCode || '-'}</td>
                               <td className="px-4 py-1.5 text-sm font-mono font-bold text-right">
-                                <span className={isIn ? 'text-green-700' : 'text-red-700'}>
-                                  {isIn ? '+' : '-'}{isIn ? movement.quantityIn : movement.quantityOut}
+                                <span className={isAudit ? 'text-indigo-700' : isIn ? 'text-green-700' : 'text-red-700'}>
+                                  {isAudit ? '0' : isIn ? `+${movement.quantityIn}` : `-${movement.quantityOut}`}
                                 </span>
                               </td>
                               <td className="px-4 py-1.5 text-xs text-gray-500 max-w-xs truncate">{movement.reason}</td>

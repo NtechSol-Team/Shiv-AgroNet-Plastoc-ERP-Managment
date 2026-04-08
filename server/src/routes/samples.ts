@@ -86,6 +86,19 @@ router.post('/', async (req: Request, res: Response, next: Function) => {
                         updatedAt: new Date()
                     })
                     .where(eq(bellItems.id, bellItemId));
+                    
+                // Audit-Only Stock Movement (Zero Impact)
+                await createStockMovement({
+                    date: new Date(date || new Date()),
+                    movementType: 'BALE_SAMPLE',
+                    itemType: 'finished_product',
+                    finishedProductId,
+                    quantityOut: 0,
+                    referenceType: 'Bale Sample',
+                    referenceCode: bale.code,
+                    referenceId: sample.id,
+                    reason: `Bale Sample Issued: Bale ${bale.code} (Weight: ${bale.netWeight}kg) to ${partyId ? 'Party' : 'General'}`
+                }, tx);
             }
 
             // 3. Decrease Stock (FG_OUT) - ONLY for generic samples
@@ -166,6 +179,19 @@ router.put('/:id', async (req: Request, res: Response, next: Function) => {
                         referenceId: id,
                         reason: `Sample Edit: Reversing old quantity ${oldQty}`
                     }, tx);
+                } else {
+                    // A. Reverse Old Bale Sample (Audit-Only)
+                    await createStockMovement({
+                        date: new Date(),
+                        movementType: 'BALE_SAMPLE_REV',
+                        itemType: 'finished_product',
+                        finishedProductId: oldSample.finishedProductId,
+                        quantityIn: 0,
+                        referenceType: 'sample_edit_rev',
+                        referenceCode: 'BALE-SAMPLE-REV',
+                        referenceId: id,
+                        reason: `Sample Edit: Reversing old Bale Sample`
+                    }, tx);
                 }
 
                 // Determine if NEW sample is a bale or generic
@@ -181,6 +207,19 @@ router.put('/:id', async (req: Request, res: Response, next: Function) => {
                         referenceCode: 'SAMPLE',
                         referenceId: id,
                         reason: `Sample Edit: Updated to ${newQty}`
+                    }, tx);
+                } else {
+                    // B. Apply New Bale Sample (Audit-Only)
+                    await createStockMovement({
+                        date: new Date(date || new Date()),
+                        movementType: 'BALE_SAMPLE',
+                        itemType: 'finished_product',
+                        finishedProductId: finishedProductId,
+                        quantityOut: 0,
+                        referenceType: 'Bale Sample',
+                        referenceCode: 'BALE-SAMPLE',
+                        referenceId: id,
+                        reason: `Sample Edit: Updated to Bale Sample`
                     }, tx);
                 }
             }
@@ -244,8 +283,9 @@ router.delete('/:id', async (req: Request, res: Response, next: Function) => {
                     .where(eq(bellItems.id, sample.bellItemId));
             }
 
-            // 3. Reverse Stock Deduction (FG_IN) - ONLY for generic samples
+            // 3. Reverse Stock Deduction
             if (!sample.bellItemId) {
+                // (FG_IN) - ONLY for generic samples
                 await createStockMovement({
                     date: new Date(),
                     movementType: 'FG_IN',
@@ -256,6 +296,19 @@ router.delete('/:id', async (req: Request, res: Response, next: Function) => {
                     referenceCode: 'SAMPLE-REV',
                     referenceId: sample.id,
                     reason: `Sample Deletion: Reversing stock for ${sample.quantity}`
+                }, tx);
+            } else {
+                // Audit-Only Reversal for Bale Samples
+                await createStockMovement({
+                    date: new Date(),
+                    movementType: 'BALE_SAMPLE_REV',
+                    itemType: 'finished_product',
+                    finishedProductId: sample.finishedProductId,
+                    quantityIn: 0,
+                    referenceType: 'sample_return',
+                    referenceCode: 'BALE-SAMPLE-REV',
+                    referenceId: sample.id,
+                    reason: `Sample Deletion: Restored Bale to Available`
                 }, tx);
             }
 
