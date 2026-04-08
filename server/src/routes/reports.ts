@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db/index';
 import { productionBatches, salesInvoices, purchaseBills, purchaseBillItems, finishedProducts, rawMaterials, expenses, stockMovements, customers, suppliers } from '../db/schema';
-import { eq, desc, sql, and } from 'drizzle-orm';
+import { eq, desc, sql, and, gte, lte, isNotNull } from 'drizzle-orm';
 import { successResponse } from '../types/api';
 
 const router = Router();
@@ -433,6 +433,185 @@ router.get('/monthly-economics', async (req, res, next) => {
             expenseBreakdown
         }));
 
+    } catch (error) {
+        next(error);
+    }
+});
+
+// ==================== FINISHED GOODS STOCK AUDIT ====================
+router.get('/fg-stock-audit', async (req, res, next) => {
+    try {
+        const { startDate, endDate, productId } = req.query as Record<string, string>;
+
+        // Build WHERE conditions
+        const conditions: any[] = [
+            isNotNull(stockMovements.finishedProductId),
+        ];
+
+        if (startDate) {
+            conditions.push(gte(stockMovements.date, new Date(startDate)));
+        }
+        if (endDate) {
+            // End of that day
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999);
+            conditions.push(lte(stockMovements.date, end));
+        }
+        if (productId && productId !== 'all') {
+            conditions.push(eq(stockMovements.finishedProductId, productId));
+        }
+
+        // Fetch all FG movements with product join
+        const movements = await db.query.stockMovements.findMany({
+            where: and(...conditions),
+            with: { finishedProduct: true },
+            orderBy: [stockMovements.date, stockMovements.createdAt],
+        });
+
+        // Fetch all finished products for summary (even zero-movement ones)
+        const allProducts = await db.query.finishedProducts.findMany({
+            orderBy: [finishedProducts.code],
+        });
+
+        // Build per-product aggregate maps
+        interface ProductSummary {
+            productId: string;
+            productCode: string;
+            productName: string;
+            totalIn: number;        // sum of FG_IN (production + purchase)
+            totalOut: number;       // sum of FG_OUT (sales + samples)
+            totalAdjustment: number; // net of ADJUSTMENT movements (can be +/-)
+            closingBalance: number;
+            movementCount: number;
+        }
+
+        const summaryMap = new Map<string, ProductSummary>();
+
+        for (const fp of allProducts) {
+            summaryMap.set(fp.id, {
+                productId: fp.id,
+                productCode: fp.code,
+                productName: fp.name,
+                totalIn: 0,
+                totalOut: 0,
+                totalAdjustment: 0,
+                closingBalance: 0,
+                movementCount: 0,
+            });
+        }
+
+        // Build line-by-line audit rows
+        const auditRows = movements.map((m) => {
+            const qIn = parseFloat(m.quantityIn || '0');
+            const qOut = parseFloat(m.quantityOut || '0');
+            const isAdjustment = m.movementType === 'ADJUSTMENT';
+            const isFgIn = m.movementType === 'FG_IN';
+            const isFgOut = m.movementType === 'FG_OUT';
+
+            // Feed summary
+            const pid = m.finishedProductId!;
+            if (summaryMap.has(pid)) {
+                const s = summaryMap.get(pid)!;
+                if (isFgIn) s.totalIn += qIn;
+                else if (isFgOut) s.totalOut += qOut;
+                else if (isAdjustment) s.totalAdjustment += (qIn - qOut);
+                s.movementCount++;
+            }
+
+            // Determine movement label
+            let movementLabel = m.movementType;
+            if (m.movementType === 'FG_IN') {
+                if (m.referenceType === 'production') movementLabel = 'Production In';
+                else if (m.referenceType === 'purchase') movementLabel = 'Purchase In';
+                else movementLabel = 'Stock In';
+            } else if (m.movementType === 'FG_OUT') {
+                if (m.referenceType === 'sales') movementLabel = 'Sales Out';
+                else if (m.referenceType === 'sample') movementLabel = 'Sample Out';
+                else movementLabel = 'Stock Out';
+            } else if (m.movementType === 'ADJUSTMENT') {
+                movementLabel = qIn > 0 ? 'Restore / Adjust (+)' : 'Adjust (-)';
+            }
+
+            return {
+                id: m.id,
+                date: m.date,
+                productId: m.finishedProductId,
+                productCode: m.finishedProduct?.code || '-',
+                productName: m.finishedProduct?.name || 'Unknown',
+                movementType: m.movementType,
+                movementLabel,
+                referenceType: m.referenceType,
+                referenceCode: m.referenceCode,
+                quantityIn: qIn,
+                quantityOut: qOut,
+                runningBalance: parseFloat(m.runningBalance || '0'),
+                reason: m.reason,
+            };
+        });
+
+        // Compute closing balances from all stock movements (not date-filtered) for accuracy
+        const allFgMovements = await db
+            .select({
+                pid: stockMovements.finishedProductId,
+                netBalance: sql<string>`COALESCE(SUM(${stockMovements.quantityIn} - ${stockMovements.quantityOut}), 0)`,
+            })
+            .from(stockMovements)
+            .where(isNotNull(stockMovements.finishedProductId))
+            .groupBy(stockMovements.finishedProductId);
+
+        for (const row of allFgMovements) {
+            if (row.pid && summaryMap.has(row.pid)) {
+                summaryMap.get(row.pid)!.closingBalance = parseFloat(row.netBalance);
+            }
+        }
+
+        // Compute opening balance per product (balance before startDate)
+        const openingBalanceMap = new Map<string, number>();
+        if (startDate) {
+            const startDt = new Date(startDate);
+            const openingData = await db
+                .select({
+                    pid: stockMovements.finishedProductId,
+                    openingBalance: sql<string>`COALESCE(SUM(${stockMovements.quantityIn} - ${stockMovements.quantityOut}), 0)`,
+                })
+                .from(stockMovements)
+                .where(and(
+                    isNotNull(stockMovements.finishedProductId),
+                    lte(stockMovements.date, new Date(startDt.getTime() - 1)), // before start
+                ))
+                .groupBy(stockMovements.finishedProductId);
+            for (const row of openingData) {
+                if (row.pid) openingBalanceMap.set(row.pid, parseFloat(row.openingBalance));
+            }
+        }
+
+        const productSummaries = Array.from(summaryMap.values())
+            .filter(s => s.movementCount > 0 || !startDate) // if date filtered, only show products with movements
+            .map(s => ({
+                ...s,
+                openingBalance: openingBalanceMap.get(s.productId) ?? null, // null = no filter applied
+            }))
+            .sort((a, b) => a.productCode.localeCompare(b.productCode));
+
+        // Overall totals
+        const totalIn = auditRows.reduce((sum, r) => sum + r.quantityIn, 0);
+        const totalOut = auditRows.reduce((sum, r) => sum + r.quantityOut, 0);
+        const totalAdjustment = auditRows
+            .filter(r => r.movementType === 'ADJUSTMENT')
+            .reduce((sum, r) => sum + r.quantityIn - r.quantityOut, 0);
+
+        res.json(successResponse({
+            movements: auditRows,
+            productSummaries,
+            summary: {
+                totalMovements: auditRows.length,
+                totalIn: parseFloat(totalIn.toFixed(3)),
+                totalOut: parseFloat(totalOut.toFixed(3)),
+                totalAdjustment: parseFloat(totalAdjustment.toFixed(3)),
+                netChange: parseFloat((totalIn - totalOut + totalAdjustment).toFixed(3)),
+                dateRange: { startDate: startDate || null, endDate: endDate || null },
+            },
+        }));
     } catch (error) {
         next(error);
     }

@@ -58,7 +58,7 @@ export function Inventory() {
 
   // Auto-refresh on real-time events
   useRealtimeEvent(lastEvent, ['inventory_updated', 'sales_updated', 'purchase_updated', 'production_updated', 'masters_updated'], () => {
-    fetchData();
+    fetchData(false);
     if (activeTab === 'movements') {
       fetchLedgerPage(ledgerPage);
     }
@@ -71,8 +71,8 @@ export function Inventory() {
     }
   }, [activeTab, ledgerFilters]);
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     try {
       const [finishedResult, rawResult, summaryResult] = await Promise.all([
         inventoryApi.getFinishedGoods(),
@@ -309,7 +309,7 @@ export function Inventory() {
         {/* Tab Content - Dense Tables */}
         <div className={`bg-white border border-gray-300 rounded-sm overflow-hidden min-h-[400px] ${activeTab === 'bells' ? 'p-4 border-none' : ''}`}>
           {activeTab === 'bells' ? (
-            <BellInventory onSuccess={fetchData} />
+            <BellInventory onSuccess={() => fetchData(false)} />
           ) : (
             <>
               {activeTab === 'finished-goods' && (

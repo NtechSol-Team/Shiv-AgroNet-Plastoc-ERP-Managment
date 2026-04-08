@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Download, FileText, AlertTriangle, Filter, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Download, FileText, AlertTriangle, Filter, Loader2, TrendingUp, TrendingDown, RotateCcw, Scale } from 'lucide-react';
 import { reportsApi, mastersApi } from '../lib/api';
 
 export function Reports() {
-  const [activeReport, setActiveReport] = useState<'production-loss' | 'sales-register' | 'purchase-register' | 'stock-valuation' | 'expense-summary' | 'cc-interest'>('production-loss');
+  const [activeReport, setActiveReport] = useState<'production-loss' | 'sales-register' | 'purchase-register' | 'stock-valuation' | 'expense-summary' | 'cc-interest' | 'fg-stock-audit'>('production-loss');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -14,6 +14,14 @@ export function Reports() {
   const [stockData, setStockData] = useState<any[]>([]);
   const [expenseData, setExpenseData] = useState<any[]>([]);
   const [ccInterestData, setCCInterestData] = useState<any[]>([]);
+  const [fgAuditData, setFgAuditData] = useState<{ movements: any[]; productSummaries: any[]; summary: any } | null>(null);
+
+  // FG Audit Filters
+  const [fgAuditStartDate, setFgAuditStartDate] = useState('');
+  const [fgAuditEndDate, setFgAuditEndDate] = useState('');
+  const [fgAuditProductId, setFgAuditProductId] = useState('all');
+  const [fgAuditMovTypeFilter, setFgAuditMovTypeFilter] = useState('all');
+  const [finishedProducts, setFinishedProducts] = useState<any[]>([]);
 
   // Filters
   const [customers, setCustomers] = useState<any[]>([]);
@@ -24,7 +32,9 @@ export function Reports() {
   const [purchasePaymentFilter, setPurchasePaymentFilter] = useState<'all' | 'pending' | 'complete'>('all');
 
   useEffect(() => {
-    fetchReportData();
+    if (activeReport !== 'fg-stock-audit') {
+      fetchReportData();
+    }
   }, [activeReport]);
 
   useEffect(() => {
@@ -33,16 +43,38 @@ export function Reports() {
 
   const fetchMasterData = async () => {
     try {
-      const [customersResult, suppliersResult] = await Promise.all([
+      const [customersResult, suppliersResult, fpsResult] = await Promise.all([
         mastersApi.getCustomers(),
         mastersApi.getSuppliers(),
+        mastersApi.getFinishedProducts(),
       ]);
       if (customersResult.data) setCustomers(customersResult.data);
       if (suppliersResult.data) setSuppliers(suppliersResult.data);
+      if (fpsResult.data) setFinishedProducts(fpsResult.data);
     } catch (err) {
       console.error('Failed to load master data');
     }
   };
+
+  const fetchFGAudit = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await reportsApi.getFGStockAudit({
+        startDate: fgAuditStartDate || undefined,
+        endDate: fgAuditEndDate || undefined,
+        productId: fgAuditProductId !== 'all' ? fgAuditProductId : undefined,
+      });
+      if (result.data) {
+        setFgAuditData(result.data);
+      } else {
+        setFgAuditData(null);
+      }
+    } catch (err) {
+      setError('Failed to load FG Stock Audit data');
+    }
+    setLoading(false);
+  }, [fgAuditStartDate, fgAuditEndDate, fgAuditProductId]);
 
   const fetchReportData = async () => {
     setLoading(true);
@@ -108,6 +140,10 @@ export function Reports() {
             setCCInterestData([]);
           }
           break;
+        case 'fg-stock-audit':
+          // handled separately via fetchFGAudit
+          await fetchFGAudit();
+          return; // fetchFGAudit sets loading itself
       }
     } catch (err) {
       setError('Failed to load report data');
@@ -141,6 +177,16 @@ export function Reports() {
       filtered = filtered.filter(p => p.status === 'Paid');
     }
     return filtered;
+  };
+
+  // Filter FG Audit Data (movement type is a client-side filter only)
+  const getFgAuditFiltered = (): any[] => {
+    if (!fgAuditData) return [];
+    let rows = fgAuditData.movements;
+    if (fgAuditMovTypeFilter !== 'all') {
+      rows = rows.filter((m: any) => m.movementType === fgAuditMovTypeFilter);
+    }
+    return rows;
   };
 
   // Download CSV
@@ -235,6 +281,19 @@ export function Reports() {
                 }`}
             >
               CC Interest
+            </button>
+            <button
+              onClick={() => {
+                setActiveReport('fg-stock-audit');
+                setTimeout(() => fetchFGAudit(), 0);
+              }}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
+                activeReport === 'fg-stock-audit'
+                  ? 'border-green-600 text-green-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              📦 FG Stock Audit
             </button>
           </nav>
         </div>
@@ -726,6 +785,269 @@ export function Reports() {
                         )}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              )}
+              {/* FG Stock Audit Report */}
+              {activeReport === 'fg-stock-audit' && (
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-gray-900">Finished Goods Stock Audit Report</h2>
+                      <p className="text-sm text-gray-600">Complete ledger of all FG stock movements — IN, OUT, Restore / Adjustment</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (!fgAuditData) return;
+                        const rows = getFgAuditFiltered().map(m => ({
+                          Date: new Date(m.date).toLocaleDateString(),
+                          Product: m.productName,
+                          Code: m.productCode,
+                          Type: m.movementLabel,
+                          Reference: m.referenceCode,
+                          Reason: m.reason,
+                          'Qty In (kg)': m.quantityIn > 0 ? m.quantityIn.toFixed(3) : '',
+                          'Qty Out (kg)': m.quantityOut > 0 ? m.quantityOut.toFixed(3) : '',
+                          'Running Balance (kg)': m.runningBalance.toFixed(3),
+                        }));
+                        downloadCSV(rows, 'fg_stock_audit', ['Date', 'Product', 'Code', 'Type', 'Reference', 'Reason', 'Qty In (kg)', 'Qty Out (kg)', 'Running Balance (kg)']);
+                      }}
+                      className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      Download CSV
+                    </button>
+                  </div>
+
+                  {/* Filters */}
+                  <div className="bg-gray-50 p-4 rounded-lg mb-5 grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">From Date</label>
+                      <input
+                        type="date"
+                        value={fgAuditStartDate}
+                        onChange={e => setFgAuditStartDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">To Date</label>
+                      <input
+                        type="date"
+                        value={fgAuditEndDate}
+                        onChange={e => setFgAuditEndDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Product</label>
+                      <select
+                        value={fgAuditProductId}
+                        onChange={e => setFgAuditProductId(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      >
+                        <option value="all">All Products</option>
+                        {finishedProducts.map(fp => (
+                          <option key={fp.id} value={fp.id}>{fp.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Movement Type</label>
+                      <select
+                        value={fgAuditMovTypeFilter}
+                        onChange={e => setFgAuditMovTypeFilter(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      >
+                        <option value="all">All Types</option>
+                        <option value="FG_IN">Stock IN (Production / Purchase)</option>
+                        <option value="FG_OUT">Stock OUT (Sales / Sample)</option>
+                        <option value="ADJUSTMENT">Restore / Adjustment</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex gap-3 mb-5">
+                    <button
+                      onClick={fetchFGAudit}
+                      className="px-5 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium transition-colors"
+                    >
+                      Apply Filters
+                    </button>
+                    <button
+                      onClick={() => { setFgAuditStartDate(''); setFgAuditEndDate(''); setFgAuditProductId('all'); setFgAuditMovTypeFilter('all'); setTimeout(fetchFGAudit, 0); }}
+                      className="px-5 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium transition-colors"
+                    >
+                      Reset
+                    </button>
+                  </div>
+
+                  {/* Summary Cards */}
+                  {fgAuditData && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-start gap-3">
+                        <div className="p-2 bg-emerald-100 rounded-lg"><TrendingUp className="w-5 h-5 text-emerald-600" /></div>
+                        <div>
+                          <p className="text-xs font-medium text-emerald-600 uppercase tracking-wide">Total IN</p>
+                          <p className="text-xl font-bold text-emerald-800">{fgAuditData.summary.totalIn.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 3 })} kg</p>
+                          <p className="text-xs text-emerald-600 mt-0.5">Production + Purchase</p>
+                        </div>
+                      </div>
+                      <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
+                        <div className="p-2 bg-red-100 rounded-lg"><TrendingDown className="w-5 h-5 text-red-600" /></div>
+                        <div>
+                          <p className="text-xs font-medium text-red-600 uppercase tracking-wide">Total OUT</p>
+                          <p className="text-xl font-bold text-red-800">{fgAuditData.summary.totalOut.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 3 })} kg</p>
+                          <p className="text-xs text-red-600 mt-0.5">Sales + Samples</p>
+                        </div>
+                      </div>
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                        <div className="p-2 bg-amber-100 rounded-lg"><RotateCcw className="w-5 h-5 text-amber-600" /></div>
+                        <div>
+                          <p className="text-xs font-medium text-amber-600 uppercase tracking-wide">Adjustments</p>
+                          <p className="text-xl font-bold text-amber-800">{fgAuditData.summary.totalAdjustment >= 0 ? '+' : ''}{fgAuditData.summary.totalAdjustment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 3 })} kg</p>
+                          <p className="text-xs text-amber-600 mt-0.5">Restores &amp; Corrections</p>
+                        </div>
+                      </div>
+                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3">
+                        <div className="p-2 bg-blue-100 rounded-lg"><Scale className="w-5 h-5 text-blue-600" /></div>
+                        <div>
+                          <p className="text-xs font-medium text-blue-600 uppercase tracking-wide">Net Change</p>
+                          <p className={`text-xl font-bold ${fgAuditData.summary.netChange >= 0 ? 'text-blue-800' : 'text-red-700'}`}>
+                            {fgAuditData.summary.netChange >= 0 ? '+' : ''}{fgAuditData.summary.netChange.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 3 })} kg
+                          </p>
+                          <p className="text-xs text-blue-600 mt-0.5">{fgAuditData.summary.totalMovements} movements</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Per-Product Summary */}
+                  {fgAuditData && fgAuditData.productSummaries.length > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-sm font-semibold text-gray-800 mb-2">Product-wise Summary</h3>
+                      <div className="overflow-x-auto rounded-lg border border-gray-200">
+                        <table className="w-full text-sm">
+                          <thead className="bg-gray-100">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-medium text-gray-600">Code</th>
+                              <th className="px-3 py-2 text-left font-medium text-gray-600">Product Name</th>
+                              {fgAuditStartDate && <th className="px-3 py-2 text-right font-medium text-gray-600">Opening Balance (kg)</th>}
+                              <th className="px-3 py-2 text-right font-medium text-emerald-700">IN (kg)</th>
+                              <th className="px-3 py-2 text-right font-medium text-red-700">OUT (kg)</th>
+                              <th className="px-3 py-2 text-right font-medium text-amber-700">Adjustment (kg)</th>
+                              <th className="px-3 py-2 text-right font-medium text-blue-700">Current Balance (kg)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-100">
+                            {fgAuditData.productSummaries.map((ps: any) => (
+                              <tr key={ps.productId} className="hover:bg-gray-50">
+                                <td className="px-3 py-2 font-mono text-xs text-gray-500">{ps.productCode}</td>
+                                <td className="px-3 py-2 font-medium text-gray-900">{ps.productName}</td>
+                                {fgAuditStartDate && (
+                                  <td className="px-3 py-2 text-right text-gray-600">
+                                    {ps.openingBalance != null ? ps.openingBalance.toFixed(3) : '-'}
+                                  </td>
+                                )}
+                                <td className="px-3 py-2 text-right text-emerald-700 font-medium">{ps.totalIn.toFixed(3)}</td>
+                                <td className="px-3 py-2 text-right text-red-700 font-medium">{ps.totalOut.toFixed(3)}</td>
+                                <td className={`px-3 py-2 text-right font-medium ${ps.totalAdjustment >= 0 ? 'text-amber-700' : 'text-red-600'}`}>
+                                  {ps.totalAdjustment >= 0 ? '+' : ''}{ps.totalAdjustment.toFixed(3)}
+                                </td>
+                                <td className={`px-3 py-2 text-right font-bold ${
+                                  ps.closingBalance < 0 ? 'text-red-600' : ps.closingBalance === 0 ? 'text-gray-400' : 'text-blue-700'
+                                }`}>
+                                  {ps.closingBalance.toFixed(3)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Line-by-line Movement Ledger */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-800 mb-2">
+                      Detailed Movement Ledger
+                      {fgAuditData ? ` (${getFgAuditFiltered().length} entries)` : ''}
+                    </h3>
+                    <div className="overflow-x-auto rounded-lg border border-gray-200">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 sticky top-0">
+                          <tr>
+                            <th className="px-3 py-2.5 text-left font-medium text-gray-600 border-b">Date</th>
+                            <th className="px-3 py-2.5 text-left font-medium text-gray-600 border-b">Product</th>
+                            <th className="px-3 py-2.5 text-left font-medium text-gray-600 border-b">Movement Type</th>
+                            <th className="px-3 py-2.5 text-left font-medium text-gray-600 border-b">Reference</th>
+                            <th className="px-3 py-2.5 text-left font-medium text-gray-600 border-b">Reason / Note</th>
+                            <th className="px-3 py-2.5 text-right font-medium text-emerald-700 border-b">IN (kg)</th>
+                            <th className="px-3 py-2.5 text-right font-medium text-red-700 border-b">OUT (kg)</th>
+                            <th className="px-3 py-2.5 text-right font-medium text-blue-700 border-b">Balance (kg)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-100">
+                          {!fgAuditData || getFgAuditFiltered().length === 0 ? (
+                            <tr>
+                              <td colSpan={8} className="px-4 py-12 text-center text-gray-400">
+                                <FileText className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                                <p>{fgAuditData ? 'No movements found for the selected filters.' : 'Apply filters and click Apply to load data.'}</p>
+                              </td>
+                            </tr>
+                          ) : (
+                            getFgAuditFiltered().map((m: any) => (
+                              <tr key={m.id} className={`hover:bg-gray-50 ${
+                                m.movementType === 'FG_IN' ? 'border-l-2 border-emerald-400' :
+                                m.movementType === 'FG_OUT' ? 'border-l-2 border-red-400' :
+                                'border-l-2 border-amber-400'
+                              }`}>
+                                <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{new Date(m.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                                <td className="px-3 py-2.5">
+                                  <span className="font-medium text-gray-900">{m.productName}</span>
+                                  <span className="block text-xs text-gray-400 font-mono">{m.productCode}</span>
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                    m.movementType === 'FG_IN' ? 'bg-emerald-100 text-emerald-800' :
+                                    m.movementType === 'FG_OUT' ? 'bg-red-100 text-red-800' :
+                                    'bg-amber-100 text-amber-800'
+                                  }`}>
+                                    {m.movementLabel}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2.5 font-mono text-xs text-gray-600">{m.referenceCode}</td>
+                                <td className="px-3 py-2.5 text-xs text-gray-500 max-w-xs truncate" title={m.reason}>{m.reason}</td>
+                                <td className="px-3 py-2.5 text-right font-medium text-emerald-700">
+                                  {m.quantityIn > 0 ? `+${m.quantityIn.toFixed(3)}` : ''}
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-medium text-red-700">
+                                  {m.quantityOut > 0 ? `-${m.quantityOut.toFixed(3)}` : ''}
+                                </td>
+                                <td className={`px-3 py-2.5 text-right font-bold ${
+                                  m.runningBalance < 0 ? 'text-red-600' : 'text-blue-700'
+                                }`}>
+                                  {m.runningBalance.toFixed(3)}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                        {fgAuditData && getFgAuditFiltered().length > 0 && (
+                          <tfoot className="bg-gray-50">
+                            <tr className="border-t-2 border-gray-300">
+                              <td colSpan={5} className="px-3 py-2.5 text-sm font-semibold text-gray-800 text-right">Totals:</td>
+                              <td className="px-3 py-2.5 text-right font-bold text-emerald-700">
+                                +{getFgAuditFiltered().reduce((s: number, r: any) => s + r.quantityIn, 0).toFixed(3)} kg
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-bold text-red-700">
+                                -{getFgAuditFiltered().reduce((s: number, r: any) => s + r.quantityOut, 0).toFixed(3)} kg
+                              </td>
+                              <td></td>
+                            </tr>
+                          </tfoot>
+                        )}
+                      </table>
+                    </div>
                   </div>
                 </div>
               )}

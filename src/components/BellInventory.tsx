@@ -88,6 +88,7 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
     const rowRefs = useRef<(HTMLElement | null)[][]>([]);
     const addBtnRef = useRef<HTMLButtonElement>(null);
     const saveBtnRef = useRef<HTMLButtonElement>(null);
+    const batchCodeInputRef = useRef<HTMLInputElement>(null);
 
 
 
@@ -294,6 +295,10 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                 setBellItems([emptyRow()]);
                 fetchData();
                 if (onSuccess) onSuccess();
+                // Focus the batch code input after successful save
+                setTimeout(() => {
+                    batchCodeInputRef.current?.focus();
+                }, 50);
             } else if (res.error) {
                 setError(res.error);
             }
@@ -546,6 +551,7 @@ export function BellInventory({ onSuccess }: { onSuccess?: () => void }) {
                         <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-blue-200 shadow-sm">
                             <label className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Batch Code:</label>
                             <input
+                                ref={batchCodeInputRef}
                                 type="text"
                                 placeholder="e.g. BB-01"
                                 className="w-24 border-none p-0 focus:ring-0 text-sm font-mono font-bold text-slate-700 bg-transparent"

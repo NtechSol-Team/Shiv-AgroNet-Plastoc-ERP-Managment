@@ -502,6 +502,14 @@ export const reportsApi = {
     getExpenses: () => fetchApi<any>('/reports/expenses'),
     getLedgerSummary: (type: 'customer' | 'supplier') => fetchApi<any[]>(`/reports/ledger-summary/${type}`),
     getMonthlyEconomics: (month: string) => fetchApi<any>(`/reports/monthly-economics?month=${month}`),
+    getFGStockAudit: (params?: { startDate?: string; endDate?: string; productId?: string }) => {
+        const query = new URLSearchParams();
+        if (params?.startDate) query.append('startDate', params.startDate);
+        if (params?.endDate) query.append('endDate', params.endDate);
+        if (params?.productId && params.productId !== 'all') query.append('productId', params.productId);
+        const qs = query.toString();
+        return fetchApi<any>(`/reports/fg-stock-audit${qs ? `?${qs}` : ''}`);
+    },
 };
 
 // ==================== DASHBOARD API ====================
