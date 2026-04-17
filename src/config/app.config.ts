@@ -21,9 +21,9 @@ export const APP_CONFIG = {
     /** State name */
     stateName: 'Gujarat',
     /** Company GSTIN (15 digit) */
-    gstin: '24AABCS1234A1Z5',
+    gstin: '24ASRPR9475R2Z9',
     /** PAN Number */
-    pan: 'AABCS1234A',
+    pan: 'ASRPR9475R',
     /** CIN (if applicable) */
     cin: '',
     /** Udyam Registration Number */
